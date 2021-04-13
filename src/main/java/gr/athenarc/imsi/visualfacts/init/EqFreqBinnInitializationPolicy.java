@@ -37,10 +37,6 @@ public class EqFreqBinnInitializationPolicy extends InitializationPolicy {
 
         int[] treesByAttrCount = new int[categoricalColumns.size()];
 
-/*        bins.forEach(bin -> {
-            System.out.println("Bin range: " + computeTileProbPerSurfaceArea(bin.get(0)) + ":" + computeTileProbPerSurfaceArea(bin.get(bin.size() - 1)) + ", Bin tile count: " + bin.size());
-        });*/
-
         Iterator<List<Tile>> binIterator = bins.iterator();
         while (catNodeBudget > 0 && binIterator.hasNext()) {
             List<Tile> binTiles = binIterator.next();
@@ -62,6 +58,7 @@ public class EqFreqBinnInitializationPolicy extends InitializationPolicy {
             }
         }
         LOG.debug("Initial BINN assignments: " + Arrays.toString(treesByAttrCount));
+        LOG.debug("Total Index Util: " + totalUtil);
         return totalUtil;
     }
 }

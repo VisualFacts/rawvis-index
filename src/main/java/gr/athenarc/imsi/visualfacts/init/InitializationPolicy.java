@@ -75,7 +75,7 @@ public abstract class InitializationPolicy {
     }
 
     protected double computeTileTreeUtil(Tile tile, List<CategoricalColumn> categoricalColumns) {
-        return (computeTileProbPerSurfaceArea(tile)) * computeTreeUtil(categoricalColumns);
+        return computeRectProb(tile.getBounds()) * computeTreeUtil(categoricalColumns);
     }
 
     protected double computeTreeUtil(List<CategoricalColumn> categoricalColumns) {
