@@ -89,6 +89,7 @@ public class Veti {
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
         parserSettings.setColumnReorderingEnabled(false);
+        parserSettings.setHeaderExtractionEnabled(schema.getHasHeader());
         CsvParser parser = new CsvParser(parserSettings);
 
         objectsIndexed = 0;

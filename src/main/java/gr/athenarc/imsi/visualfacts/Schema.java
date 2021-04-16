@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 
 public class Schema {
     private final String csv;
+    private boolean hasHeader = false;
     private final int xColumn;
     private final int yColumn;
     private final Integer measureCol0;
@@ -28,6 +29,14 @@ public class Schema {
         this.measureCol1 = measureCol1;
         this.bounds = bounds;
         this.objectCount = objectCount;
+    }
+
+    public boolean getHasHeader() {
+        return hasHeader;
+    }
+
+    public void setHasHeader(boolean hasHeader) {
+        this.hasHeader = hasHeader;
     }
 
     public String getCsv() {
@@ -89,6 +98,7 @@ public class Schema {
     public String toString() {
         return "Schema{" +
                 "csv='" + csv + '\'' +
+                ", hasHeader=" + hasHeader +
                 ", xColumn=" + xColumn +
                 ", yColumn=" + yColumn +
                 ", measureCol0=" + measureCol0 +
