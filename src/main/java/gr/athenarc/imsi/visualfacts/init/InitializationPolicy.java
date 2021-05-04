@@ -10,6 +10,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -27,6 +28,10 @@ public abstract class InitializationPolicy {
     private NormalDistribution distributionX;
     private NormalDistribution distributionY;
     private int noOfSubtiles;
+
+    private double totalScore = 0d;
+
+    private String sort;
 
     public InitializationPolicy(Query q0, int noOfSubTiles, Schema schema, Integer catNodeBudget) {
         this.q0 = q0;
@@ -48,6 +53,8 @@ public abstract class InitializationPolicy {
                 categoricalColumn.getScore(q0) / categoricalColumn.getCardinality());
 
         this.categoricalColumns.sort(comparator.reversed());
+
+        totalScore = categoricalColumns.stream().mapToDouble(categoricalColumn -> categoricalColumn.getScore(q0)).sum();
     }
 
     public static InitializationPolicy getInitializationPolicy(String initMode, Query q0, int noOfSubTiles, Schema schema, Integer categoricalNodeBudget, Integer binCount) {
@@ -57,6 +64,8 @@ public abstract class InitializationPolicy {
                 return new InitializationPolicyImpl(q0, noOfSubTiles, schema, categoricalNodeBudget);
             case "greedy":
                 return new GreedyInitializationPolicy(q0, noOfSubTiles, schema, categoricalNodeBudget);
+            case "optimized":
+                return new OptimizedGreedyInitializationPolicy(q0, noOfSubTiles, schema, categoricalNodeBudget);
             case "binn":
                 return new EqFreqBinnInitializationPolicy(q0, noOfSubTiles, schema, categoricalNodeBudget, binCount);
             case "naive":
@@ -65,6 +74,8 @@ public abstract class InitializationPolicy {
                 return new RandomInitializationPolicy(q0, noOfSubTiles, schema, categoricalNodeBudget);
             case "full":
                 return new NaiveInitializationPolicy(q0, noOfSubTiles, schema, Integer.MAX_VALUE);
+            case "exhaustive":
+                return new ExhaustiveInitializationPolicy(q0, noOfSubTiles, schema, categoricalNodeBudget);
         }
         throw new IllegalArgumentException("Invalid init mode");
     }
@@ -75,8 +86,20 @@ public abstract class InitializationPolicy {
     }
 
     protected double computeTileTreeUtil(Tile tile, List<CategoricalColumn> categoricalColumns) {
-        return computeRectProb(tile.getBounds()) * computeTreeUtil(categoricalColumns);
+        double treeUtil = categoricalColumns == null || categoricalColumns.isEmpty() ? computeEmptyTreeUtil() : computeTreeUtil(categoricalColumns);
+        return computeRectProb(tile.getBounds()) * treeUtil;
     }
+
+    protected double computeEmptyTreeUtil() {
+        /*double product = 1d;
+        for (CategoricalColumn categoricalColumn : categoricalColumns) {
+            double score = categoricalColumn.getScore(q0);
+            product *= 1 - score;
+        }
+        return product;*/
+        return 0d;
+    }
+
 
     protected double computeTreeUtil(List<CategoricalColumn> categoricalColumns) {
 /*        double util = 0d;
@@ -85,12 +108,14 @@ public abstract class InitializationPolicy {
             util += score;
         }
         return util;*/
-        double product = 1d;
+
+        return categoricalColumns.stream().mapToDouble(categoricalColumn -> categoricalColumn.getScore(q0)).sum() / totalScore;
+/*        double product = 1d;
         for (CategoricalColumn categoricalColumn : categoricalColumns) {
             double score = categoricalColumn.getScore(q0);
             product *= 1 - score;
         }
-        return 1 - product;
+        return 1 - product;*/
     }
 
     protected int computeTileTreeCostEstimate(Tile tile, List<CategoricalColumn> categoricalColumns) {
@@ -113,10 +138,36 @@ public abstract class InitializationPolicy {
                 distributionY.probability(rect.getYRange().lowerEndpoint(), rect.getYRange().upperEndpoint());
     }
 
-    public abstract double initTileTreeCategoricalAttrs(List<Tile> leafTiles);
+    public abstract void initTileTreeCategoricalAttrs(List<Tile> leafTiles);
+
+    public double computeTotalUtil(List<Tile> leafTiles){
+     double totalUtil = 0d;
+     for (Tile leafTile : leafTiles){
+         totalUtil += computeTileTreeUtil(leafTile, leafTile.getCategoricalColumns());
+     }
+     return totalUtil;
+    }
 
     public int computeSplitSize(Rectangle rect) {
         int splitSize = (int) Math.floor(Math.sqrt(noOfSubtiles * this.computeRectProb(rect)));
         return splitSize;
+    }
+
+    protected void sortAttrsByDomainSize(List<CategoricalColumn> catAttrs){
+        switch (sort){
+            case "asc":
+                catAttrs.sort(Comparator.comparingInt(CategoricalColumn::getCardinality));
+                break;
+            case "desc":
+                catAttrs.sort(Comparator.comparingInt(CategoricalColumn::getCardinality).reversed());
+                break;
+            case "rand":
+                Collections.shuffle(catAttrs);
+                break;
+        }
+    }
+
+    public void setSort(String sort) {
+        this.sort = sort;
     }
 }

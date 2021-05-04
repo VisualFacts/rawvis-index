@@ -29,8 +29,6 @@ public class QueryResults {
 
     private int ioCount;
 
-    private double indexUtil;
-
     public QueryResults(Query query) {
         this.query = query;
         this.stats = new HashMap<>();
@@ -106,13 +104,6 @@ public class QueryResults {
         this.rectStats = rectStats;
     }
 
-    public double getIndexUtil() {
-        return indexUtil;
-    }
-
-    public void setIndexUtil(double indexUtil) {
-        this.indexUtil = indexUtil;
-    }
 
     @Override
     public String toString() {
@@ -125,7 +116,6 @@ public class QueryResults {
                 ", tileCount=" + tileCount +
                 ", expandedNodeCount=" + expandedNodeCount +
                 ", ioCount=" + ioCount +
-                ", indexUtil=" + indexUtil +
                 '}';
     }
 }

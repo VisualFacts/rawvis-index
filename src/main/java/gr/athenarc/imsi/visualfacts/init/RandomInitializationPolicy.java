@@ -17,9 +17,9 @@ public class RandomInitializationPolicy extends InitializationPolicy {
     }
 
     @Override
-    public double initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
+    public void initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
         if (categoricalColumns == null || categoricalColumns.size() == 0)
-            return -1d;
+            return;
 
         Comparator<Tile> comparator = Comparator.comparingDouble(tile -> this.computeTileProbPerSurfaceArea(tile));
         leafTiles.sort(comparator.reversed());
@@ -38,7 +38,7 @@ public class RandomInitializationPolicy extends InitializationPolicy {
             int costEstimate = computeTileTreeCostEstimate(tile, assignedCatAttrs);
             if (catNodeBudget >= costEstimate) {
                 //we sort the attrs in an assigned tree by their cardinality so that attrs with smaller domain go higher in the tree
-                assignedCatAttrs.sort(Comparator.comparingInt(CategoricalColumn::getCardinality));
+                this.sortAttrsByDomainSize(assignedCatAttrs);
                 tile.setCategoricalColumns(assignedCatAttrs);
                 catNodeBudget -= costEstimate;
                 totalUtil += computeTileTreeUtil(tile, assignedCatAttrs);
@@ -47,6 +47,5 @@ public class RandomInitializationPolicy extends InitializationPolicy {
         }
 
         LOG.debug("Initial RANDOM INIT assignments: " + Arrays.toString(treesByAttrCount));
-        return totalUtil;
     }
 }

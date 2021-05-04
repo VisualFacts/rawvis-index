@@ -149,7 +149,9 @@ public class Grid extends Tile {
 
     @Override
     public TreeNode addPoint(Point point, String[] row) {
-        return this.getLeafTile(point).addPoint(point, row);
+        if (this.bounds.contains(point)) {
+            return this.getLeafTile(point).addPoint(point, row);
+        } else return null;
     }
 
     @Override

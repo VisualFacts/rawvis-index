@@ -12,7 +12,9 @@ public class InitializationPolicyImpl extends InitializationPolicy {
     }
 
     @Override
-    public double initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
-        return 0;
+    public void initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
+
     }
+
+
 }

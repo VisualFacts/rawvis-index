@@ -16,9 +16,9 @@ public class NaiveInitializationPolicy extends InitializationPolicy {
         super(q0, noOfSubTiles, schema, categoricalNodeBudget);
     }
 
-    public double initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
+    public void initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
         if (categoricalColumns == null || categoricalColumns.size() == 0)
-            return -1d;
+            return;
         Comparator<Tile> comparator = Comparator.comparingDouble(tile -> this.computeTileProbPerSurfaceArea(tile));
         leafTiles.sort(comparator.reversed());
 
@@ -36,7 +36,5 @@ public class NaiveInitializationPolicy extends InitializationPolicy {
             }
         }
         LOG.debug("Initial NAIVE INIT assignments: " + treeCount);
-
-        return totalUtil;
     }
 }

@@ -42,6 +42,8 @@ public class Veti {
 
     private Integer binCount;
 
+    private String sort = "asc";
+
     private InitializationPolicy initializationPolicy;
 
     private int objectsIndexed = 0;
@@ -53,16 +55,29 @@ public class Veti {
         this.binCount = binCount;
     }
 
-    public QueryResults initialize(Query q0) {
+    public void generateGrid(Query q0) {
         if (isInitialized)
             throw new IllegalStateException("The index is already initialized");
 
         if (q0 != null) {
             initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0, (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
+            initializationPolicy.setSort(sort);
         }
 
 
+        grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
+        grid.split();
+        if (initializationPolicy != null) {
+            initializationPolicy.initTileTreeCategoricalAttrs(grid.getLeafTiles());
+        }
+    }
+
+    public QueryResults initialize(Query q0) {
+        generateGrid(q0);
+
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
+
+
         List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed().collect(Collectors.toList());
         List<Integer> colIndexes = new ArrayList<>();
 
@@ -79,13 +94,6 @@ public class Veti {
             }
         }
 
-        grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
-        grid.split();
-        double totalUtil = 0d;
-        if (initializationPolicy != null) {
-            totalUtil = initializationPolicy.initTileTreeCategoricalAttrs(grid.getLeafTiles());
-        }
-
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
         parserSettings.setColumnReorderingEnabled(false);
@@ -98,10 +106,14 @@ public class Veti {
         String[] row;
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
-            objectsIndexed++;
             try {
                 Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+
                 TreeNode node = this.grid.addPoint(point, row);
+                if (node == null) {
+                    continue;
+                }
+
                 if (measureCol0 != null) {
                     Float value0 = Float.parseFloat(row[measureCol0]);
                     Float value1 = 0f;
@@ -110,7 +122,7 @@ public class Veti {
                     }
                     node.adjustStats(value0, value1);
                 }
-                if (objectsIndexed % 1000000 == 0) {
+                if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug(point);
                 }
@@ -122,14 +134,11 @@ public class Veti {
             }
         }
 
-
         parser.stopParsing();
         isInitialized = true;
-
-
+        LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         // todo evaluate q0
         QueryResults queryResults = new QueryResults(q0);
-        queryResults.setIndexUtil(totalUtil);
         return queryResults;
     }
 
@@ -369,6 +378,14 @@ public class Veti {
 
     public boolean isInitialized() {
         return isInitialized;
+    }
+
+    public double getTotalUtil() {
+        return initializationPolicy.computeTotalUtil(grid.getLeafTiles());
+    }
+
+    public void setSort(String sort) {
+        this.sort = sort;
     }
 
     @Override

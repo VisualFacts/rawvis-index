@@ -24,11 +24,10 @@ public class EqFreqBinnInitializationPolicy extends InitializationPolicy {
 
 
     @Override
-    public double initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
+    public void initTileTreeCategoricalAttrs(List<Tile> leafTiles) {
         if (categoricalColumns == null || categoricalColumns.size() == 0)
-            return -1d;
+            return;
 
-        double totalUtil = 0d;
 
         Comparator<Tile> comparator = Comparator.comparingDouble(tile -> computeTileProbPerSurfaceArea(tile));
         leafTiles.sort(comparator.reversed());
@@ -43,13 +42,12 @@ public class EqFreqBinnInitializationPolicy extends InitializationPolicy {
             for (int i = categoricalColumns.size(); i >= 1; i--) {
                 List<CategoricalColumn> catAttrs = new ArrayList<>(categoricalColumns.subList(0, i));
                 //we sort the attrs in an assigned tree by their cardinality so that attrs with smaller domain go higher in the tree
-                catAttrs.sort(Comparator.comparingInt(CategoricalColumn::getCardinality));
+                this.sortAttrsByDomainSize(catAttrs);
 
                 int costEstimate = binTiles.stream().mapToInt(tile -> computeTileTreeCostEstimate(tile, catAttrs)).sum();
                 if (catNodeBudget - costEstimate >= 0) {
                     for (Tile tile : binTiles) {
                         tile.setCategoricalColumns(catAttrs);
-                        totalUtil += computeTileTreeUtil(tile, catAttrs);
                         treesByAttrCount[catAttrs.size() - 1]++;
                     }
                     catNodeBudget -= costEstimate;
@@ -58,7 +56,5 @@ public class EqFreqBinnInitializationPolicy extends InitializationPolicy {
             }
         }
         LOG.debug("Initial BINN assignments: " + Arrays.toString(treesByAttrCount));
-        LOG.debug("Total Index Util: " + totalUtil);
-        return totalUtil;
     }
 }
