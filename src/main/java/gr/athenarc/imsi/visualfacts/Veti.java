@@ -8,6 +8,7 @@ import com.univocity.parsers.csv.CsvParserSettings;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
+import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
@@ -48,6 +49,8 @@ public class Veti {
 
     private int objectsIndexed = 0;
 
+    private TokenMap tokenMap;
+
     public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
         this.schema = schema;
         this.initMode = initMode;
@@ -72,8 +75,9 @@ public class Veti {
         }
     }
 
-    public QueryResults initialize(Query q0) {
+    public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
         generateGrid(q0);
+        tokenMap = new TokenMap(schema);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
 
@@ -122,6 +126,9 @@ public class Veti {
                     }
                     node.adjustStats(value0, value1);
                 }
+
+                tokenMap.processRow(row);
+
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug(point);
@@ -146,7 +153,7 @@ public class Veti {
         return objectsIndexed;
     }
 
-    public synchronized QueryResults executeQuery(Query query) throws IOException {
+    public synchronized QueryResults executeQuery(Query query) throws IOException, ClassNotFoundException {
         if (!isInitialized) {
             return initialize(query);
         }
