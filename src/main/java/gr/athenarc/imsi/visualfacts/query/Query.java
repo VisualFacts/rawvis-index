@@ -16,14 +16,17 @@ public class Query {
 
     private Integer measureCol;
 
+    private boolean dedupEnabled;
+
     public Query() {
     }
 
-    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols, Integer measureCol) {
+    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols, Integer measureCol, boolean dedupEnabled) {
         this.rect = rect;
         this.categoricalFilters = categoricalFilters;
         this.groupByCols = groupByCols;
         this.measureCol = measureCol;
+        this.dedupEnabled = dedupEnabled;
     }
 
     public Rectangle getRect() {
@@ -58,6 +61,14 @@ public class Query {
         this.measureCol = measureCol;
     }
 
+    public boolean isDedupEnabled() {
+        return dedupEnabled;
+    }
+
+    public void setDedupEnabled(boolean dedupEnabled) {
+        this.dedupEnabled = dedupEnabled;
+    }
+
     @Override
     public String toString() {
         return "Query{" +
@@ -65,6 +76,7 @@ public class Query {
                 ", categoricalFilters=" + categoricalFilters +
                 ", groupByCols=" + groupByCols +
                 ", measureCol=" + measureCol +
+                ", dedupEnabled=" + dedupEnabled +
                 '}';
     }
 }

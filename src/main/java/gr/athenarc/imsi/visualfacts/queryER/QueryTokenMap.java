@@ -11,21 +11,21 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-public class TokenMap {
-    private static final Logger LOG = LogManager.getLogger(TokenMap.class);
+public class QueryTokenMap {
+    private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
 
     Map<String, Set<String>> map = new HashMap<>();
     HashMap<String, Integer> tfIdf = new HashMap<>();
 
     Schema schema;
 
-    public TokenMap(Schema schema) {
+    public QueryTokenMap(Schema schema) {
         this.schema = schema;
     }
 
-    public void processRow(String[] row) {
+    public void processQueryObject(String[] object) {
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            String value = row[categoricalColumn.getIndex()];
+            String value = object[categoricalColumn.getIndex()];
             if (value == null)
                 continue;
             String cleanValue = value.replaceAll("_", " ").trim().replaceAll("\\s*,\\s*$", "")
