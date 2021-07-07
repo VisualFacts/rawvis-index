@@ -1,12 +1,15 @@
 package gr.athenarc.imsi.visualfacts.queryER;
 
 import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.Point;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.config.ERConfig;
+import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.Converter;
 
+import gr.athenarc.imsi.visualfacts.util.RawFileService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -25,10 +28,13 @@ public class QueryTokenMap {
 
     Map<String, Set<String>> map = new HashMap<>();
 
+    RawFileService rawFileService;
+
     Schema schema;
 
-    public QueryTokenMap(Schema schema) {
+    public QueryTokenMap(Schema schema, RawFileService rawFileService) {
         this.schema = schema;
+        this.rawFileService = rawFileService;
     }
 
     public Map<String, Set<String>> joinTokenMap() {
@@ -58,8 +64,13 @@ public class QueryTokenMap {
 		invertedIndex.clear();
 		return blocks;
 	}
+
+	public void processQueryResults(QueryResults queryResults){
+        queryResults.getPoints().stream().forEach(this::processQueryObject);
+    }
     
-    public void processQueryObject(String[] object) {
+    private void processQueryObject(Point point) {
+        String[] object = rawFileService.getObject(point.getFileOffset());
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
             String value = object[categoricalColumn.getIndex()];
             if (value == null)

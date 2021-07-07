@@ -8,11 +8,9 @@ import com.univocity.parsers.csv.CsvParserSettings;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
+import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
 import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
-import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
-import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
-import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
-import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
+import gr.athenarc.imsi.visualfacts.util.*;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -36,6 +34,8 @@ public class Veti {
     private Grid grid;
 
     private Schema schema;
+
+    private RawFileService rawFileService;
 
     private String initMode;
 
@@ -172,7 +172,7 @@ public class Veti {
         List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        List<float[]> points = new ArrayList<>();
+        List<Point> points = new ArrayList<>();
 
         int fullyContainedTilesCount = 0;
 
@@ -256,7 +256,7 @@ public class Veti {
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
-            points.add(new float[]{point.getY(), point.getX()});
+            points.add(point);
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
@@ -313,7 +313,7 @@ public class Veti {
         }
         for (QueryNode node : nonRawNodes) {
             for (Point point : node) {
-                points.add(new float[]{point.getY(), point.getX()});
+                points.add(point);
             }
         }
 
@@ -332,6 +332,9 @@ public class Veti {
             pairedStatsAccumulator.addAll(e.getValue());
         });
         queryResults.setRectStats(pairedStatsAccumulator);
+
+        QueryTokenMap queryTokenMap = new QueryTokenMap(schema, rawFileService);
+        queryTokenMap.processQueryResults(queryResults);
         return queryResults;
     }
 

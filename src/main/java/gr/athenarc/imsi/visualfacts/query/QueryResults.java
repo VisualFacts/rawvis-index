@@ -3,6 +3,7 @@ package gr.athenarc.imsi.visualfacts.query;
 import com.google.common.collect.ImmutableList;
 import com.google.common.math.PairedStats;
 import com.google.common.math.PairedStatsAccumulator;
+import gr.athenarc.imsi.visualfacts.Point;
 
 import java.util.HashMap;
 import java.util.List;
@@ -19,7 +20,7 @@ public class QueryResults {
 
     private PairedStatsAccumulator rectStats;
 
-    private List<float[]> points;
+    private List<Point> points;
 
     private int fullyContainedTileCount;
 
@@ -88,11 +89,11 @@ public class QueryResults {
         this.expandedNodeCount = expandedNodeCount;
     }
 
-    public List<float[]> getPoints() {
+    public List<Point> getPoints() {
         return points;
     }
 
-    public void setPoints(List<float[]> points) {
+    public void setPoints(List<Point> points) {
         this.points = points;
     }
 
