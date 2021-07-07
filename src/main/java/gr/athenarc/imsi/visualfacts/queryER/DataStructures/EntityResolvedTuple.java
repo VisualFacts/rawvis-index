@@ -1,0 +1,187 @@
+package gr.athenarc.imsi.visualfacts.queryER.DataStructures;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.EntityGrouping;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.MapUtilities;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.UnionFind;
+
+public class EntityResolvedTuple<T> {
+
+	public HashMap<Long, Object[]> data;
+
+	public UnionFind uFind;
+	public HashMap<Long, Set<Long>> revUF; // these is the query links
+	public HashMap<Long, Set<Long>> links; // these are the total links
+	public HashMap<Long, HashMap<Long,Double>> similarities;
+	public List<T> finalData;
+	private boolean isGrouped = false;
+	private int matches;
+	private Integer comparisons;
+	private double compTime;
+	private double revUFCreationTime;
+	private Integer keyIndex;
+	private Integer noOfAttributes;
+	
+	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind, Integer keyIndex, Integer noOfAttributes) {
+		super();
+		this.data = data;
+		this.uFind = uFind;
+		this.finalData = new ArrayList<>();
+		this.revUF = new HashMap<>();
+		this.keyIndex = keyIndex;
+		this.noOfAttributes = noOfAttributes;
+	}
+	
+	
+	public EntityResolvedTuple(List<Object[]> finalData, UnionFind uFind, Integer keyIndex, Integer noOfAttributes) {
+		super();
+		this.finalData = (List<T>) finalData;
+		this.revUF = new HashMap<>();
+	}
+	
+
+	
+//	@SuppressWarnings("unchecked")
+//	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
+//		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF, 
+//				this.data, this.similarities, keyIndex, 
+//				noOfAttributes, projects, fieldNames, dumpDirectories.getLiFilePath());	
+//		isGrouped = true;
+//
+//	}
+	
+	@SuppressWarnings("unchecked")
+	public void getAll() {
+		double revUFCreationStartTime = System.currentTimeMillis();
+		for (long child : uFind.getParent().keySet()) {
+			long parent = uFind.getParent().get(child);
+			this.revUF.computeIfAbsent(parent, x -> new HashSet<>()).add(child);
+			this.revUF.computeIfAbsent(child, x -> new HashSet<>()).add(parent);
+			// For both of these go to their similarities and recompute them
+			for(long simPar : this.revUF.get(parent)) {
+				if(simPar != parent)
+					this.revUF.computeIfAbsent(simPar, x -> new HashSet<>()).addAll(this.revUF.get(parent));
+			}
+			for(long simPar : this.revUF.get(child)) {
+				if(simPar != child)
+					this.revUF.computeIfAbsent(simPar, x -> new HashSet<>()).addAll(this.revUF.get(child));
+			}
+		}
+
+		double revUFCreationEndTime = System.currentTimeMillis();
+		this.setRevUFCreationTime((revUFCreationEndTime - revUFCreationStartTime)/1000);
+	}
+	
+	public void mergeLinks(HashMap<Long, Set<Long>> links, String tableName, boolean firstDedup,
+			Set<Long> totalIds, boolean runLinks) {
+		this.links = links;
+		if(!firstDedup) this.combineLinks(links);
+		if(runLinks) storeLinks(tableName);
+		filterData(totalIds);	
+	}
+	
+	public void storeLinks(String table) {
+
+
+	}
+	
+	
+	public void filterData(Set<Long> totalIds) {
+		HashMap<Long, Object[]> filteredData = new HashMap<>();
+		// First filter the merged revUF by keeping only the query ids + dup ids
+		this.revUF.keySet().retainAll(totalIds);
+		this.revUF.values().forEach(v -> v.retainAll(totalIds));
+		for (long id : this.revUF.keySet()) {
+			Object[] datum = this.data.get(id);
+			if(datum == null) System.out.println(datum);
+			filteredData.put(id, datum);
+			this.finalData.add((T) datum);
+		}
+		this.data = filteredData;
+	}
+	
+	public void combineLinks(Map<Long, Set<Long>> links) {
+		if(revUF != null) {
+
+			for (Entry<Long, Set<Long>> e : revUF.entrySet())
+			    links.merge(e.getKey(), e.getValue(), (v1, v2) -> {
+			    	v1.addAll(v2);
+			    	return v1;
+			    });
+		}
+		this.revUF = (HashMap<Long, Set<Long>>) MapUtilities.deepCopy(this.links);
+	}
+
+	public int getMatches() {
+		return matches;
+	}
+
+	public void setMatches(int i) {
+		this.matches = i;
+	}
+
+	public Integer getComparisons() {
+		return comparisons;
+	}
+
+	public void setComparisons(Integer comparisons) {
+		this.comparisons = comparisons;
+	}
+
+	public HashMap<Long, Object[]> getData() {
+		return data;
+	}
+
+	public void setData(HashMap<Long, Object[]> data) {
+		this.data = data;
+	}
+
+	public HashMap<Long, Set<Long>> getRevUF() {
+		return revUF;
+	}
+
+	public void setRevUF(HashMap<Long, Set<Long>> revUF) {
+		this.revUF = revUF;
+	}
+
+	public List<T> getFinalData() {
+		return finalData;
+	}
+
+	public void setFinalData(List<T> finalData) {
+		this.finalData = finalData;
+	}
+
+	public double getCompTime() {
+		return compTime;
+	}
+
+	public void setCompTime(double compTime) {
+		this.compTime = compTime;
+	}
+
+	public double getRevUFCreationTime() {
+		return revUFCreationTime;
+	}
+
+	public void setRevUFCreationTime(double revUFCreationTime) {
+		this.revUFCreationTime = revUFCreationTime;
+	}
+
+	public HashMap<Long, Set<Long>> getLinks() {
+		return links;
+	}
+
+
+
+	
+
+}

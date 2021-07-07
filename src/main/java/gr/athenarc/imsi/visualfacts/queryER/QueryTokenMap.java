@@ -3,6 +3,10 @@ package gr.athenarc.imsi.visualfacts.queryER;
 import gr.athenarc.imsi.visualfacts.CategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.config.ERConfig;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.Converter;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -12,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Map.Entry;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -36,6 +41,24 @@ public class QueryTokenMap {
 
 		return extendedQueryMap;
     }
+    
+    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap){
+    	return parseIndex(extendedTokenMap);
+    	
+    }
+    
+    public static List<AbstractBlock> parseIndex(Map<String, Set<Long>> invertedIndex) {
+		List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
+		for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
+			if (1 < term.getValue().size()) {
+				long[] idsArray = Converter.convertSetToArray(term.getValue());
+				UnilateralBlock uBlock = new UnilateralBlock(idsArray);
+				blocks.add(uBlock);
+			}
+		}
+		invertedIndex.clear();
+		return blocks;
+	}
     
     public void processQueryObject(String[] object) {
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
