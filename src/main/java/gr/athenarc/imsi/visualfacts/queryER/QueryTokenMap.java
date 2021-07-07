@@ -24,7 +24,6 @@ public class QueryTokenMap {
     private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
 
     Map<String, Set<String>> map = new HashMap<>();
-    HashMap<String, Integer> tfIdf = new HashMap<>();
 
     Schema schema;
 
@@ -75,7 +74,6 @@ public class QueryTokenMap {
                             x -> new HashSet<>());
 
                     values.add(value);
-                    tfIdf.merge(token, 1, Integer::sum);
                 }
             }
         }
