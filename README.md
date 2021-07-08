@@ -35,7 +35,7 @@ Homepage: http://rawvis.net
 
 * Front-end Source Code: [[Link]](https://github.com/VisualFacts/RawVis)
 
-* Online Tool Demo: [[Link]](http://rawviz.imsi.athenarc.gr/visualize/taxi)
+* Online Demo: [[Link]](http://rawviz.imsi.athenarc.gr/visualize/taxi)
 
 * Video Presentation: [[Link]](https://vimeo.com/500596816)
 
