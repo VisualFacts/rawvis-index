@@ -334,7 +334,7 @@ public class Veti {
         queryResults.setRectStats(pairedStatsAccumulator);
 
         QueryTokenMap queryTokenMap = new QueryTokenMap(schema, rawFileService);
-        queryTokenMap.processQueryResults(queryResults);
+        queryTokenMap.processQueryResults(queryResults, tokenMap);
         return queryResults;
     }
 

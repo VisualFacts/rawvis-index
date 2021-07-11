@@ -8,25 +8,18 @@ import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.Converter;
-
 import gr.athenarc.imsi.visualfacts.util.RawFileService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 public class QueryTokenMap {
     private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
 
-    Map<String, Set<String>> map = new HashMap<>();
+    Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
 
     RawFileService rawFileService;
 
@@ -35,42 +28,41 @@ public class QueryTokenMap {
     public QueryTokenMap(Schema schema, RawFileService rawFileService) {
         this.schema = schema;
         this.rawFileService = rawFileService;
+        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
+            map.put(categoricalColumn.getIndex(), new HashMap<>());
+        }
     }
 
-    public Map<String, Set<String>> joinTokenMap() {
-		TokenMap tokenMap = new TokenMap(this.schema);
-		Map<String, Set<String>> globalTokenMap = tokenMap.map;
-		Predicate<Map.Entry<String, Set<String>>> predicate = entry -> map.keySet().contains(entry.getKey()); // note this is java.util.function.Predicate
-		Map<String, Set<String>> extendedQueryMap = globalTokenMap.entrySet().stream().filter(predicate)
-		        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-		return extendedQueryMap;
-    }
-    
-    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap){
-    	return parseIndex(extendedTokenMap);
-    	
-    }
-    
     public static List<AbstractBlock> parseIndex(Map<String, Set<Long>> invertedIndex) {
-		List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
-		for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
-			if (1 < term.getValue().size()) {
-				long[] idsArray = Converter.convertSetToArray(term.getValue());
-				UnilateralBlock uBlock = new UnilateralBlock(idsArray);
-				blocks.add(uBlock);
-			}
-		}
-		invertedIndex.clear();
-		return blocks;
-	}
-
-	public void processQueryResults(QueryResults queryResults){
-        queryResults.getPoints().stream().forEach(this::processQueryObject);
+        List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
+        for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
+            if (1 < term.getValue().size()) {
+                long[] idsArray = Converter.convertSetToArray(term.getValue());
+                UnilateralBlock uBlock = new UnilateralBlock(idsArray);
+                blocks.add(uBlock);
+            }
+        }
+        invertedIndex.clear();
+        return blocks;
     }
-    
-    private void processQueryObject(Point point) {
+
+    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
+        return parseIndex(extendedTokenMap);
+
+    }
+
+    public void processQueryResults(QueryResults queryResults, TokenMap globalTokenMap) {
+        Set<String> tokens = queryResults.getPoints().stream().map(this::processQueryObject).flatMap(Set::stream).collect(Collectors.toSet());
+
+        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
+            map.put(categoricalColumn.getIndex(), globalTokenMap.map.get(categoricalColumn.getIndex()).entrySet().stream().filter(e -> tokens.contains(e.getKey()))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+        }
+    }
+
+    private Set<String> processQueryObject(Point point) {
         String[] object = rawFileService.getObject(point.getFileOffset());
+        Set<String> tokens = new HashSet<>();
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
             String value = object[categoricalColumn.getIndex()];
             if (value == null)
@@ -81,12 +73,10 @@ public class QueryTokenMap {
                 if (2 < token.trim().length()) {
                     if (ERConfig.getStopwords().contains(token.toLowerCase()))
                         continue;
-                    Set<String> values = map.computeIfAbsent(token.trim(),
-                            x -> new HashSet<>());
-
-                    values.add(value);
+                    tokens.add(value);
                 }
             }
         }
+        return tokens;
     }
 }

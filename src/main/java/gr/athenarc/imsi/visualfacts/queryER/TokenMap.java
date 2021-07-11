@@ -14,13 +14,16 @@ import java.util.Set;
 public class TokenMap {
     private static final Logger LOG = LogManager.getLogger(TokenMap.class);
 
-    Map<String, Set<String>> map = new HashMap<>();
+    Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
     HashMap<String, Integer> tfIdf = new HashMap<>();
 
     Schema schema;
 
     public TokenMap(Schema schema) {
         this.schema = schema;
+        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()){
+            map.put(categoricalColumn.getIndex(), new HashMap<>());
+        }
     }
 
     public void processRow(String[] row) {
@@ -34,9 +37,8 @@ public class TokenMap {
                 if (2 < token.trim().length()) {
                     if (ERConfig.getStopwords().contains(token.toLowerCase()))
                         continue;
-                    Set<String> values = map.computeIfAbsent(token.trim(),
+                    Set<String> values = map.get(categoricalColumn.getIndex()).computeIfAbsent(token.trim(),
                             x -> new HashSet<>());
-
                     values.add(value);
                     tfIdf.merge(token, 1, Integer::sum);
                 }
