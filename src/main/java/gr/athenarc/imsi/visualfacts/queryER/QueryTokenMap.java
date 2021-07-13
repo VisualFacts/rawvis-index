@@ -4,6 +4,7 @@ import gr.athenarc.imsi.visualfacts.CategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.config.ERConfig;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.DecomposedBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.Converter;
 
@@ -11,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,6 +61,31 @@ public class QueryTokenMap {
 		return blocks;
 	}
     
+    public Set<Long> blocksToEntities(List<AbstractBlock> blocks){
+		Set<Long> joinedEntityIds = new HashSet<>();
+		for(AbstractBlock block : blocks) {
+			UnilateralBlock uBlock = (UnilateralBlock) block;
+			long[] entities = uBlock.getEntities();
+			joinedEntityIds.addAll(Arrays.stream(entities).boxed().collect(Collectors.toSet()));
+		}
+		return joinedEntityIds;
+	}
+	
+
+	public Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks){
+		Set<Long> joinedEntityIds = new HashSet<>();
+		for(AbstractBlock block : blocks) {
+			DecomposedBlock dBlock = (DecomposedBlock) block;
+
+			long[] entities1 = dBlock.getEntities1();
+			long[] entities2 = dBlock.getEntities2();
+			joinedEntityIds.addAll(Arrays.stream(entities1).boxed().collect(Collectors.toSet()));
+			joinedEntityIds.addAll(Arrays.stream(entities2).boxed().collect(Collectors.toSet()));
+
+		}
+		return joinedEntityIds;
+	}
+	
     public void processQueryObject(String[] object) {
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
             String value = object[categoricalColumn.getIndex()];
