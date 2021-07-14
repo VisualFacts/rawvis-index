@@ -8,6 +8,7 @@ import com.univocity.parsers.csv.CsvParserSettings;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
 import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.util.*;
@@ -348,7 +349,7 @@ public class Veti {
                 q.setMeasureCol(query.getMeasureCol());
                 Map<Integer, String> filters = new HashMap<>();
                 filters.put(col, value);
-                for (Tile leafTile : leafTiles) {
+                for (Tile leafTile : overlappedTiles) {
                     ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
                     List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
                     for (QueryNode queryNode : queryNodes) {
@@ -363,6 +364,8 @@ public class Veti {
             }
 
         });
+        List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
+        //todo @vassilis
 
         return queryResults;
     }
