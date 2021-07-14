@@ -6,6 +6,7 @@ import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.config.ERConfig;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.DecomposedBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.Converter;
 import gr.athenarc.imsi.visualfacts.util.RawFileService;
@@ -20,7 +21,6 @@ public class QueryTokenMap {
     private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
 
     Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
-
     RawFileService rawFileService;
 
     Schema schema;
@@ -60,6 +60,7 @@ public class QueryTokenMap {
         }
     }
 
+
     private Set<String> processQueryObject(Point point) {
         String[] object = rawFileService.getObject(point.getFileOffset());
         Set<String> tokens = new HashSet<>();
@@ -78,5 +79,30 @@ public class QueryTokenMap {
             }
         }
         return tokens;
+    }
+
+    public Set<Long> blocksToEntities(List<AbstractBlock> blocks) {
+        Set<Long> joinedEntityIds = new HashSet<>();
+        for (AbstractBlock block : blocks) {
+            UnilateralBlock uBlock = (UnilateralBlock) block;
+            long[] entities = uBlock.getEntities();
+            joinedEntityIds.addAll(Arrays.stream(entities).boxed().collect(Collectors.toSet()));
+        }
+        return joinedEntityIds;
+    }
+
+
+    public Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks) {
+        Set<Long> joinedEntityIds = new HashSet<>();
+        for (AbstractBlock block : blocks) {
+            DecomposedBlock dBlock = (DecomposedBlock) block;
+
+            long[] entities1 = dBlock.getEntities1();
+            long[] entities2 = dBlock.getEntities2();
+            joinedEntityIds.addAll(Arrays.stream(entities1).boxed().collect(Collectors.toSet()));
+            joinedEntityIds.addAll(Arrays.stream(entities2).boxed().collect(Collectors.toSet()));
+
+        }
+        return joinedEntityIds;
     }
 }
