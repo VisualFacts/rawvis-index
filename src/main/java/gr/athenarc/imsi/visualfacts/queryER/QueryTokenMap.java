@@ -13,6 +13,7 @@ import gr.athenarc.imsi.visualfacts.util.RawFileService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
@@ -33,26 +34,15 @@ public class QueryTokenMap {
         }
     }
 
-    public static List<AbstractBlock> parseIndex(Map<String, Set<Long>> invertedIndex) {
-        List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
-        for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
-            if (1 < term.getValue().size()) {
-                long[] idsArray = Converter.convertSetToArray(term.getValue());
-                UnilateralBlock uBlock = new UnilateralBlock(idsArray);
-                blocks.add(uBlock);
+
+    public void processQueryResults(QueryResults queryResults, TokenMap globalTokenMap) throws IOException {
+        Set<String> tokens = new HashSet<>();
+        for (Point point : queryResults.getPoints()) {
+            Set<String> strings = processQueryObject(point);
+            for (String string : strings) {
+                tokens.add(string);
             }
         }
-        invertedIndex.clear();
-        return blocks;
-    }
-
-    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
-        return parseIndex(extendedTokenMap);
-
-    }
-
-    public void processQueryResults(QueryResults queryResults, TokenMap globalTokenMap) {
-        Set<String> tokens = queryResults.getPoints().stream().map(this::processQueryObject).flatMap(Set::stream).collect(Collectors.toSet());
 
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
             map.put(categoricalColumn.getIndex(), globalTokenMap.map.get(categoricalColumn.getIndex()).entrySet().stream().filter(e -> tokens.contains(e.getKey()))
@@ -61,7 +51,7 @@ public class QueryTokenMap {
     }
 
 
-    private Set<String> processQueryObject(Point point) {
+    private Set<String> processQueryObject(Point point) throws IOException {
         String[] object = rawFileService.getObject(point.getFileOffset());
         Set<String> tokens = new HashSet<>();
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
@@ -91,6 +81,23 @@ public class QueryTokenMap {
         return joinedEntityIds;
     }
 
+    public static List<AbstractBlock> parseIndex(Map<String, Set<Long>> invertedIndex) {
+        List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
+        for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
+            if (1 < term.getValue().size()) {
+                long[] idsArray = Converter.convertSetToArray(term.getValue());
+                UnilateralBlock uBlock = new UnilateralBlock(idsArray);
+                blocks.add(uBlock);
+            }
+        }
+        invertedIndex.clear();
+        return blocks;
+    }
+
+    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
+        return parseIndex(extendedTokenMap);
+
+    }
 
     public Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks) {
         Set<Long> joinedEntityIds = new HashSet<>();
