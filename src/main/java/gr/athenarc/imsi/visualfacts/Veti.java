@@ -335,6 +335,35 @@ public class Veti {
 
         QueryTokenMap queryTokenMap = new QueryTokenMap(schema, rawFileService);
         queryTokenMap.processQueryResults(queryResults, tokenMap);
+
+        Map<String, Set<Long>> invertedIndex = new HashMap<>();
+        List<Tile> overlappedTiles = this.grid.getOverlappedLeafTiles(query);
+        queryTokenMap.map.entrySet().stream().forEach(entry -> {
+            Map<String, Set<String>> colTokenMap = entry.getValue();
+            int col = entry.getKey();
+            Set<String> distinctValues = colTokenMap.values().stream().flatMap(Collection::stream).collect(Collectors.toSet());
+            for (String value : distinctValues) {
+                Query q = new Query();
+                q.setRect(query.getRect());
+                q.setMeasureCol(query.getMeasureCol());
+                Map<Integer, String> filters = new HashMap<>();
+                filters.put(col, value);
+                for (Tile leafTile : leafTiles) {
+                    ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
+                    List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
+                    for (QueryNode queryNode : queryNodes) {
+                        List<Long> offsets = queryNode.getNode().getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toList());
+                        colTokenMap.entrySet().stream().forEach(e -> {
+                            if (e.getValue().contains(value)) {
+                                invertedIndex.computeIfAbsent(e.getKey(), x -> new HashSet<>()).addAll(offsets);
+                            }
+                        });
+                    }
+                }
+            }
+
+        });
+
         return queryResults;
     }
 

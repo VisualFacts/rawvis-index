@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 public class QueryTokenMap {
     private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
 
-    Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
+    public Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
     RawFileService rawFileService;
 
     Schema schema;
