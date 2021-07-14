@@ -49,15 +49,13 @@ public class ExecuteBlockComparisons<T> {
 		this.parser = new CsvParser(parserSettings);
 	}
 
-	public EntityResolvedTuple comparisonExecutionAll(List<AbstractBlock> blocks, Set<Long> qIds,
-			Integer keyIndex, Integer noOfFields) {
-		return comparisonExecutionJdk(blocks, qIds, keyIndex, noOfFields);
+	public EntityResolvedTuple comparisonExecutionAll(List<AbstractBlock> blocks, Set<Long> qIds, Integer noOfFields) {
+		return comparisonExecutionJdk(blocks, qIds, noOfFields);
 	}
 
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public EntityResolvedTuple comparisonExecutionJdk(List<AbstractBlock> blocks, Set<Long> qIds,
-			Integer keyIndex, Integer noOfFields) {
+	public EntityResolvedTuple comparisonExecutionJdk(List<AbstractBlock> blocks, Set<Long> qIds, Integer noOfFields) {
 		int comparisons = 0;
 		UnionFind uFind = new UnionFind(qIds);
 		
@@ -89,7 +87,7 @@ public class ExecuteBlockComparisons<T> {
 				Object[] entity2 = getEntity(id2);				
 
 				double compStartTime = System.currentTimeMillis();
-				double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2, keyIndex);
+				double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2);
 				double compEndTime = System.currentTimeMillis();
 				compTime += compEndTime - compStartTime;
 				comparisons++;
@@ -104,7 +102,7 @@ public class ExecuteBlockComparisons<T> {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		EntityResolvedTuple eRT = new EntityResolvedTuple(newData, uFind, keyIndex, noOfFields);	
+		EntityResolvedTuple eRT = new EntityResolvedTuple(newData, uFind, noOfFields);	
 		eRT.setComparisons(comparisons);
 		eRT.setMatches(matches.size());
 		eRT.setCompTime(compTime/1000);

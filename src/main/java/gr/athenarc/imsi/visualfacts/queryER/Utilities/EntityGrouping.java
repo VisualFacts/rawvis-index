@@ -30,23 +30,23 @@ import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
 public class EntityGrouping {
 	
 
-	public static List<Object[]> groupSimilarAll(HashMap<Integer, Set<Integer>> revUF, 
-			HashMap<Integer, Object[]> newData, Integer keyIndex, Integer noOfFields, List<Integer> projects, List<String> fieldNames, String storeLI) {
+	public static List<Object[]> groupSimilarAll(HashMap<Long, Set<Long>> revUF, 
+			HashMap<Long, Object[]> newData, Integer noOfFields, List<Integer> projects, List<String> fieldNames, String storeLI) {
 
 		List<Object[]> finalData = new ArrayList<>();
-		Set<Integer> checked = new HashSet<>();
+		Set<Long> checked = new HashSet<>();
 		double startTime = System.currentTimeMillis();
 		List<BigVizCluster> bigVizDataset = new ArrayList<>();
 		if(fieldNames != null) noOfFields = fieldNames.size();
 		//List<HashMap<String, Double>>  columnSimilarities = new ArrayList<>(); // List of the column similarities of each cluster
-		for (int id : revUF.keySet()) {
+		for (long id : revUF.keySet()) {
 			List<BigVizData> entityGroup = new ArrayList<>();
 			Object[] groupedObj = new Object[noOfFields]; //length
-			Set<Integer> similar = revUF.get(id);
+			Set<Long> similar = revUF.get(id);
 			if(checked.contains(id)) continue;
 			checked.addAll(similar);
 			//HashMap<String, Double>  clusterColumnSimilarity = new HashMap<>();
-			for (int idInner : similar) {
+			for (long idInner : similar) {
 				//HashMap<String, String>  columns = new HashMap<>();
 				Object[] datum = newData.get(idInner);
 				if(datum != null) {
@@ -95,29 +95,29 @@ public class EntityGrouping {
 		return finalData;
 	}
 
-	public static List<Object[]> groupSimilar(HashMap<Integer, Set<Integer>> revUF, 
-			HashMap<Integer, Object[]> newData, HashMap<Integer, HashMap<Integer, Double>> similarities, 
-			Integer keyIndex, Integer noOfFields, List<Integer> projects, List<String> fieldNames, String storeLI) {
+	public static List<Object[]> groupSimilar(HashMap<Long, Set<Long>> revUF, 
+			HashMap<Long, Object[]> newData, HashMap<Long, HashMap<Long, Double>> similarities, 
+			Integer noOfFields, List<Integer> projects, List<String> fieldNames, String storeLI) {
 		
-		if(fieldNames == null) return groupSimilarAll(revUF, newData, keyIndex, noOfFields, projects, fieldNames, storeLI);
+		if(fieldNames == null) return groupSimilarAll(revUF, newData,  noOfFields, projects, fieldNames, storeLI);
 
 		
 		List<Object[]> finalData = new ArrayList<>();
-		Set<Integer> checked = new HashSet<>();
+		Set<Long> checked = new HashSet<>();
 		double startTime = System.currentTimeMillis();
 		List<BigVizCluster> bigVizDataset = new ArrayList<>();
 		if(fieldNames != null) noOfFields = fieldNames.size();
 		List<HashMap<String, Double>>  columnSimilarities = new ArrayList<>(); // List of the column similarities of each cluster
 		LinkedHashMap<String, HashMap<String,Integer>> clustersColumnValues = new LinkedHashMap<>();
-		for (int id : revUF.keySet()) {
+		for (long id : revUF.keySet()) {
 			List<BigVizData> entityGroup = new ArrayList<>();
-			Set<Integer> similar = revUF.get(id);
+			Set<Long> similar = revUF.get(id);
 			/* Because we resolve all duplicates when found the first id of the cluster we use this set */
 			if(checked.contains(id)) continue; 
 			checked.addAll(similar);
 			HashMap<String, Double>  clusterColumnSimilarity = new HashMap<>(); // This cluster's column similarities
 			LinkedHashMap<String, HashMap<String, Integer>> clusterColumns = new LinkedHashMap<>(); // Columns of this cluster
-			for (int idInner : similar) {
+			for (long idInner : similar) {
 				HashMap<String, String>  columns = new HashMap<>();
 				Object[] datum = newData.get(idInner);
 				if(datum != null) {

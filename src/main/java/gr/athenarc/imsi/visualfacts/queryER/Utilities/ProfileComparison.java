@@ -183,7 +183,7 @@ public class ProfileComparison {
 
 		return tokensFrequency;
 	}
-	
+
 	public static Set<String> getDistinctTokens(Object[] nameValuePairs) {
 		final Set<String> tokensFrequency = new HashSet<String>(5 * (nameValuePairs.length - 1));
 		for (Object attr : nameValuePairs) {
@@ -209,7 +209,7 @@ public class ProfileComparison {
 		tokenizedProfile1.retainAll(tokenizedProfile2);
 		return ((double) tokenizedProfile1.size()) / allTokens.size();
 	}
-	
+
 	public static double getJaccardSimilarity(Object[] profile1, Object[] profile2, Integer keyIndex) {
 		Object[] profile1Cleaned = removeArrayElement(profile1, keyIndex);
 		Object[] profile2Cleaned = removeArrayElement(profile2, keyIndex);
@@ -224,7 +224,7 @@ public class ProfileComparison {
 		return ((double) tokenizedProfile1.size()) / allTokens.size();
 	}
 
-	public static double getJaroSimilarity(Object[] entity1, Object[] entity2, Integer keyIndex) {
+	public static double getJaroSimilarity(Object[] entity1, Object[] entity2) {
 		// TODO Auto-generated method stub
 		String string1 = "";
 		String string2 = "";
@@ -232,27 +232,25 @@ public class ProfileComparison {
 		HashMap<Integer, String> at2 = new HashMap<>();
 		Integer length = entity1.length;
 		int index = 0;
-		
+
 		while (index < length) {
-			if(index != keyIndex) {
-				if (entity1[index].equals("")) {
-					index += 1;
-					continue;
-				}
-				at1.put(index, entity1[index].toString());
+			if (entity1[index].equals("")) {
+				index += 1;
+				continue;
 			}
+			at1.put(index, entity1[index].toString());
+
 			index += 1;
 		}
 		length = entity2.length;
 		index = 0;
 		while (index < length) {
-			if(index != keyIndex) {
-				if (entity2[index].equals("")) {
-					index += 1;
-					continue;
-				}
-				at2.put(index, entity2[index].toString());
+			if (entity2[index].equals("")) {
+				index += 1;
+				continue;
 			}
+			at2.put(index, entity2[index].toString());
+
 			index += 1;
 		}
 		int total = 0;
@@ -273,11 +271,11 @@ public class ProfileComparison {
 
 		mean = acc / total;
 		return mean;
-		
+
 	}
 
-	
 
-	
+
+
 
 }

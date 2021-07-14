@@ -14,7 +14,7 @@ public class MapUtilities {
 		return clone;
 	}
 	
-	public static Set<Integer> deepCopySet(Set<Integer> set){
-		return set.stream().map(Integer::new).collect(Collectors.toSet());
+	public static Set<Long> deepCopySet(Set<Long> set){
+		return set.stream().map(Long::new).collect(Collectors.toSet());
 	}
 }

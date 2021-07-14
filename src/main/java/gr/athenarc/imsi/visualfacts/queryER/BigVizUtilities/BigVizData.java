@@ -11,11 +11,11 @@ public class BigVizData implements Serializable {
 	 * 
 	 */
 	private static final long serialVersionUID = 464784220057275840L;
-	public Integer offset;
+	public Long offset;
 	public HashMap<String, String> columns;		
 	
-	public BigVizData(Integer offset, HashMap<String, String> columns) {
-		this.offset = offset;
+	public BigVizData(long idInner, HashMap<String, String> columns) {
+		this.offset = idInner;
 		this.columns = columns;
 	}
 	

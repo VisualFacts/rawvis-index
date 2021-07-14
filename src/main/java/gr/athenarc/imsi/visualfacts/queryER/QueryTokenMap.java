@@ -71,7 +71,7 @@ public class QueryTokenMap {
         return tokens;
     }
 
-    public Set<Long> blocksToEntities(List<AbstractBlock> blocks) {
+    public static Set<Long> blocksToEntities(List<AbstractBlock> blocks) {
         Set<Long> joinedEntityIds = new HashSet<>();
         for (AbstractBlock block : blocks) {
             UnilateralBlock uBlock = (UnilateralBlock) block;
@@ -99,7 +99,7 @@ public class QueryTokenMap {
 
     }
 
-    public Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks) {
+    public static Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks) {
         Set<Long> joinedEntityIds = new HashSet<>();
         for (AbstractBlock block : blocks) {
             DecomposedBlock dBlock = (DecomposedBlock) block;

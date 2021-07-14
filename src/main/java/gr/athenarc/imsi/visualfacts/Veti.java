@@ -9,6 +9,8 @@ import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
+import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
 import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.util.*;
@@ -364,12 +366,27 @@ public class Veti {
             }
 
         });
-        List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
+       
         //todo @vassilis
-
+        
+        Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
+        HashMap<Long, Object[]> queryData = getQueryData(qIds);
+        List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
+        EntityResolvedTuple entityResolvedTuple = DeduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size());
         return queryResults;
     }
 
+    private HashMap<Long, Object[]> getQueryData(Set<Long> qIds){
+    	return qIds.stream().collect(Collectors.toMap(offset -> offset, offset ->  {
+			try {
+				return rawFileService.getObject(offset);
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+			return null;
+		}, (left, right) -> right, HashMap::new));
+    
+    }
     private boolean checkUnknownAttrs(Query query, String[] row, List<CategoricalColumn> unknownCatAttrs) {
         boolean check = true;
         for (CategoricalColumn categoricalColumn : unknownCatAttrs) {

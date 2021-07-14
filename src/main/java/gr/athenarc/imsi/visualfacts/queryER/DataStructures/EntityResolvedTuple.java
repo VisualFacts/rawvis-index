@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.DumpDirectories;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.EntityGrouping;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.MapUtilities;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
@@ -27,21 +28,19 @@ public class EntityResolvedTuple<T> {
 	private Integer comparisons;
 	private double compTime;
 	private double revUFCreationTime;
-	private Integer keyIndex;
 	private Integer noOfAttributes;
 	
-	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind, Integer keyIndex, Integer noOfAttributes) {
+	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind, Integer noOfAttributes) {
 		super();
 		this.data = data;
 		this.uFind = uFind;
 		this.finalData = new ArrayList<>();
 		this.revUF = new HashMap<>();
-		this.keyIndex = keyIndex;
 		this.noOfAttributes = noOfAttributes;
 	}
 	
 	
-	public EntityResolvedTuple(List<Object[]> finalData, UnionFind uFind, Integer keyIndex, Integer noOfAttributes) {
+	public EntityResolvedTuple(List<Object[]> finalData, UnionFind uFind, Integer noOfAttributes) {
 		super();
 		this.finalData = (List<T>) finalData;
 		this.revUF = new HashMap<>();
@@ -49,14 +48,15 @@ public class EntityResolvedTuple<T> {
 	
 
 	
-//	@SuppressWarnings("unchecked")
-//	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
-//		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF, 
-//				this.data, this.similarities, keyIndex, 
-//				noOfAttributes, projects, fieldNames, dumpDirectories.getLiFilePath());	
-//		isGrouped = true;
-//
-//	}
+	@SuppressWarnings("unchecked")
+	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
+		DumpDirectories dumpDirectories = new DumpDirectories();
+		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF, 
+				this.data, this.similarities, 
+				noOfAttributes, projects, fieldNames, dumpDirectories.getLiFilePath());	
+		isGrouped = true;
+
+	}
 	
 	@SuppressWarnings("unchecked")
 	public void getAll() {
@@ -81,10 +81,10 @@ public class EntityResolvedTuple<T> {
 	}
 	
 	public void mergeLinks(HashMap<Long, Set<Long>> links, String tableName, boolean firstDedup,
-			Set<Long> totalIds, boolean runLinks) {
+			Set<Long> totalIds) {
 		this.links = links;
 		if(!firstDedup) this.combineLinks(links);
-		if(runLinks) storeLinks(tableName);
+		storeLinks(tableName);
 		filterData(totalIds);	
 	}
 	
