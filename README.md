@@ -11,8 +11,11 @@ In RawVis, the user selects a raw file to visualize and analyze, the file is par
 Based on the user interaction, the index is adapted incrementally, adjusting its structure and updating statistics.
 
 
+* RawVis Homepage: http://rawvis.net
 
-Homepage: http://rawvis.net
+* Online Tool Demo: [[Link]](http://rawviz.imsi.athenarc.gr/visualize/taxi)
+
+* Video Presentation: [[Link]](https://vimeo.com/500596816)
 
 
 
