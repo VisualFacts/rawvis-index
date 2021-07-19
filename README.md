@@ -21,6 +21,33 @@ Based on the user interaction, the index is adapted incrementally, adjusting its
 
 </br>
 
+## Datasets
+
+### Synthetic Dataset Generator:
+
+Build the JAR file:
+
+```
+
+./mvnw clean install
+
+
+```
+
+To generate the SYNTH10 dataset, run the experiments executable JAR file:
+
+```
+
+java -jar ./target/experiments.jar -c synth10 -out synth10.csv
+
+```
+For SYNTH50, run:
+
+```
+
+java -jar ./target/experiments.jar -c synth50 -out synth50.csv
+
+```
 
 ## Queries
 * SYNTH10: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/synth_10_queries)
