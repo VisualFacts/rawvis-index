@@ -22,12 +22,12 @@ Based on the user interaction, the index is adapted incrementally, adjusting its
 </br>
 
 
-## Running Instructions 
+## Queries
+* SYNTH10: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/synth_10_queries)
 
+* SYNTH50: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/synth_50_queries)
 
-* Data Generator: [[Link]]()
-* Queries: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries)
-
+* TAXI: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/taxi_queries)
 
 </br>
 
