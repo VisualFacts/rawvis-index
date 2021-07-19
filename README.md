@@ -26,7 +26,7 @@ Based on the user interaction, the index is adapted incrementally, adjusting its
 
 
 * Data Generator: [[Link]]()
-* Query Generator: [[Link]]()
+* Queries: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries)
 
 
 </br>
