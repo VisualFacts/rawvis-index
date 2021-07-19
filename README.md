@@ -1,4 +1,4 @@
-# RawVis System
+# RawVis: In-situ Visual Analytics System [Backend]
 
 RawVis is an open source data visualization system for in-situ visual exploration and analytics over big raw data. 
 RawVis implements novel indexing schemes and adaptive processing techniques allowing users to perform efficient visual and analytics operations directly over the data files. 
@@ -11,8 +11,11 @@ In RawVis, the user selects a raw file to visualize and analyze, the file is par
 Based on the user interaction, the index is adapted incrementally, adjusting its structure and updating statistics.
 
 
+* RawVis Homepage: http://rawvis.net
 
-Homepage: http://rawvis.net
+* Online Tool Demo: [[Link]](http://rawviz.imsi.athenarc.gr/visualize/taxi)
+
+* Video Presentation: [[Link]](https://vimeo.com/500596816)
 
 
 
