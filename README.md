@@ -59,6 +59,24 @@ java -jar ./target/experiments.jar -c synth50 -out synth50.csv
 </br>
 
 
+## Running Instructions
+
+First, build the JAR file:
+
+```
+
+./mvnw clean install
+
+
+```
+
+To execute a sequence of queries, e.g. using the SYNTH10 dataset, run the following:
+
+```
+
+java -Xmx16G -jar ./target/experiments.jar -c timeQueries -csv synth10.csv -bounds 0:1000,0:1000 -rect 544:574,323:353 -xCol 0 -yCol 1 -measureCol 9 -groupBy 2 -filters 3:1000000000,4:1000000000 -catCols 2,3,4,5,6,7 -initMode $initMode -binCount 100 -catBudget 2 -objCount 100000000 -seqCount 100 -minShift 10 -maxShift 10 -minFilters 2 -maxFilters 2 -out results.csv
+
+```
 
 ## RawVis Prototype Tool  
 
