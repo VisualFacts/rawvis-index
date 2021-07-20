@@ -78,6 +78,50 @@ java -Xmx16G -jar ./target/experiments.jar -c timeQueries -csv synth10.csv -boun
 
 ```
 
+### Parameters:
+    
+-csv *The csv file*
+
+-bounds *X-Y boundaries*
+
+-objCount *Number of objects in the dataset*
+
+-xCol *The x column*
+
+-yCol *The y column*
+
+-measureCol *The column to compute statistics*
+
+-groupBy *Group by column*
+
+-catCols *Categorical columns*
+
+-rect *The x-y rectangle of Q0*
+
+-filters *Q0 Filters*    
+
+-seqCount *Number of queries in the sequence*
+
+-minFilters *Minimum number of filters in the query sequence*
+
+-maxFilters *Maximum number of filters in the query sequence*
+
+-minShift *Min shift in the query sequence*
+
+-maxShift *Max shift in the query sequence*
+
+-initMode *The initialization mode to use (e.g. BINN)*
+
+-binCount *Number of bins for BINN method*
+
+-catBudget *Initial budget in GB*   
+
+-out *The file to write results to*
+
+
+
+
+
 ## RawVis Prototype Tool  
 
 
