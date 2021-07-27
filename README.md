@@ -1,4 +1,4 @@
-# RawVis System
+# RawVis: In-situ Visual Analytics System [Backend]
 
 RawVis is an open source data visualization system for in-situ visual exploration and analytics over big raw data. 
 RawVis implements novel indexing schemes and adaptive processing techniques allowing users to perform efficient visual and analytics operations directly over the data files. 
@@ -11,22 +11,114 @@ In RawVis, the user selects a raw file to visualize and analyze, the file is par
 Based on the user interaction, the index is adapted incrementally, adjusting its structure and updating statistics.
 
 
+* RawVis Homepage: http://rawvis.net
 
-Homepage: http://rawvis.net
+* Online Tool Demo: [[Link]](http://rawviz.imsi.athenarc.gr/visualize/taxi)
+
+* Video Presentation: [[Link]](https://vimeo.com/500596816)
 
 
+
+</br>
+
+## Datasets
+
+### Synthetic Dataset Generator:
+
+Build the JAR file:
+
+```
+
+./mvnw clean install
+
+
+```
+
+To generate the SYNTH10 dataset, run the experiments executable JAR file:
+
+```
+
+java -jar ./target/experiments.jar -c synth10 -out synth10.csv
+
+```
+For SYNTH50, run:
+
+```
+
+java -jar ./target/experiments.jar -c synth50 -out synth50.csv
+
+```
+
+## Queries
+* SYNTH10: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/synth_10_queries)
+
+* SYNTH50: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/synth_50_queries)
+
+* TAXI: [[Link]](https://github.com/VisualFacts/rawvis-index/tree/master/queries/taxi_queries)
 
 </br>
 
 
-## Running Instructions 
+## Running Instructions
+
+First, build the JAR file:
+
+```
+
+./mvnw clean install
 
 
-* Data Generator: [[Link]]()
-* Query Generator: [[Link]]()
+```
+
+To execute a sequence of queries, e.g. using the SYNTH10 dataset, run the following:
+
+```
+
+java -Xmx16G -jar ./target/experiments.jar -c timeQueries -csv synth10.csv -bounds 0:1000,0:1000 -rect 544:574,323:353 -xCol 0 -yCol 1 -measureCol 9 -groupBy 2 -filters 3:1000000000,4:1000000000 -catCols 2,3,4,5,6,7 -initMode $initMode -binCount 100 -catBudget 2 -objCount 100000000 -seqCount 100 -minShift 10 -maxShift 10 -minFilters 2 -maxFilters 2 -out results.csv
+
+```
+
+### Parameters:
+    
+-csv *The csv file*
+
+-bounds *X-Y boundaries*
+
+-objCount *Number of objects in the dataset*
+
+-xCol *The x column*
+
+-yCol *The y column*
+
+-measureCol *The column to compute statistics*
+
+-groupBy *Group by column*
+
+-catCols *Categorical columns*
+
+-rect *The x-y rectangle of Q0*
+
+-filters *Q0 Filters*    
+
+-seqCount *Number of queries in the sequence*
+
+-minFilters *Minimum number of filters in the query sequence*
+
+-maxFilters *Maximum number of filters in the query sequence*
+
+-minShift *Min shift in the query sequence*
+
+-maxShift *Max shift in the query sequence*
+
+-initMode *The initialization mode to use (e.g. BINN)*
+
+-binCount *Number of bins for BINN method*
+
+-catBudget *Initial budget in GB*   
+
+-out *The file to write results to*
 
 
-</br>
 
 
 

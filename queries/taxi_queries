@@ -1,0 +1,100 @@
+Query{rect=(-73.998314..-73.975006),(40.71516..40.73264), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-74.00064..-73.97734),(40.716908..40.734386), categoricalFilters={0=VTS, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.998314..-73.97501),(40.718655..40.736134), categoricalFilters={8=Y, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99599..-73.97269),(40.718655..40.736134), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.998314..-73.97501),(40.718655..40.736134), categoricalFilters={0=VTS, 8=N/A}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99599..-73.97269),(40.716908..40.734386), categoricalFilters={0=CMT, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99366..-73.97036),(40.716908..40.734386), categoricalFilters={11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99133..-73.96803),(40.718655..40.736134), categoricalFilters={0=CMT, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99366..-73.97036),(40.718655..40.736134), categoricalFilters={11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99366..-73.97036),(40.7204..40.73788), categoricalFilters={0=VTS, 8=N/A}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99133..-73.96803),(40.7204..40.73788), categoricalFilters={0=VTS, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99366..-73.97036),(40.718655..40.736134), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99133..-73.96803),(40.716908..40.734386), categoricalFilters={11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.989006..-73.965706),(40.718655..40.736134), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99133..-73.96803),(40.716908..40.734386), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.99133..-73.96803),(40.71516..40.73264), categoricalFilters={7=2, 8=N/A}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.989006..-73.965706),(40.716908..40.734386), categoricalFilters={0=CMT, 7=0}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.98668..-73.96338),(40.716908..40.734386), categoricalFilters={0=CMT, 8=N}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.98435..-73.96105),(40.716908..40.734386), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.98435..-73.96105),(40.718655..40.736134), categoricalFilters={8=N/A, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.982025..-73.958725),(40.7204..40.73788), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.982025..-73.958725),(40.72215..40.739628), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.982025..-73.958725),(40.723896..40.741375), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.9797..-73.9564),(40.725643..40.743122), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.9797..-73.9564),(40.72739..40.74487), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97737..-73.95407),(40.729137..40.746616), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97737..-73.95407),(40.730885..40.748363), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.975044..-73.951744),(40.730885..40.748363), categoricalFilters={8=N}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97737..-73.95407),(40.73263..40.75011), categoricalFilters={7=210}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97737..-73.95407),(40.730885..40.748363), categoricalFilters={0=VTS, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.975044..-73.951744),(40.73263..40.75011), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.975044..-73.951744),(40.730885..40.748363), categoricalFilters={7=0, 11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97272..-73.94942),(40.730885..40.748363), categoricalFilters={0=VTS, 11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97272..-73.94942),(40.73263..40.75011), categoricalFilters={7=6}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.975044..-73.951744),(40.73263..40.75011), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97272..-73.94942),(40.73438..40.751858), categoricalFilters={0=VTS, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97272..-73.94942),(40.736126..40.753605), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.97039..-73.94709),(40.736126..40.753605), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96806..-73.94476),(40.737873..40.755352), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96574..-73.94244),(40.73962..40.7571), categoricalFilters={0=VTS, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96341..-73.94011),(40.741367..40.758846), categoricalFilters={0=VTS, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96108..-73.93778),(40.743114..40.760593), categoricalFilters={0=VTS, 7=2}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96341..-73.94011),(40.741367..40.758846), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96574..-73.94244),(40.741367..40.758846), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96341..-73.94011),(40.743114..40.760593), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.96108..-73.93778),(40.74486..40.76234), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.958755..-73.935455),(40.74486..40.76234), categoricalFilters={0=CMT, 7=5}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.95643..-73.93313),(40.74661..40.764088), categoricalFilters={0=CMT, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.9541..-73.9308),(40.74486..40.76234), categoricalFilters={0=CMT, 11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.951775..-73.928474),(40.74661..40.764088), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.951775..-73.928474),(40.74486..40.76234), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.74661..40.764088), categoricalFilters={0=VTS, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.748356..40.765835), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.74661..40.764088), categoricalFilters={0=VTS, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.74661..40.764088), categoricalFilters={0=VTS, 8=Y}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.74486..40.76234), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.74486..40.76234), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.74486..40.76234), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.74661..40.764088), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.74486..40.76234), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.951775..-73.928474),(40.74661..40.764088), categoricalFilters={11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.9541..-73.9308),(40.74661..40.764088), categoricalFilters={0=VTS, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.9541..-73.9308),(40.748356..40.765835), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.951775..-73.928474),(40.748356..40.765835), categoricalFilters={0=VTS, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.750103..40.767582), categoricalFilters={0=VTS, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.75185..40.76933), categoricalFilters={7=2, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94945..-73.92615),(40.753597..40.771076), categoricalFilters={11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.75185..40.76933), categoricalFilters={11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.75185..40.76933), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.753597..40.771076), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.75185..40.76933), categoricalFilters={11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.753597..40.771076), categoricalFilters={11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.755344..40.772823), categoricalFilters={0=VTS, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.753597..40.771076), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.755344..40.772823), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.75709..40.77457), categoricalFilters={11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.75709..40.77457), categoricalFilters={0=CMT, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.75709..40.77457), categoricalFilters={11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.75884..40.776318), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.760586..40.778065), categoricalFilters={0=CMT, 7=210}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.762333..40.77981), categoricalFilters={8=N/A, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.76408..40.78156), categoricalFilters={0=VTS, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94712..-73.92382),(40.765827..40.783306), categoricalFilters={0=VTS, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.765827..40.783306), categoricalFilters={0=VTS, 11=UNK}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.76408..40.78156), categoricalFilters={0=CMT, 11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94479..-73.92149),(40.765827..40.783306), categoricalFilters={0=CMT, 8=N}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.76408..40.78156), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.76408..40.78156), categoricalFilters={11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.765827..40.783306), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.76408..40.78156), categoricalFilters={11=CRD}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.765827..40.783306), categoricalFilters={0=VTS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.93781..-73.91451),(40.765827..40.783306), categoricalFilters={0=VTS, 11=DIS}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.767574..40.785053), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.93781..-73.91451),(40.767574..40.785053), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.76932..40.7868), categoricalFilters={7=1}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.77107..40.788548), categoricalFilters={0=CMT, 11=NOC}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.93781..-73.91451),(40.772816..40.790295), categoricalFilters={0=CMT}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.77107..40.788548), categoricalFilters={7=1, 11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94247..-73.91917),(40.772816..40.790295), categoricalFilters={0=CMT, 11=CSH}, groupByCols=[3], measureCol=16}
+Query{rect=(-73.94014..-73.91684),(40.772816..40.790295), categoricalFilters={0=CMT, 8=Y}, groupByCols=[3], measureCol=16}
