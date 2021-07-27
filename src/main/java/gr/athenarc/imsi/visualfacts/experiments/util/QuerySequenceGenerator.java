@@ -77,7 +77,7 @@ public class QuerySequenceGenerator {
                     filterCount--;
                 }
             }
-            query = new Query(rect, filters, q0.getGroupByCols(), q0.getMeasureCol());
+            query = new Query(rect, filters, q0.getGroupByCols(), q0.getMeasureCol(), true);
             queries.add(query);
         }
         return queries;

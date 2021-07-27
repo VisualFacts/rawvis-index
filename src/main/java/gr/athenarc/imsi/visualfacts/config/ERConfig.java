@@ -14,7 +14,7 @@ public final class ERConfig {
     public static HashSet<String> getStopwords() {
         try {
             if (stopwords == null) {
-                ObjectInput input = new ObjectInputStream(new BufferedInputStream(ERConfig.class.getResourceAsStream("stopwords_SER")));
+                ObjectInput input = new ObjectInputStream(new BufferedInputStream(ERConfig.class.getClassLoader().getResourceAsStream("stopwords_SER")));
                 stopwords = (HashSet<String>) input.readObject();
             }
             return stopwords;

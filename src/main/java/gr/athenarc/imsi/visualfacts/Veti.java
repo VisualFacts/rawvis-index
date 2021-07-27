@@ -14,7 +14,6 @@ import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
 import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.util.*;
-import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -31,8 +30,6 @@ public class Veti {
     private static final Logger LOG = LogManager.getLogger(Veti.class);
 
     private boolean isInitialized = false;
-
-    private RandomAccessReader randomAccessReader;
 
     private Grid grid;
 
@@ -169,8 +166,8 @@ public class Veti {
 
         QueryResults queryResults = new QueryResults(query);
 
-        if (randomAccessReader == null) {
-            randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
+        if (rawFileService == null) {
+            rawFileService = new RawFileService(schema);
         }
         List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
@@ -250,23 +247,19 @@ public class Veti {
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(cols.toArray(new Integer[cols.size()]));
         parserSettings.setColumnReorderingEnabled(false);
-        CsvParser parser = new CsvParser(parserSettings);
 
         KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
         int ioCount = 0;
-        String line = null;
-        String[] row = null;
+        String[] row;
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
             points.add(point);
             try {
-                randomAccessReader.seek(point.getFileOffset());
-                line = randomAccessReader.readLine();
+                row = rawFileService.getObject(point.getFileOffset());
                 Float measureValue0 = null;
                 Float measureValue1 = null;
-                if (line != null) {
-                    row = parser.parseLine(line);
+                if (row != null) {
                     if (row != null) {
                         if (measureCol0 != null && row[measureCol0] != null) {
                             measureValue0 = Float.parseFloat(row[measureCol0]);
@@ -366,27 +359,27 @@ public class Veti {
             }
 
         });
-       
-        //todo @vassilis
-        
+
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
         List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
-        EntityResolvedTuple entityResolvedTuple = DeduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size());
+        EntityResolvedTuple entityResolvedTuple = DeduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
+        LOG.debug(entityResolvedTuple.revUF);
         return queryResults;
     }
 
-    private HashMap<Long, Object[]> getQueryData(Set<Long> qIds){
-    	return qIds.stream().collect(Collectors.toMap(offset -> offset, offset ->  {
-			try {
-				return rawFileService.getObject(offset);
-			} catch (IOException e1) {
-				e1.printStackTrace();
-			}
-			return null;
-		}, (left, right) -> right, HashMap::new));
-    
+    private HashMap<Long, Object[]> getQueryData(Set<Long> qIds) {
+        return qIds.stream().collect(Collectors.toMap(offset -> offset, offset -> {
+            try {
+                return rawFileService.getObject(offset);
+            } catch (IOException e1) {
+                e1.printStackTrace();
+            }
+            return null;
+        }, (left, right) -> right, HashMap::new));
+
     }
+
     private boolean checkUnknownAttrs(Query query, String[] row, List<CategoricalColumn> unknownCatAttrs) {
         boolean check = true;
         for (CategoricalColumn categoricalColumn : unknownCatAttrs) {
@@ -447,12 +440,4 @@ public class Veti {
         this.sort = sort;
     }
 
-    @Override
-    public void finalize() {
-        try {
-            randomAccessReader.close();
-        } catch (IOException e) {
-            LOG.error(e);
-        }
-    }
 }

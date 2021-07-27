@@ -114,7 +114,7 @@ public class Experiments {
         }
     }
 
-    private void run() throws IOException {
+    private void run() throws IOException, ClassNotFoundException {
         SyntheticDatasetGenerator generator;
         switch (command) {
             case "timeInitialization":
@@ -217,7 +217,7 @@ public class Experiments {
         Stopwatch stopwatch = Stopwatch.createUnstarted();
         stopwatch.start();
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
         veti.generateGrid(q0);
         stopwatch.stop();
 
@@ -266,7 +266,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
         veti.generateGrid(q0);
 
 
@@ -286,7 +286,7 @@ public class Experiments {
         csvWriter.close();
     }
 
-    private void timeInitialization() throws IOException {
+    private void timeInitialization() throws IOException, ClassNotFoundException {
         Preconditions.checkNotNull(csv, "You must define the csv file.");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
@@ -309,7 +309,7 @@ public class Experiments {
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
         veti.setSort(sort);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
         veti.initialize(q0);
         stopwatch.stop();
 
@@ -337,7 +337,7 @@ public class Experiments {
         csvWriter.close();
     }
 
-    private void timeQueries() throws IOException {
+    private void timeQueries() throws IOException, ClassNotFoundException {
         Preconditions.checkNotNull(csv, "You must define the csv file.");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
@@ -360,7 +360,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol,true);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {

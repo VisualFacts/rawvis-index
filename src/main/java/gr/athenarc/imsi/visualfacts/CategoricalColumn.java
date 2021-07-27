@@ -3,6 +3,8 @@ package gr.athenarc.imsi.visualfacts;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import gr.athenarc.imsi.visualfacts.query.Query;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,6 +14,7 @@ import java.util.stream.Collectors;
 import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
 public class CategoricalColumn {
+    private static final Logger LOG = LogManager.getLogger(CategoricalColumn.class);
 
     private int index;
 
@@ -27,7 +30,14 @@ public class CategoricalColumn {
         if (value == null){
             value = "N/A";
         }
-        return valueMap.computeIfAbsent(value, s -> (short) (valueMap.size()));
+
+        try {
+            return valueMap.computeIfAbsent(value, s -> (short) (valueMap.size()));
+        } catch (Exception e){
+            LOG.debug(value);
+            LOG.debug(valueMap);
+            return 0;
+        }
     }
 
     public String getValue(Short key) {
