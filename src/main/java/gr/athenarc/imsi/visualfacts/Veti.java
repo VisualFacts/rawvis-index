@@ -365,7 +365,7 @@ public class Veti {
                 q.setCategoricalFilters(filters);
                 for (Tile leafTile : overlappedTiles) {
                     ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
-                    List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
+                    List<QueryNode> queryNodes = leafTile.getQueryNodes(q, containmentExaminer, schema);
                     for (QueryNode queryNode : queryNodes) {
                         List<Long> offsets = queryNode.getNode().getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toList());
                         colTokenMap.entrySet().stream().forEach(e -> {
@@ -380,6 +380,7 @@ public class Veti {
         });
 
 
+        invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
         List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
