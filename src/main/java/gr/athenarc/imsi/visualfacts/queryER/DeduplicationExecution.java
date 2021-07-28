@@ -20,7 +20,9 @@ public class DeduplicationExecution<T> {
 
     private HashMap<Long, Set<Long>> links = new HashMap<>();
 
-    public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, int noOfAttributes, RawFileService rawFileService) {
+    public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, 
+    		HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, 
+    		int noOfAttributes, RawFileService rawFileService) {
 
         boolean firstDedup = false;
         // Check for links and remove qIds that have links
@@ -82,7 +84,7 @@ public class DeduplicationExecution<T> {
         queryData = mergeMaps(queryData, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService);
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
-        entityResolvedTuple.mergeLinks(links, tableName, firstDedup, totalIds);
+        this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
 
         // Log everything
 

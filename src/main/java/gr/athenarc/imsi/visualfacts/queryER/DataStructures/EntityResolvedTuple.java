@@ -77,19 +77,14 @@ public class EntityResolvedTuple<T> {
 		this.setRevUFCreationTime((revUFCreationEndTime - revUFCreationStartTime)/1000);
 	}
 	
-	public void mergeLinks(HashMap<Long, Set<Long>> links, String tableName, boolean firstDedup,
+	public HashMap<Long, Set<Long>> mergeLinks(HashMap<Long, Set<Long>> links, boolean firstDedup,
 			Set<Long> totalIds) {
 		this.links = links;
 		if(!firstDedup) this.combineLinks(links);
-		storeLinks(tableName);
 		filterData(totalIds);	
+		return links;
 	}
-	
-	public void storeLinks(String table) {
-
-
-	}
-	
+		
 	
 	public void filterData(Set<Long> totalIds) {
 		HashMap<Long, Object[]> filteredData = new HashMap<>();
