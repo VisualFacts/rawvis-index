@@ -103,12 +103,13 @@ public class EntityResolvedTuple<T> {
 	public void combineLinks(Map<Long, Set<Long>> links) {
 		if(revUF != null) {
 
-			for (Entry<Long, Set<Long>> e : revUF.entrySet())
+			for (Entry<Long, Set<Long>> e : revUF.entrySet()) {
+				e.getValue().remove(e.getKey());
 			    links.merge(e.getKey(), e.getValue(), (v1, v2) -> {
 			    	v1.addAll(v2);
-			    	v1.remove(e.getKey());
 			    	return v1;
 			    });
+			}
 		}
 		this.revUF = (HashMap<Long, Set<Long>>) MapUtilities.deepCopy(this.links);
 	}
