@@ -14,7 +14,7 @@ import java.util.Set;
 public class TokenMap {
     private static final Logger LOG = LogManager.getLogger(TokenMap.class);
 
-    Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
+    public Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
     HashMap<String, Integer> tfIdf = new HashMap<>();
 
     Schema schema;

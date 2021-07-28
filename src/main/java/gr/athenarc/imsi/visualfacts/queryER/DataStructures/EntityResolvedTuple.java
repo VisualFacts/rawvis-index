@@ -8,10 +8,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.DumpDirectories;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.EntityGrouping;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.MapUtilities;
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.UnionFind;
 
 public class EntityResolvedTuple<T> {
@@ -50,10 +48,9 @@ public class EntityResolvedTuple<T> {
 	
 	@SuppressWarnings("unchecked")
 	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
-		DumpDirectories dumpDirectories = new DumpDirectories();
-		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF, 
+		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF,
 				this.data, this.similarities, 
-				noOfAttributes, projects, fieldNames, dumpDirectories.getLiFilePath());	
+				noOfAttributes, projects, fieldNames);
 		isGrouped = true;
 
 	}

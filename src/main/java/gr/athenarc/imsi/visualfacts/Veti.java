@@ -51,6 +51,8 @@ public class Veti {
 
     private TokenMap tokenMap;
 
+    private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
+
     public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
         this.schema = schema;
         this.initMode = initMode;
@@ -363,8 +365,7 @@ public class Veti {
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
         List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
-        EntityResolvedTuple entityResolvedTuple = DeduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
-        LOG.debug(entityResolvedTuple.revUF);
+        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
         return queryResults;
     }
 

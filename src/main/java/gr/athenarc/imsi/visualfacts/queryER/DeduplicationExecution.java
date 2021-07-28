@@ -5,13 +5,10 @@ import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.BlockRefinement.ComparisonsBasedBlockPurging;
 import gr.athenarc.imsi.visualfacts.queryER.MetaBlocking.BlockFiltering;
 import gr.athenarc.imsi.visualfacts.queryER.MetaBlocking.EfficientEdgePruning;
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.DumpDirectories;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.MapUtilities;
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
 import gr.athenarc.imsi.visualfacts.util.RawFileService;
 
-import java.io.File;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -21,11 +18,12 @@ import java.util.stream.Collectors;
  */
 public class DeduplicationExecution<T> {
 
-    public static EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, int noOfAttributes, RawFileService rawFileService) {
+    private HashMap<Long, Set<Long>> links = new HashMap<>();
+
+    public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, int noOfAttributes, RawFileService rawFileService) {
 
         boolean firstDedup = false;
         // Check for links and remove qIds that have links
-        HashMap<Long, Set<Long>> links = loadLinks(tableName);
         HashMap<Long, Object[]> dataWithLinks = new HashMap<>();
         if (links == null) firstDedup = true;
         Set<Long> totalIds = new HashSet<>();
@@ -80,21 +78,11 @@ public class DeduplicationExecution<T> {
         totalIds.addAll(blockQids);
         totalIds.addAll(qIds);
 
-       /* RandomAccessReader randomAccessReader = null;
-        try {
-        	randomAccessReader = RandomAccessReader.open(new File(""));
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}*/
-
-
         // Merge queryData with dataWithLinks
         queryData = mergeMaps(queryData, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService);
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
         entityResolvedTuple.mergeLinks(links, tableName, firstDedup, totalIds);
-
 
         // Log everything
 
@@ -102,19 +90,12 @@ public class DeduplicationExecution<T> {
 
     }
 
-    public static HashMap<Long, Set<Long>> loadLinks(String table) {
-        DumpDirectories dumpDirectories = new DumpDirectories();
-        if (new File(dumpDirectories.getLinksDirPath() + table).exists())
-            return (HashMap<Long, Set<Long>>) SerializationUtilities.loadSerializedObject(dumpDirectories.getLinksDirPath() + table);
-        else return null;
-    }
-
-    private static HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, HashMap<Long, Object[]> queryData) {
+    private HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, HashMap<Long, Object[]> queryData) {
 
         return mergeMaps(dataWithLinks, queryData);
     }
 
-    public static Set<Long> getLinkedIds(Map<Long, Set<Long>> links, Set<Long> qIds) {
+    public Set<Long> getLinkedIds(Map<Long, Set<Long>> links, Set<Long> qIds) {
 
         Set<Long> linkedIds = new HashSet<>();
         Set<Set<Long>> sublinks = links.entrySet().stream().filter(entry -> {
@@ -131,7 +112,7 @@ public class DeduplicationExecution<T> {
     }
 
 
-    private static HashMap<Long, Object[]> mergeMaps(HashMap<Long, Object[]> queryData, HashMap<Long, Object[]> map2) {
+    private HashMap<Long, Object[]> mergeMaps(HashMap<Long, Object[]> queryData, HashMap<Long, Object[]> map2) {
         queryData.forEach(
                 (key, value) -> map2.put(key, value)
         );
@@ -144,10 +125,9 @@ public class DeduplicationExecution<T> {
      * @return AbstractEnumerable that combines the hashmap and the UnionFind to create the merged/fusioned data
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    public static EntityResolvedTuple mergeEntities(EntityResolvedTuple entityResolvedTuple, List<Integer> projects, List<String> fieldNames) {
+    public EntityResolvedTuple mergeEntities(EntityResolvedTuple entityResolvedTuple, List<Integer> projects, List<String> fieldNames) {
         entityResolvedTuple.groupEntities(projects, fieldNames);
         return entityResolvedTuple;
-
     }
 
 
