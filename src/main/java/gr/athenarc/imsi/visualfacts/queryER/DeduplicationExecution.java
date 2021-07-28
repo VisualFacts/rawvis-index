@@ -24,6 +24,7 @@ public class DeduplicationExecution<T> {
     		HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, 
     		int noOfAttributes, RawFileService rawFileService) {
 
+
         boolean firstDedup = false;
         // Check for links and remove qIds that have links
         HashMap<Long, Object[]> dataWithLinks = new HashMap<>();

@@ -1,5 +1,6 @@
 package gr.athenarc.imsi.visualfacts;
 
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
@@ -21,6 +22,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
@@ -146,6 +148,7 @@ public class Veti {
         parser.stopParsing();
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
+        LOG.debug("Global Token Map: " + tokenMap.map);
         // todo evaluate q0
         QueryResults queryResults = new QueryResults(q0);
         return queryResults;
@@ -156,6 +159,7 @@ public class Veti {
     }
 
     public synchronized QueryResults executeQuery(Query query) throws IOException, ClassNotFoundException {
+        Stopwatch stopwatch = Stopwatch.createStarted();
         if (!isInitialized) {
             return initialize(query);
         }
@@ -331,8 +335,20 @@ public class Veti {
         });
         queryResults.setRectStats(pairedStatsAccumulator);
 
+        stopwatch.stop();
+
+        LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        LOG.debug("Number of query objects: " + queryResults.getPoints().size());
+
+
+        stopwatch.reset();
+        stopwatch.start();
+        LOG.debug("Starting query deduplication...");
+
         QueryTokenMap queryTokenMap = new QueryTokenMap(schema, rawFileService);
         queryTokenMap.processQueryResults(queryResults, tokenMap);
+
+        LOG.debug("QueryTokenMap: " + queryTokenMap.map);
 
         Map<String, Set<Long>> invertedIndex = new HashMap<>();
         List<Tile> overlappedTiles = this.grid.getOverlappedLeafTiles(query);
@@ -346,6 +362,7 @@ public class Veti {
                 q.setMeasureCol(query.getMeasureCol());
                 Map<Integer, String> filters = new HashMap<>();
                 filters.put(col, value);
+                q.setCategoricalFilters(filters);
                 for (Tile leafTile : overlappedTiles) {
                     ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
                     List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
@@ -362,10 +379,19 @@ public class Veti {
 
         });
 
+
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
         List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
+        Map<Long, Set<Long>> links = entityResolvedTuple.links;
+        links = links.entrySet().stream().filter(e -> e.getValue().size() > 0).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        LOG.debug("Links found: " + links);
+        LOG.debug("# of Comparisons: " + entityResolvedTuple.getComparisons());
+
+
         return queryResults;
     }
 

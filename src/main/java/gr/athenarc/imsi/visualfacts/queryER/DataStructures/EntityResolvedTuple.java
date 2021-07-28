@@ -93,7 +93,6 @@ public class EntityResolvedTuple<T> {
 		this.revUF.values().forEach(v -> v.retainAll(totalIds));
 		for (long id : this.revUF.keySet()) {
 			Object[] datum = this.data.get(id);
-			if(datum == null) System.out.println(datum);
 			filteredData.put(id, datum);
 			this.finalData.add((T) datum);
 		}

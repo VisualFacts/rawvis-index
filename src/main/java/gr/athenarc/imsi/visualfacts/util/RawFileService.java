@@ -17,23 +17,26 @@ public class RawFileService {
     //todo cache objects read from file
     private Map<Long, String[]> cache = new HashMap<>();
 
-    private Schema schema;
-
     private CsvParser parser;
 
     public RawFileService(Schema schema) throws IOException {
-        this.schema = schema;
         this.randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parser = new CsvParser(parserSettings);
     }
 
     public String[] getObject(long offset) throws IOException {
-        randomAccessReader.seek(offset);
-        String row = randomAccessReader.readLine();
-        if (row != null) {
-            return parser.parseLine(row);
+        String[] object;
+        if (!cache.containsKey(offset)) {
+            randomAccessReader.seek(offset);
+            String row = randomAccessReader.readLine();
+            if (row != null) {
+                object = parser.parseLine(row);
+            } else object = null;
+            cache.put(offset, object);
+        } else {
+            object = cache.get(offset);
         }
-        else return null;
+        return object;
     }
 }

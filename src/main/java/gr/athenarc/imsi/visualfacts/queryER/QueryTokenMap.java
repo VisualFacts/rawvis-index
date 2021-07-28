@@ -43,7 +43,6 @@ public class QueryTokenMap {
                 tokens.add(string);
             }
         }
-
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
             map.put(categoricalColumn.getIndex(), globalTokenMap.map.get(categoricalColumn.getIndex()).entrySet().stream().filter(e -> tokens.contains(e.getKey()))
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
@@ -64,7 +63,7 @@ public class QueryTokenMap {
                 if (2 < token.trim().length()) {
                     if (ERConfig.getStopwords().contains(token.toLowerCase()))
                         continue;
-                    tokens.add(value);
+                    tokens.add(token.trim());
                 }
             }
         }
