@@ -106,6 +106,7 @@ public class EntityResolvedTuple<T> {
 			for (Entry<Long, Set<Long>> e : revUF.entrySet())
 			    links.merge(e.getKey(), e.getValue(), (v1, v2) -> {
 			    	v1.addAll(v2);
+			    	v1.remove(e.getKey());
 			    	return v1;
 			    });
 		}
