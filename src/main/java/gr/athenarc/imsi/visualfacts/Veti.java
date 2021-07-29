@@ -380,7 +380,7 @@ public class Veti {
         });
 
 
-        invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
+        // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
         List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);

@@ -6,6 +6,7 @@ import gr.athenarc.imsi.visualfacts.queryER.DataStructures.Comparison;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.AbstractMetablocking;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ComparisonIterator;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.MetaBlockingConfiguration.WeightingScheme;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,7 +17,7 @@ public class EdgePruning extends AbstractMetablocking {
     public EdgePruning(WeightingScheme scheme) {
         super("Edge Pruning", scheme);
     }
-    
+
     protected EdgePruning(String description, WeightingScheme scheme) {
         super(description, scheme);
     }
@@ -29,6 +30,7 @@ public class EdgePruning extends AbstractMetablocking {
     }
 
     protected void filterComparisons(List<AbstractBlock> blocks) {
+        if (blocks.isEmpty()) return;
         boolean cleanCleanER = blocks.get(0) instanceof BilateralBlock;
         final List<AbstractBlock> newBlocks = new ArrayList<AbstractBlock>();
         for (AbstractBlock block : blocks) {
