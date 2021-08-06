@@ -234,7 +234,7 @@ public class ProfileComparison {
 		int index = 0;
 
 		while (index < length) {
-			if (entity1[index].equals("")) {
+			if (entity1[index] == null || entity1[index].equals("")) {
 				index += 1;
 				continue;
 			}
@@ -245,7 +245,7 @@ public class ProfileComparison {
 		length = entity2.length;
 		index = 0;
 		while (index < length) {
-			if (entity2[index].equals("")) {
+			if (entity2[index] == null || entity2[index].equals("")) {
 				index += 1;
 				continue;
 			}
