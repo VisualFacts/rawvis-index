@@ -56,7 +56,7 @@ public class DeduplicationExecution<T> {
 
 
         boolean epFlag = false;
-        if (blocks.size() > 10) {
+/*        if (blocks.size() > 10) {
 
             // FILTERING
             double filterParam = 0.35;
@@ -70,7 +70,7 @@ public class DeduplicationExecution<T> {
             epFlag = true;
 
 
-        }
+        }*/
 
         //Get ids of final entities, and add back qIds that were cut from m-blocking
         Set<Long> blockQids = new HashSet<>();
