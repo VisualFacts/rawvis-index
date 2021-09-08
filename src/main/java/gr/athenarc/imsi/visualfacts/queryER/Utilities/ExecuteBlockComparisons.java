@@ -16,6 +16,7 @@ public class ExecuteBlockComparisons<T> {
     private HashMap<Long, Object[]> newData;
     private Integer noOfFields;
     private RawFileService rawFileService;
+	public static Set<String> matches;
 
 
     public ExecuteBlockComparisons(HashMap<Long, Object[]> queryData, RawFileService rawFileService) {
@@ -33,12 +34,12 @@ public class ExecuteBlockComparisons<T> {
         int comparisons = 0;
         UnionFind uFind = new UnionFind(qIds);
 
-        Set<String> matches = new HashSet<>();
         Set<AbstractBlock> nBlocks = new HashSet<>(blocks);
         Set<String> uComparisons = new HashSet<>();
 
         this.noOfFields = noOfFields;
         double compTime = 0.0;
+        matches = new HashSet<>();
         for (AbstractBlock block : nBlocks) {
             ComparisonIterator iterator = block.getComparisonIterator();
             while (iterator.hasNext()) {

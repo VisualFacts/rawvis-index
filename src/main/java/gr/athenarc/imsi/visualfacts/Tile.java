@@ -101,9 +101,8 @@ public abstract class Tile {
                 .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
                 .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
 
+        unknownQueryAttrs.removeIf(v -> v == null);
         categoricalColumns.addAll(unknownQueryAttrs);
-
-
         List<QueryNode> queryNodes = new ArrayList<>();
         if (root != null) {
             List<Short> pattern = categoricalColumns.stream().map(categoricalColumn -> {

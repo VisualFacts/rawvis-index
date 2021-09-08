@@ -9,5 +9,9 @@
         <Root level="all">
             <AppenderRef ref="Console"/>
         </Root>
+        <Logger name="org.apache.calcite" level="info" additivity="true">
+            <appender-ref ref="Console" />
+        </Logger>
+        
     </Loggers>
 </Configuration>

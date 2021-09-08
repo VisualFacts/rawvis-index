@@ -19,8 +19,9 @@ public class Schema {
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Character delimiter = ',';
     private int objectCount;
+    private int idColumn;
 
-    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount) {
+    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, int idColumn) {
         this.csv = csv;
         this.delimiter = delimiter;
         this.xColumn = xColumn;
@@ -29,6 +30,7 @@ public class Schema {
         this.measureCol1 = measureCol1;
         this.bounds = bounds;
         this.objectCount = objectCount;
+        this.idColumn = idColumn;
     }
 
     public boolean getHasHeader() {
@@ -58,6 +60,10 @@ public class Schema {
 
     public int getyColumn() {
         return yColumn;
+    }
+
+    public int getidColumn() {
+        return idColumn;
     }
 
     public Integer getMeasureCol0() {
@@ -107,6 +113,7 @@ public class Schema {
                 ", categoricalColumns=" + categoricalColumns +
                 ", delimiter=" + delimiter +
                 ", objectCount=" + objectCount +
+                ", idColumn=" + idColumn +
                 '}';
     }
 }

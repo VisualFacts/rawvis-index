@@ -2,6 +2,7 @@ package gr.athenarc.imsi.visualfacts.queryER;
 
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
+import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.BlockRefinement.ComparisonsBasedBlockPurging;
 import gr.athenarc.imsi.visualfacts.queryER.MetaBlocking.BlockFiltering;
 import gr.athenarc.imsi.visualfacts.queryER.MetaBlocking.EfficientEdgePruning;
@@ -19,12 +20,15 @@ import java.util.stream.Collectors;
 public class DeduplicationExecution<T> {
 
     private HashMap<Long, Set<Long>> links = new HashMap<>();
-
+    public static Set<Long> qIds = new HashSet<>();
+    public static List<AbstractBlock> blocks;
     public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, 
     		HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, 
     		int noOfAttributes, RawFileService rawFileService) {
-
-
+    	
+        DeduplicationExecution.qIds = qIds;
+     
+    	//System.out.println(DeduplicationExecution.blocks.size());
         boolean firstDedup = false;
         // Check for links and remove qIds that have links
         HashMap<Long, Object[]> dataWithLinks = new HashMap<>();
@@ -56,11 +60,10 @@ public class DeduplicationExecution<T> {
 
 
         boolean epFlag = false;
-/*        if (blocks.size() > 10) {
+        if (blocks.size() > 10) {
 
             // FILTERING
             double filterParam = 0.35;
-            if (tableName.contains("publications")) filterParam = 0.55;
             BlockFiltering bFiltering = new BlockFiltering(filterParam);
             bFiltering.applyProcessing(blocks);
 
@@ -70,8 +73,9 @@ public class DeduplicationExecution<T> {
             epFlag = true;
 
 
-        }*/
+        }
 
+        DeduplicationExecution.blocks = blocks;
         //Get ids of final entities, and add back qIds that were cut from m-blocking
         Set<Long> blockQids = new HashSet<>();
         if (epFlag)
@@ -80,12 +84,11 @@ public class DeduplicationExecution<T> {
             blockQids = QueryTokenMap.blocksToEntities(blocks);
         totalIds.addAll(blockQids);
         totalIds.addAll(qIds);
-
         // Merge queryData with dataWithLinks
         queryData = mergeMaps(queryData, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService);
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
-        this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
+        //this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
 
         // Log everything
 
@@ -93,7 +96,19 @@ public class DeduplicationExecution<T> {
 
     }
 
-    private HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, HashMap<Long, Object[]> queryData) {
+    private List<AbstractBlock> copyBlocks(List<AbstractBlock> blocks) {
+    	List<AbstractBlock> clone = new ArrayList<>();
+    	for (AbstractBlock block : blocks) {
+    		UnilateralBlock bu = (UnilateralBlock) block;
+    		AbstractBlock c = new UnilateralBlock(bu.getEntities());
+    		c.setBlockIndex(block.getBlockIndex());
+    		c.setUtilityMeasure(block.getUtilityMeasure());
+    		clone.add(c);
+    	}
+    	return clone;
+	}
+
+	private HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, HashMap<Long, Object[]> queryData) {
 
         return mergeMaps(dataWithLinks, queryData);
     }

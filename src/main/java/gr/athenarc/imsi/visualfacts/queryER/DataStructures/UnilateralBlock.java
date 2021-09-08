@@ -7,7 +7,7 @@ public class UnilateralBlock extends AbstractBlock implements Serializable {
 
 	private static final long serialVersionUID = 43532585408538695L;
 
-	protected final long[] entities;
+	protected long[] entities;
 
 	public UnilateralBlock(long[] idsArray) {
 		super();
@@ -50,7 +50,8 @@ public class UnilateralBlock extends AbstractBlock implements Serializable {
 		hash = 53 * hash + Arrays.hashCode(this.entities);
 		return hash;
 	}
-
+	
+	
 	@Override
 	public void setUtilityMeasure() {
 		utilityMeasure = 1.0/entities.length;

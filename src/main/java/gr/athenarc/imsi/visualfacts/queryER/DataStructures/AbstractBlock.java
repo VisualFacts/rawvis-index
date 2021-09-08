@@ -49,6 +49,10 @@ public abstract class AbstractBlock implements Serializable {
 		this.blockIndex = blockIndex;
 	}
 
+	public void setUtilityMeasure(double utilityMeasure) {
+		this.utilityMeasure = utilityMeasure;
+	}
+
 	public List<Comparison> getComparisons() {
 		final List<Comparison> comparisons = new ArrayList<Comparison>();
 
@@ -60,6 +64,8 @@ public abstract class AbstractBlock implements Serializable {
 
 		return comparisons;
 	}
+	
+
 
 	public abstract double getNoOfComparisons();
 	public abstract double getTotalBlockAssignments();

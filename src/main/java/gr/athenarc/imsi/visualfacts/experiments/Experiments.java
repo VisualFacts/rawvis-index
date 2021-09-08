@@ -51,6 +51,8 @@ public class Experiments {
     private String xCol;
     @Parameter(names = "-yCol", description = "The y column")
     private String yCol;
+    @Parameter(names = "-idCol", description = "The id column")
+    private String idCol;
     @Parameter(names = "-cols", description = "Number of columns")
     private Integer cols = 10;
     @Parameter(names = "-out", description = "The output file")
@@ -204,7 +206,8 @@ public class Experiments {
         int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
 
         csv = "NO CSV";
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol));
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
             categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -256,7 +259,7 @@ public class Experiments {
         if (csv != null)
             schema = getSchemaWithSampling();
         else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, 0);
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
                 categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -395,7 +398,7 @@ public class Experiments {
 
 
     private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol));
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {

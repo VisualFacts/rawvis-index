@@ -49,4 +49,12 @@ public class IdDuplicates implements Serializable {
 	public long getEntityId2() {
 		return entityId2;
 	}
+
+
+	@Override
+	public String toString() {
+		return "IdDuplicates [entityId1=" + entityId1 + ", entityId2=" + entityId2 + "]";
+	}
+	
+	
 }

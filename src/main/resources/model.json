@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "defaultSchema": "ground_truth",
+  "schemas": [
+    {
+      "name": "ground_truth",
+      "type": "custom",
+      "factory": "org.apache.calcite.adapter.csv.CsvSchemaFactory",
+      "operand": {
+        "directory": "/Users/vasilisstamatopoulos/Documents/Works/ATHENA/Projects/ER/Code/rawvis-index/ground_truth",
+        "flavor": "translatable"
+      }
+    }
+  ]
+}
