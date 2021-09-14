@@ -377,9 +377,16 @@ public class Veti {
         queryTokenMap.processQueryResults(queryResults, tokenMap);
 
         //LOG.debug("QueryTokenMap: " + queryTokenMap.map);
+        stopwatch.stop();
 
+        LOG.debug("QueryTokenMap Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        stopwatch.reset();
+        stopwatch.start();
         Map<String, Set<Long>> invertedIndex = new HashMap<>();
         List<Tile> overlappedTiles = this.grid.getOverlappedLeafTiles(query);
+        System.out.println("Token size:\t\t"+ queryTokenMap.map.size());
+        System.out.println("Overlapped tiles size:\t\t"+ overlappedTiles.size());
+
         queryTokenMap.map.entrySet().stream().forEach(entry -> {
             Map<String, Set<String>> colTokenMap = entry.getValue();
             int col = entry.getKey();
@@ -408,7 +415,7 @@ public class Veti {
         });
         stopwatch.stop();
 
-        LOG.debug("QueryTokenMap Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        LOG.debug("Inverted Index Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         stopwatch.reset();
         stopwatch.start();
         // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
@@ -502,7 +509,10 @@ public class Veti {
     	HashMap<Long, Integer> offsetToId = offsetIdsMap.offsetToId;
     	HashMap<Integer, Long> idsToOffset = offsetIdsMap.idToOffset;
     	
-		final String tableName = schema.getCsv().substring(schema.getCsv().lastIndexOf("/") + 1).replace(".csv", "");
+		String tableName = "";
+		final String csv = schema.getCsv();
+		if(csv.contains("\\")) tableName = csv.substring(csv.lastIndexOf("\\") + 1).replace(".csv", "");
+		else csv.substring(csv.lastIndexOf("/") + 1).replace(".csv", "");
 
 		// Construct ground truth query
 		String calciteConnectionString = getCalciteConnectionString();
