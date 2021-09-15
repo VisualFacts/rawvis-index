@@ -1,5 +1,4 @@
 package gr.athenarc.imsi.visualfacts;
-
 import java.util.Stack;
 
 public interface TreeNodeVisitor {
