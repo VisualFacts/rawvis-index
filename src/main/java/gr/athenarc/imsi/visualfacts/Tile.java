@@ -71,19 +71,38 @@ public abstract class Tile {
         return node;
     }
 
-/*    private TreeNode getCategoricalNode(Stack<Short> labels) {
-        TreeNode node = root;
-        if (node == null)
-            return null;
-
-        for (short label : labels) {
-            TreeNode child = node.getChild(label);
-            node = child;
+    /*    private TreeNode getCategoricalNode(Stack<Short> labels) {
+            TreeNode node = root;
             if (node == null)
                 return null;
+
+            for (short label : labels) {
+                TreeNode child = node.getChild(label);
+                node = child;
+                if (node == null)
+                    return null;
+            }
+            return node;
+        }*/
+
+    public void traverseLeaves(TreeNodeVisitor visitor) {
+        traverseLeaves(root, visitor, new Stack<>());
+    }
+
+    private void traverseLeaves(TreeNode node, TreeNodeVisitor visitor, Stack<Short> values) {
+        if (node == null)
+            return;
+
+        if (node.getChildren() != null) {
+            for (TreeNode child : node.getChildren()) {
+                values.push(child.getLabel());
+                traverseLeaves(child, visitor, values);
+                values.pop();
+            }
+        } else {
+            visitor.visit(node, values);
         }
-        return node;
-    }*/
+    }
 
     public List<QueryNode> getQueryNodes(Query query, ContainmentExaminer containmentExaminer, Schema schema) {
         //we keep the old list of attrs in case node nodes match the query in this tile so that we dont expand trees unnecessarily

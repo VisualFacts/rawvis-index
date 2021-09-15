@@ -6,29 +6,23 @@ import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
-
 import gr.athenarc.imsi.visualfacts.CalciteConnectionPool.CalciteConnectionPool;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
-import gr.athenarc.imsi.visualfacts.queryER.DataStructures.DecomposedBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.IdDuplicates;
-import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
+import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.AbstractDuplicatePropagation;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.UnilateralDuplicatePropagation;
+import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
+import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.BlockStatistics;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.SerializationUtilities;
-import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
-import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
-import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
 import gr.athenarc.imsi.visualfacts.util.*;
-
 import org.apache.calcite.jdbc.CalciteConnection;
-import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -50,39 +44,181 @@ import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 public class Veti {
 
     private static final Logger LOG = LogManager.getLogger(Veti.class);
-
+    private static FileWriter csvWriter;
     private boolean isInitialized = false;
-
     private Grid grid;
-
     private Schema schema;
-
     private RawFileService rawFileService;
-
     private String initMode;
-
     private Integer catNodeBudget;
-
     private Integer binCount;
-
     private String sort = "asc";
-
     private InitializationPolicy initializationPolicy;
-
     private int objectsIndexed = 0;
-
     private TokenMap tokenMap;
-
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
 
-    private static FileWriter csvWriter;
-    
-    
+
     public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
         this.schema = schema;
         this.initMode = initMode;
         this.catNodeBudget = catNodeBudget;
         this.binCount = binCount;
+    }
+
+    private static OffsetIdsMap offsetToIds(Schema schema) {
+        List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
+
+
+        List<Integer> colIndexes = new ArrayList<>();
+
+        colIndexes.add(schema.getidColumn());
+
+        CsvParserSettings parserSettings = schema.createCsvParserSettings();
+        parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
+        parserSettings.setColumnReorderingEnabled(false);
+        parserSettings.setHeaderExtractionEnabled(schema.getHasHeader());
+        CsvParser parser = new CsvParser(parserSettings);
+        parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
+        parser.parseNext();  //skip header row
+        String[] row;
+        long rowOffset = parser.getContext().currentChar() - 1;
+        HashMap<Long, Integer> offsetToId = new HashMap<>();
+        HashMap<Integer, Long> idToOffset = new HashMap<>();
+        while ((row = parser.parseNext()) != null) {
+            int idCol = schema.getidColumn();
+//        	System.out.println(rowOffset + ": " + row[idCol]);
+            try {
+                Integer id = Integer.parseInt(row[idCol]);
+                offsetToId.put(rowOffset, id);
+                idToOffset.put(id, rowOffset);
+            } catch (Exception e) {
+                continue;
+            } finally {
+                rowOffset = parser.getContext().currentChar() - 1;
+
+            }
+
+        }
+        return new OffsetIdsMap(offsetToId, idToOffset);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void calculateGroundTruth(String query, String schemaName, Schema schema) throws SQLException, IOException {
+        // Trick to get table name from a single sp query
+        OffsetIdsMap offsetIdsMap = offsetToIds(schema);
+
+        HashMap<Long, Integer> offsetToId = offsetIdsMap.offsetToId;
+        HashMap<Integer, Long> idsToOffset = offsetIdsMap.idToOffset;
+
+        String tableName = "";
+        final String csv = schema.getCsv();
+        if (csv.contains("\\")) tableName = csv.substring(csv.lastIndexOf("\\") + 1).replace(".csv", "");
+        else csv.substring(csv.lastIndexOf("/") + 1).replace(".csv", "");
+
+        // Construct ground truth query
+        String calciteConnectionString = getCalciteConnectionString();
+        CalciteConnectionPool calciteConnectionPool = new CalciteConnectionPool();
+        CalciteConnection calciteConnection = null;
+        try {
+            calciteConnection = (CalciteConnection) calciteConnectionPool.setUp(calciteConnectionString);
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        Set<IdDuplicates> groundDups = new HashSet<IdDuplicates>();
+        Set<String> groundMatches = new HashSet<>();
+
+        System.out.println("Calculating ground truth..");
+        Set<Long> qIds = DeduplicationExecution.qIds;
+        List<Set<Integer>> inIdsSets = new ArrayList<>();
+        Set<Integer> currSet = null;
+        for (Long value : qIds) {
+            if (currSet == null || currSet.size() == 500)
+                inIdsSets.add(currSet = new HashSet<>());
+            currSet.add(offsetToId.get(value));
+        }
+
+        List<String> inIds = new ArrayList<>();
+        inIdsSets.forEach(inIdSet -> {
+            String inId = "(";
+            for (Integer qId : inIdSet) {
+                inId += qId + ",";
+            }
+            inId = inId.substring(0, inId.length() - 1) + ")";
+            inIds.add(inId);
+        });
+        System.out.println("Will execute " + inIds.size() + " queries");
+
+        for (String inIdd : inIds) {
+            String groundTruthQuery = "SELECT id_d, id_s FROM ground_truth.ground_truth_" + tableName +
+                    " WHERE id_s IN " + inIdd + " OR id_d IN " + inIdd;
+            ResultSet gtQueryResults = runQuery(calciteConnection, groundTruthQuery);
+            while (gtQueryResults.next()) {
+                Integer id_d = Integer.parseInt(gtQueryResults.getString("id_d"));
+                Integer id_s = Integer.parseInt(gtQueryResults.getString("id_s"));
+                Long offset_d = idsToOffset.get(id_d);
+                Long offset_s = idsToOffset.get(id_s);
+                //System.out.println(offset_s + " = " + offset_d);
+                IdDuplicates idd = new IdDuplicates(offset_d, offset_s);
+                groundDups.add(idd);
+
+                String uniqueComp = "";
+                if (offset_d > offset_s)
+                    uniqueComp = offset_d + "u" + offset_s;
+                else
+                    uniqueComp = offset_s + "u" + offset_d;
+                if (groundMatches.contains(uniqueComp))
+                    continue;
+                groundMatches.add(uniqueComp);
+            }
+        }
+
+        final AbstractDuplicatePropagation duplicatePropagation = new UnilateralDuplicatePropagation(groundDups);
+        System.out.println("Existing Duplicates\t:\t" + duplicatePropagation.getDuplicates().size());
+
+        duplicatePropagation.resetDuplicates();
+        List<AbstractBlock> blocks = DeduplicationExecution.blocks;
+//		for(AbstractBlock block : blocks) {
+//			DecomposedBlock uBlock = (DecomposedBlock) block;
+//			for (long entity : uBlock.getEntities1())
+//				System.out.println(entity);
+//			//System.out.print(String.valueOf(offsetToId.get(entity)) + " ");
+//			System.out.println();
+//			for (long entity : uBlock.getEntities2())
+//				System.out.println(entity);
+//			//System.out.print(String.valueOf(offsetToId.get(entity)) + " ");
+//			System.out.println();
+//		}
+        BlockStatistics bStats = new BlockStatistics(blocks, duplicatePropagation, csvWriter);
+        bStats.applyProcessing();
+        csvWriter.append("\n");
+        csvWriter.flush();
+
+        Set<String> matches = ExecuteBlockComparisons.matches;
+        double sz_before = matches.size();
+        matches.removeAll(groundMatches);
+        double sz_after = matches.size();
+        System.out.println("ACC\t:\t " + sz_after / sz_before);
+        csvWriter.flush();
+    }
+
+    private static ResultSet runQuery(CalciteConnection calciteConnection, String query) throws SQLException {
+        System.out.println("Running query...");
+        return calciteConnection.createStatement().executeQuery(query);
+
+    }
+
+    private static String getCalciteConnectionString() {
+        URL res = Veti.class.getClassLoader().getResource("model.json");
+        File file = null;
+        try {
+            file = Paths.get(res.toURI()).toFile();
+        } catch (URISyntaxException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        return "jdbc:calcite:model=" + file.getAbsolutePath();
     }
 
     public void generateGrid(Query q0) {
@@ -165,7 +301,7 @@ public class Veti {
                 continue;
             } finally {
                 rowOffset = parser.getContext().currentChar() - 1;
-                
+
             }
         }
 
@@ -381,28 +517,25 @@ public class Veti {
 
         LOG.debug("QueryTokenMap Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         stopwatch.reset();
+
+        LOG.debug("Creating inverted index...");
+
         stopwatch.start();
         Map<String, Set<Long>> invertedIndex = new HashMap<>();
         List<Tile> overlappedTiles = this.grid.getOverlappedLeafTiles(query);
-        System.out.println("Token size:\t\t"+ queryTokenMap.map.size());
-        System.out.println("Overlapped tiles size:\t\t"+ overlappedTiles.size());
+        System.out.println("Token size:\t\t" + queryTokenMap.map.size());
+        System.out.println("Overlapped tiles size:\t\t" + overlappedTiles.size());
 
-        queryTokenMap.map.entrySet().stream().forEach(entry -> {
-            Map<String, Set<String>> colTokenMap = entry.getValue();
-            int col = entry.getKey();
-            Set<String> distinctValues = colTokenMap.values().stream().flatMap(Collection::stream).collect(Collectors.toSet());
-            for (String value : distinctValues) {
-                Query q = new Query();
-                q.setRect(query.getRect());
-                q.setMeasureCol(query.getMeasureCol());
-                Map<Integer, String> filters = new HashMap<>();
-                filters.put(col, value);
-                q.setCategoricalFilters(filters);
-                for (Tile leafTile : overlappedTiles) {
-                    ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
-                    List<QueryNode> queryNodes = leafTile.getQueryNodes(q, containmentExaminer, schema);
-                    for (QueryNode queryNode : queryNodes) {
-                        List<Long> offsets = queryNode.getNode().getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toList());
+
+        for (Tile leafTile : overlappedTiles) {
+            ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
+            leafTile.traverseLeaves((treeNode, values) -> {
+                List<Long> offsets = treeNode.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toList());
+                for (int i = 0; i < leafTile.categoricalColumns.size(); i++) {
+                    CategoricalColumn column = leafTile.categoricalColumns.get(i);
+                    String value = column.getValue(values.get(i));
+                    Map<String, Set<String>> colTokenMap = queryTokenMap.map.get(column.getIndex());
+                    if (colTokenMap != null) {
                         colTokenMap.entrySet().stream().forEach(e -> {
                             if (e.getValue().contains(value)) {
                                 invertedIndex.computeIfAbsent(e.getKey(), x -> new HashSet<>()).addAll(offsets);
@@ -410,9 +543,9 @@ public class Veti {
                         });
                     }
                 }
-            }
+            });
 
-        });
+        }
         stopwatch.stop();
 
         LOG.debug("Inverted Index Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
@@ -421,7 +554,7 @@ public class Veti {
         // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         stopwatch.stop();
-        
+
         LOG.debug("Qids Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         stopwatch.reset();
         stopwatch.start();
@@ -450,175 +583,17 @@ public class Veti {
         LOG.debug("# of Comparisons: " + entityResolvedTuple.getComparisons());
 
         try {
-			calculateGroundTruth("", "all", schema);
-		} catch (SQLException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} catch (IOException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
+            calculateGroundTruth("", "all", schema);
+        } catch (SQLException e1) {
+            // TODO Auto-generated catch block
+            e1.printStackTrace();
+        } catch (IOException e1) {
+            // TODO Auto-generated catch block
+            e1.printStackTrace();
+        }
         return queryResults;
     }
 
-    private static OffsetIdsMap offsetToIds(Schema schema) {
-    	List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
-
-
-        List<Integer> colIndexes = new ArrayList<>();
-
-        colIndexes.add(schema.getidColumn());
- 
-    	CsvParserSettings parserSettings = schema.createCsvParserSettings();
-        parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
-        parserSettings.setColumnReorderingEnabled(false);
-        parserSettings.setHeaderExtractionEnabled(schema.getHasHeader());
-        CsvParser parser = new CsvParser(parserSettings);
-        parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
-        parser.parseNext();  //skip header row
-        String[] row;
-        long rowOffset = parser.getContext().currentChar() - 1;
-        HashMap<Long, Integer> offsetToId = new HashMap<>();
-        HashMap<Integer, Long> idToOffset = new HashMap<>();
-        while ((row = parser.parseNext()) != null) {
-        	int idCol = schema.getidColumn();
-//        	System.out.println(rowOffset + ": " + row[idCol]);
-        	try {
-	        	Integer id = Integer.parseInt(row[idCol]);
-	        	offsetToId.put(rowOffset, id);
-	        	idToOffset.put(id, rowOffset);
-        	}
-	        catch (Exception e) {
-	            continue;
-	        } finally {
-	            rowOffset = parser.getContext().currentChar() - 1;
-	        
-	        }
-
-        }
-        return new OffsetIdsMap(offsetToId, idToOffset);
-    }
-    
-
-    
-    @SuppressWarnings("unchecked")
-	private static void calculateGroundTruth(String query, String schemaName, Schema schema) throws SQLException, IOException {
-		// Trick to get table name from a single sp query
-    	OffsetIdsMap offsetIdsMap = offsetToIds(schema);
-    	
-    	HashMap<Long, Integer> offsetToId = offsetIdsMap.offsetToId;
-    	HashMap<Integer, Long> idsToOffset = offsetIdsMap.idToOffset;
-    	
-		String tableName = "";
-		final String csv = schema.getCsv();
-		if(csv.contains("\\")) tableName = csv.substring(csv.lastIndexOf("\\") + 1).replace(".csv", "");
-		else csv.substring(csv.lastIndexOf("/") + 1).replace(".csv", "");
-
-		// Construct ground truth query
-		String calciteConnectionString = getCalciteConnectionString();
-		CalciteConnectionPool calciteConnectionPool = new CalciteConnectionPool();
-		CalciteConnection calciteConnection = null;
-		try {
-			calciteConnection = (CalciteConnection) calciteConnectionPool.setUp(calciteConnectionString);
-		} catch (Exception e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		Set<IdDuplicates> groundDups = new HashSet<IdDuplicates>();
-		Set<String> groundMatches = new HashSet<>();
-
-		System.out.println("Calculating ground truth..");
-		Set<Long> qIds = DeduplicationExecution.qIds;
-		List<Set<Integer>> inIdsSets = new ArrayList<>();
-		Set<Integer> currSet = null;
-		for (Long value : qIds) {
-			if (currSet == null || currSet.size() == 500)
-				inIdsSets.add(currSet = new HashSet<>());
-			currSet.add(offsetToId.get(value));
-		}
-
-		List<String> inIds = new ArrayList<>();
-		inIdsSets.forEach(inIdSet -> {
-			String inId = "(";
-			for(Integer qId : inIdSet) {
-				inId += qId + ",";
-			}
-			inId = inId.substring(0, inId.length() - 1) + ")";
-			inIds.add(inId);
-		});
-		System.out.println("Will execute " + inIds.size() + " queries");
-
-		for(String inIdd : inIds) {
-			String groundTruthQuery = "SELECT id_d, id_s FROM ground_truth.ground_truth_" + tableName +
-					" WHERE id_s IN " + inIdd + " OR id_d IN " + inIdd ;
-			ResultSet gtQueryResults = runQuery(calciteConnection, groundTruthQuery);
-			while (gtQueryResults.next()) {
-				Integer id_d = Integer.parseInt(gtQueryResults.getString("id_d"));
-				Integer id_s = Integer.parseInt(gtQueryResults.getString("id_s"));
-				Long offset_d = idsToOffset.get(id_d);
-				Long offset_s = idsToOffset.get(id_s);
-				//System.out.println(offset_s + " = " + offset_d);
-				IdDuplicates idd = new IdDuplicates(offset_d, offset_s);
-				groundDups.add(idd);
-				
-				String uniqueComp = "";
-				if (offset_d > offset_s)
-					uniqueComp = offset_d + "u" + offset_s;
-				else
-					uniqueComp = offset_s + "u" + offset_d;
-				if (groundMatches.contains(uniqueComp))
-					continue;
-				groundMatches.add(uniqueComp);
-			}		
-		}
-
-		final AbstractDuplicatePropagation duplicatePropagation = new UnilateralDuplicatePropagation(groundDups);
-		System.out.println("Existing Duplicates\t:\t" + duplicatePropagation.getDuplicates().size());
-		
-		duplicatePropagation.resetDuplicates();
-		List<AbstractBlock> blocks = DeduplicationExecution.blocks;
-//		for(AbstractBlock block : blocks) {
-//			DecomposedBlock uBlock = (DecomposedBlock) block;
-//			for (long entity : uBlock.getEntities1())
-//				System.out.println(entity);
-//			//System.out.print(String.valueOf(offsetToId.get(entity)) + " ");
-//			System.out.println();
-//			for (long entity : uBlock.getEntities2())
-//				System.out.println(entity);
-//			//System.out.print(String.valueOf(offsetToId.get(entity)) + " ");
-//			System.out.println();
-//		}
-		BlockStatistics bStats = new BlockStatistics(blocks, duplicatePropagation, csvWriter);
-		bStats.applyProcessing();		
-		csvWriter.append("\n");
-		csvWriter.flush();
-		
-		Set<String> matches = ExecuteBlockComparisons.matches;
-		double sz_before = matches.size();
-		matches.removeAll(groundMatches);
-		double sz_after = matches.size();
-		System.out.println("ACC\t:\t " + sz_after/sz_before);
-		csvWriter.flush();
-	}
-    
-    private static ResultSet runQuery(CalciteConnection calciteConnection, String query) throws SQLException {
-		System.out.println("Running query...");
-		return calciteConnection.createStatement().executeQuery(query);		
-		
-	}
-	
-
-    private static String getCalciteConnectionString() {
-    	URL res = Veti.class.getClassLoader().getResource("model.json");
-    	File file = null;
-		try {
-			file = Paths.get(res.toURI()).toFile();
-		} catch (URISyntaxException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		return "jdbc:calcite:model=" + file.getAbsolutePath();
-    }
     private HashMap<Long, Object[]> getQueryData(Set<Long> qIds) {
         return qIds.stream().collect(Collectors.toMap(offset -> offset, offset -> {
             try {
