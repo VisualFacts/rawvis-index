@@ -11,24 +11,32 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-public class TokenMap {
-    private static final Logger LOG = LogManager.getLogger(TokenMap.class);
+public class BlockIndex {
+    private static final Logger LOG = LogManager.getLogger(BlockIndex.class);
 
-    public Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
+    public Map<String, Set<Long>> invertedIndex = new HashMap<>();
     HashMap<String, Integer> tfIdf = new HashMap<>();
 
     Schema schema;
 
-    public TokenMap(Schema schema) {
+    public BlockIndex(Schema schema) {
         this.schema = schema;
-        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()){
-            map.put(categoricalColumn.getIndex(), new HashMap<>());
+    }
+
+    public void processRow(Long offset, String[] row) {
+        for (String token : parseRowTokens(row)) {
+            Set<Long> values = invertedIndex.computeIfAbsent(token,
+                    x -> new HashSet<>());
+            values.add(offset);
+            tfIdf.merge(token, 1, Integer::sum);
         }
     }
 
-    public void processRow(String[] row) {
-        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            String value = row[categoricalColumn.getIndex()];
+    public Set<String> parseRowTokens(String[] row) {
+        Set<String> tokens = new HashSet<>();
+
+        for (Integer col : schema.getDedupCols()) {
+            String value = row[col];
             if (value == null)
                 continue;
             String cleanValue = value.replaceAll("_", " ").trim().replaceAll("\\s*,\\s*$", "")
@@ -37,12 +45,10 @@ public class TokenMap {
                 if (2 < token.trim().length()) {
                     if (ERConfig.getStopwords().contains(token.toLowerCase()))
                         continue;
-                    Set<String> values = map.get(categoricalColumn.getIndex()).computeIfAbsent(token.trim(),
-                            x -> new HashSet<>());
-                    values.add(value);
-                    tfIdf.merge(token, 1, Integer::sum);
+                    tokens.add(token.trim());
                 }
             }
         }
+        return tokens;
     }
 }

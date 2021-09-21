@@ -2,10 +2,7 @@ package gr.athenarc.imsi.visualfacts;
 
 import com.univocity.parsers.csv.CsvParserSettings;
 
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class Schema {
@@ -17,6 +14,7 @@ public class Schema {
     private final Integer measureCol1;
     private final Rectangle bounds;
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
+    private Set<Integer> dedupCols;
     private Character delimiter = ',';
     private int objectCount;
     private int idColumn;
@@ -84,6 +82,14 @@ public class Schema {
         }
     }
 
+    public Set<Integer> getDedupCols() {
+        return dedupCols;
+    }
+
+    public void setDedupCols(Set<Integer> dedupCols) {
+        this.dedupCols = dedupCols;
+    }
+
     public CategoricalColumn getCategoricalColumn(int colIndex) {
         return categoricalColumns.get(colIndex);
     }
@@ -111,6 +117,7 @@ public class Schema {
                 ", measureCol1=" + measureCol1 +
                 ", bounds=" + bounds +
                 ", categoricalColumns=" + categoricalColumns +
+                ", dedupCols=" + dedupCols +
                 ", delimiter=" + delimiter +
                 ", objectCount=" + objectCount +
                 ", idColumn=" + idColumn +

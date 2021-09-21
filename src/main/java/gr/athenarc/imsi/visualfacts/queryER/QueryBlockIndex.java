@@ -1,9 +1,7 @@
 package gr.athenarc.imsi.visualfacts.queryER;
 
-import gr.athenarc.imsi.visualfacts.CategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Point;
 import gr.athenarc.imsi.visualfacts.Schema;
-import gr.athenarc.imsi.visualfacts.config.ERConfig;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.DecomposedBlock;
@@ -18,56 +16,16 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
-public class QueryTokenMap {
-    private static final Logger LOG = LogManager.getLogger(QueryTokenMap.class);
+public class QueryBlockIndex extends BlockIndex {
+    private static final Logger LOG = LogManager.getLogger(QueryBlockIndex.class);
 
-    public Map<Integer, Map<String, Set<String>>> map = new HashMap<>();
     RawFileService rawFileService;
 
     Schema schema;
 
-    public QueryTokenMap(Schema schema, RawFileService rawFileService) {
-        this.schema = schema;
+    public QueryBlockIndex(Schema schema, RawFileService rawFileService) {
+        super(schema);
         this.rawFileService = rawFileService;
-        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            map.put(categoricalColumn.getIndex(), new HashMap<>());
-        }
-    }
-
-
-    public void processQueryResults(QueryResults queryResults, TokenMap globalTokenMap) throws IOException {
-        Set<String> tokens = new HashSet<>();
-        for (Point point : queryResults.getPoints()) {
-            Set<String> strings = processQueryObject(point);
-            for (String string : strings) {
-                tokens.add(string);
-            }
-        }
-        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            map.put(categoricalColumn.getIndex(), globalTokenMap.map.get(categoricalColumn.getIndex()).entrySet().stream().filter(e -> tokens.contains(e.getKey()))
-                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
-        }
-    }
-
-
-    private Set<String> processQueryObject(Point point) throws IOException {
-        String[] object = rawFileService.getObject(point.getFileOffset());
-        Set<String> tokens = new HashSet<>();
-        for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            String value = object[categoricalColumn.getIndex()];
-            if (value == null)
-                continue;
-            String cleanValue = value.replaceAll("_", " ").trim().replaceAll("\\s*,\\s*$", "")
-                    .toLowerCase();
-            for (String token : cleanValue.split("[\\W_]")) {
-                if (2 < token.trim().length()) {
-                    if (ERConfig.getStopwords().contains(token.toLowerCase()))
-                        continue;
-                    tokens.add(token.trim());
-                }
-            }
-        }
-        return tokens;
     }
 
     public static Set<Long> blocksToEntities(List<AbstractBlock> blocks) {
@@ -93,11 +51,6 @@ public class QueryTokenMap {
         return blocks;
     }
 
-    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
-        return parseIndex(extendedTokenMap);
-
-    }
-
     public static Set<Long> blocksToEntitiesD(List<AbstractBlock> blocks) {
         Set<Long> joinedEntityIds = new HashSet<>();
         for (AbstractBlock block : blocks) {
@@ -110,5 +63,19 @@ public class QueryTokenMap {
 
         }
         return joinedEntityIds;
+    }
+
+    public void processQueryResults(QueryResults queryResults, BlockIndex globalBlockIndex) throws IOException {
+        Set<String> queryTokens = new HashSet<>();
+        for (Point point : queryResults.getPoints()) {
+            String[] row = rawFileService.getObject(point.getFileOffset());
+            queryTokens.addAll(parseRowTokens(row));
+        }
+        this.invertedIndex = globalBlockIndex.invertedIndex.entrySet().stream().filter(e -> queryTokens.contains(e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
+        return parseIndex(extendedTokenMap);
     }
 }

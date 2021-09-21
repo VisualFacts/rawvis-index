@@ -79,9 +79,9 @@ public class DeduplicationExecution<T> {
         //Get ids of final entities, and add back qIds that were cut from m-blocking
         Set<Long> blockQids = new HashSet<>();
         if (epFlag)
-            blockQids = QueryTokenMap.blocksToEntitiesD(blocks);
+            blockQids = QueryBlockIndex.blocksToEntitiesD(blocks);
         else
-            blockQids = QueryTokenMap.blocksToEntities(blocks);
+            blockQids = QueryBlockIndex.blocksToEntities(blocks);
         totalIds.addAll(blockQids);
         totalIds.addAll(qIds);
         // Merge queryData with dataWithLinks

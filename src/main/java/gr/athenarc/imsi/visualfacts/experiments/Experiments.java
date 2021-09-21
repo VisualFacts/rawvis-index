@@ -21,10 +21,7 @@ import org.ehcache.sizeof.SizeOf;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -45,6 +42,10 @@ public class Experiments {
     public Float zoomFactor = 0f;
     @Parameter(names = "-catCols", variableArity = true, description = "Categorical columns")
     List<Integer> categoricalCols = new ArrayList<>();
+
+    @Parameter(names = "-dedupCols", variableArity = true, description = "Deduplication columns")
+    List<Integer> dedupCols = new ArrayList<>();
+
     @Parameter(names = "-c", required = true)
     private String command;
     @Parameter(names = "-xCol", description = "The x column")
@@ -399,6 +400,7 @@ public class Experiments {
 
     private Schema getSchemaWithSampling() {
         Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol));
+        schema.setDedupCols(new HashSet<>(dedupCols));
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {

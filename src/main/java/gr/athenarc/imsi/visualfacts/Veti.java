@@ -10,14 +10,14 @@ import gr.athenarc.imsi.visualfacts.CalciteConnectionPool.CalciteConnectionPool;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
+import gr.athenarc.imsi.visualfacts.queryER.BlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.IdDuplicates;
 import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.AbstractDuplicatePropagation;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.UnilateralDuplicatePropagation;
-import gr.athenarc.imsi.visualfacts.queryER.QueryTokenMap;
-import gr.athenarc.imsi.visualfacts.queryER.TokenMap;
+import gr.athenarc.imsi.visualfacts.queryER.QueryBlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.BlockStatistics;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
@@ -55,7 +55,7 @@ public class Veti {
     private String sort = "asc";
     private InitializationPolicy initializationPolicy;
     private int objectsIndexed = 0;
-    private TokenMap tokenMap;
+    private BlockIndex blockIndex;
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
 
 
@@ -240,7 +240,7 @@ public class Veti {
 
     public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
         generateGrid(q0);
-        tokenMap = new TokenMap(schema);
+        blockIndex = new BlockIndex(schema);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
 
@@ -290,7 +290,7 @@ public class Veti {
                     node.adjustStats(value0, value1);
                 }
 
-                tokenMap.processRow(row);
+                blockIndex.processRow(rowOffset, row);
 
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
@@ -509,46 +509,13 @@ public class Veti {
         stopwatch.start();
         LOG.debug("Starting query deduplication...");
 
-        QueryTokenMap queryTokenMap = new QueryTokenMap(schema, rawFileService);
-        queryTokenMap.processQueryResults(queryResults, tokenMap);
+        QueryBlockIndex queryBlockIndex = new QueryBlockIndex(schema, rawFileService);
+        queryBlockIndex.processQueryResults(queryResults, blockIndex);
 
         //LOG.debug("QueryTokenMap: " + queryTokenMap.map);
         stopwatch.stop();
 
-        LOG.debug("QueryTokenMap Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        stopwatch.reset();
-
-        LOG.debug("Creating inverted index...");
-
-        stopwatch.start();
-        Map<String, Set<Long>> invertedIndex = new HashMap<>();
-        List<Tile> overlappedTiles = this.grid.getOverlappedLeafTiles(query);
-        System.out.println("Token size:\t\t" + queryTokenMap.map.size());
-        System.out.println("Overlapped tiles size:\t\t" + overlappedTiles.size());
-
-
-        for (Tile leafTile : overlappedTiles) {
-            ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
-            leafTile.traverseLeaves((treeNode, values) -> {
-                List<Long> offsets = treeNode.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toList());
-                for (int i = 0; i < leafTile.categoricalColumns.size(); i++) {
-                    CategoricalColumn column = leafTile.categoricalColumns.get(i);
-                    String value = column.getValue(values.get(i));
-                    Map<String, Set<String>> colTokenMap = queryTokenMap.map.get(column.getIndex());
-                    if (colTokenMap != null) {
-                        colTokenMap.entrySet().stream().forEach(e -> {
-                            if (e.getValue().contains(value)) {
-                                invertedIndex.computeIfAbsent(e.getKey(), x -> new HashSet<>()).addAll(offsets);
-                            }
-                        });
-                    }
-                }
-            });
-
-        }
-        stopwatch.stop();
-
-        LOG.debug("Inverted Index Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        LOG.debug("QueryBlockIndex Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         stopwatch.reset();
         stopwatch.start();
         // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
@@ -564,7 +531,7 @@ public class Veti {
         LOG.debug("QueryData Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         stopwatch.reset();
         stopwatch.start();
-        List<AbstractBlock> abstractBlocks = QueryTokenMap.parseIndex(invertedIndex);
+        List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
         stopwatch.stop();
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
