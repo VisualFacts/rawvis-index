@@ -1,6 +1,7 @@
 package gr.athenarc.imsi.visualfacts;
 
 import java.io.Serializable;
+import java.util.Objects;
 
 /**
  * Class that represents a 2d data point containing an x and y value
@@ -48,5 +49,18 @@ public class Point implements Serializable {
                 ", y=" + y +
                 ", fileOffset=" + fileOffset +
                 '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Point point = (Point) o;
+        return fileOffset == point.fileOffset;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(fileOffset);
     }
 }

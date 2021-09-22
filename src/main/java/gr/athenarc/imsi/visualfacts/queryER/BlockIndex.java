@@ -1,6 +1,6 @@
 package gr.athenarc.imsi.visualfacts.queryER;
 
-import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.Point;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.config.ERConfig;
 import org.apache.logging.log4j.LogManager;
@@ -14,8 +14,7 @@ import java.util.Set;
 public class BlockIndex {
     private static final Logger LOG = LogManager.getLogger(BlockIndex.class);
 
-    public Map<String, Set<Long>> invertedIndex = new HashMap<>();
-    HashMap<String, Integer> tfIdf = new HashMap<>();
+    public Map<String, Set<Point>> invertedIndex = new HashMap<>();
 
     Schema schema;
 
@@ -23,12 +22,15 @@ public class BlockIndex {
         this.schema = schema;
     }
 
-    public void processRow(Long offset, String[] row) {
-        for (String token : parseRowTokens(row)) {
-            Set<Long> values = invertedIndex.computeIfAbsent(token,
+    public void processRow(Point point, String[] row) {
+        processRow(point, parseRowTokens(row));
+    }
+
+    public void processRow(Point point, Set<String> tokens) {
+        for (String token : tokens) {
+            Set<Point> values = invertedIndex.computeIfAbsent(token,
                     x -> new HashSet<>());
-            values.add(offset);
-            tfIdf.merge(token, 1, Integer::sum);
+            values.add(point);
         }
     }
 
@@ -50,5 +52,9 @@ public class BlockIndex {
             }
         }
         return tokens;
+    }
+
+    public Map<String, Set<Point>> getInvertedIndex() {
+        return invertedIndex;
     }
 }

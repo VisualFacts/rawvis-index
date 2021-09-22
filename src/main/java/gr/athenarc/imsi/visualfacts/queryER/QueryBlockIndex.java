@@ -38,11 +38,11 @@ public class QueryBlockIndex extends BlockIndex {
         return joinedEntityIds;
     }
 
-    public static List<AbstractBlock> parseIndex(Map<String, Set<Long>> invertedIndex) {
+    public static List<AbstractBlock> parseIndex(Map<String, Set<Point>> invertedIndex) {
         List<AbstractBlock> blocks = new ArrayList<AbstractBlock>();
-        for (Entry<String, Set<Long>> term : invertedIndex.entrySet()) {
+        for (Entry<String, Set<Point>> term : invertedIndex.entrySet()) {
             if (1 < term.getValue().size()) {
-                long[] idsArray = Converter.convertSetToArray(term.getValue());
+                long[] idsArray = Converter.convertSetToArray(term.getValue().stream().map(Point::getFileOffset).collect(Collectors.toSet()));
                 UnilateralBlock uBlock = new UnilateralBlock(idsArray);
                 blocks.add(uBlock);
             }
@@ -65,17 +65,14 @@ public class QueryBlockIndex extends BlockIndex {
         return joinedEntityIds;
     }
 
-    public void processQueryResults(QueryResults queryResults, BlockIndex globalBlockIndex) throws IOException {
+    public void processQueryResults(QueryResults queryResults, Map<String, Set<Point>> invertedIndex) throws IOException {
         Set<String> queryTokens = new HashSet<>();
         for (Point point : queryResults.getPoints()) {
             String[] row = rawFileService.getObject(point.getFileOffset());
             queryTokens.addAll(parseRowTokens(row));
         }
-        this.invertedIndex = globalBlockIndex.invertedIndex.entrySet().stream().filter(e -> queryTokens.contains(e.getKey()))
+        this.invertedIndex = invertedIndex.entrySet().stream().filter(e -> queryTokens.contains(e.getKey()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
-    public List<AbstractBlock> createExtendedBlockIndex(Map<String, Set<Long>> extendedTokenMap) {
-        return parseIndex(extendedTokenMap);
-    }
 }

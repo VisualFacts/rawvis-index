@@ -55,7 +55,6 @@ public class Veti {
     private String sort = "asc";
     private InitializationPolicy initializationPolicy;
     private int objectsIndexed = 0;
-    private BlockIndex blockIndex;
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
 
 
@@ -240,7 +239,6 @@ public class Veti {
 
     public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
         generateGrid(q0);
-        blockIndex = new BlockIndex(schema);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
 
@@ -289,9 +287,6 @@ public class Veti {
                     }
                     node.adjustStats(value0, value1);
                 }
-
-                blockIndex.processRow(rowOffset, row);
-
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug(point);
@@ -509,8 +504,15 @@ public class Veti {
         stopwatch.start();
         LOG.debug("Starting query deduplication...");
 
+        Map<String, Set<Point>> invertedIndex = new HashMap<>();
+
+        this.grid.getOverlappedLeafTiles(query).stream().map(Tile::getBlockIndex).filter(Objects::nonNull).map(BlockIndex::getInvertedIndex)
+                .forEach(tileInvIndex -> tileInvIndex.entrySet().stream().
+                        forEach(e -> invertedIndex.computeIfAbsent(e.getKey(), s -> new HashSet<>()).addAll(e.getValue())));
+
+
         QueryBlockIndex queryBlockIndex = new QueryBlockIndex(schema, rawFileService);
-        queryBlockIndex.processQueryResults(queryResults, blockIndex);
+        queryBlockIndex.processQueryResults(queryResults, invertedIndex);
 
         //LOG.debug("QueryTokenMap: " + queryTokenMap.map);
         stopwatch.stop();

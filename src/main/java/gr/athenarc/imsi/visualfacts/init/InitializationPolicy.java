@@ -170,4 +170,8 @@ public abstract class InitializationPolicy {
     public void setSort(String sort) {
         this.sort = sort;
     }
+
+    public Schema getSchema() {
+        return schema;
+    }
 }

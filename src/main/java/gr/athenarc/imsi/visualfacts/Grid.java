@@ -27,7 +27,7 @@ public class Grid extends Tile {
     //private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
 
     public Grid(InitializationPolicy initializationPolicy, Rectangle bounds, List<CategoricalColumn> categoricalColumns, int gridSize) {
-        super(bounds);
+        super(initializationPolicy.getSchema(), bounds);
         this.categoricalColumns = categoricalColumns;
         this.gridSize = gridSize;
         this.initializationPolicy = initializationPolicy;
@@ -61,15 +61,15 @@ public class Grid extends Tile {
                     tiles[i][j] = subGrid;
                     //LOG.debug("Initial split of tile " + colTileRange + rowTileRange + " : " + splitSize * splitSize);
                 } else {
-                    tiles[i][j] = new QuadTreeTile(rect);
+                    tiles[i][j] = new QuadTreeTile(schema, rect);
                 }
             }
         }
 
-        if (this.root != null) {
+        /*if (this.root != null) {
             this.reAddPoints(root, new Stack<>());
             this.root = null;
-        }
+        }*/
     }
 
 

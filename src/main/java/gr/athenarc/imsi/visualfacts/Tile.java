@@ -1,6 +1,7 @@
 package gr.athenarc.imsi.visualfacts;
 
 import gr.athenarc.imsi.visualfacts.query.Query;
+import gr.athenarc.imsi.visualfacts.queryER.BlockIndex;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 
 import java.util.*;
@@ -8,13 +9,16 @@ import java.util.stream.Collectors;
 
 public abstract class Tile {
 
+    protected Schema schema;
     protected Rectangle bounds;
 
     protected TreeNode root;
     List<CategoricalColumn> categoricalColumns;
 
+    BlockIndex blockIndex;
 
-    public Tile(Rectangle bounds) {
+    public Tile(Schema schema, Rectangle bounds) {
+        this.schema = schema;
         this.bounds = bounds;
     }
 
@@ -22,10 +26,19 @@ public abstract class Tile {
 
 
     public TreeNode addPoint(Point point, String[] row) {
+        if (blockIndex == null) {
+            blockIndex = new BlockIndex(schema);
+        }
+        blockIndex.processRow(point, row);
+
         return getOrAddCategoricalNode(row).addPoint(point);
     }
 
-    protected TreeNode addPoint(Point point, Stack<Short> labels) {
+    protected TreeNode addPoint(Point point, Stack<Short> labels, Set<String> tokens) {
+        if (this.blockIndex == null) {
+            this.blockIndex = new BlockIndex(schema);
+        }
+        this.blockIndex.processRow(point, tokens);
         return getOrAddCategoricalNode(labels).addPoint(point);
     }
 
@@ -176,16 +189,16 @@ public abstract class Tile {
         return new ArrayList<>(categoricalColumns.subList(level, categoricalColumns.size()));
     }
 
-    protected void reAddPoints(TreeNode node, Stack<Short> labels) {
+    protected void reAddPoints(TreeNode node, Stack<Short> labels, Map<Point, Set<String>> tokenIndex) {
         if (node.getChildren() != null) {
             for (TreeNode child : node.getChildren()) {
                 labels.push(child.getLabel());
-                reAddPoints(child, labels);
+                reAddPoints(child, labels, tokenIndex);
                 labels.pop();
             }
         } else {
             for (Point point : node.getPoints()) {
-                this.addPoint(point, labels);
+                this.addPoint(point, labels, tokenIndex.get(point));
             }
         }
     }
@@ -196,6 +209,10 @@ public abstract class Tile {
 
     public void setCategoricalColumns(List<CategoricalColumn> categoricalColumns) {
         this.categoricalColumns = categoricalColumns;
+    }
+
+    public BlockIndex getBlockIndex() {
+        return blockIndex;
     }
 
     @Override

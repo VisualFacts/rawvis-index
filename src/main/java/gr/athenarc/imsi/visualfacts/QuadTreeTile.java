@@ -6,9 +6,7 @@ import gr.athenarc.imsi.visualfacts.query.Query;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Stack;
+import java.util.*;
 
 public class QuadTreeTile extends Tile {
 
@@ -16,8 +14,8 @@ public class QuadTreeTile extends Tile {
 
     private QuadTreeTile topLeft, topRight, bottomLeft, bottomRight;
 
-    public QuadTreeTile(Rectangle bounds) {
-        super(bounds);
+    public QuadTreeTile(Schema schema, Rectangle bounds) {
+        super(schema, bounds);
     }
 
     @Override
@@ -67,18 +65,24 @@ public class QuadTreeTile extends Tile {
             Range rangeBottom = Range.range(yRange.lowerEndpoint(), yRange.lowerBoundType(),
                     yMiddle, BoundType.CLOSED);
             Range rangeTop = Range.range(yMiddle, BoundType.OPEN, yRange.upperEndpoint(), yRange.upperBoundType());
-            this.topLeft = new QuadTreeTile(new Rectangle(rangeLeft, rangeTop));
+            this.topLeft = new QuadTreeTile(schema, new Rectangle(rangeLeft, rangeTop));
             this.topLeft.setCategoricalColumns(this.getCategoricalColumns());
-            this.topRight = new QuadTreeTile(new Rectangle(rangeRight, rangeTop));
+            this.topRight = new QuadTreeTile(schema, new Rectangle(rangeRight, rangeTop));
             this.topRight.setCategoricalColumns(this.getCategoricalColumns());
-            this.bottomLeft = new QuadTreeTile(new Rectangle(rangeLeft, rangeBottom));
+            this.bottomLeft = new QuadTreeTile(schema, new Rectangle(rangeLeft, rangeBottom));
             this.bottomLeft.setCategoricalColumns(this.getCategoricalColumns());
-            this.bottomRight = new QuadTreeTile(new Rectangle(rangeRight, rangeBottom));
+            this.bottomRight = new QuadTreeTile(schema, new Rectangle(rangeRight, rangeBottom));
             this.bottomRight.setCategoricalColumns(this.getCategoricalColumns());
 
-            this.reAddPoints(root, new Stack<>());
+            Map<Point, Set<String>> tokenIndex = new HashMap<>();
+            this.blockIndex.invertedIndex.entrySet().stream().forEach(e -> {
+                e.getValue().stream().forEach(point -> tokenIndex.computeIfAbsent(point, p -> new HashSet<>()).add(e.getKey()));
+            });
+
+            this.reAddPoints(root, new Stack<>(), tokenIndex);
+            this.blockIndex = null;
             this.root = null;
-        } catch (IllegalArgumentException e){
+        } catch (IllegalArgumentException e) {
             LOG.debug(e);
             LOG.debug("Unable to split");
         }
@@ -127,11 +131,11 @@ public class QuadTreeTile extends Tile {
     }
 
     @Override
-    public TreeNode addPoint(Point point, Stack<Short> labels) {
+    public TreeNode addPoint(Point point, Stack<Short> labels,  Set<String> tokens) {
         if (topLeft != null) {
-            return getLeafTile(point).addPoint(point, labels);
+            return getLeafTile(point).addPoint(point, labels, tokens);
         }
-        return super.addPoint(point, labels);
+        return super.addPoint(point, labels, tokens);
     }
 
     @Override
