@@ -245,7 +245,7 @@ public class Veti {
 
 
         List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed().collect(Collectors.toList());
-        List<Integer> colIndexes = new ArrayList<>();
+        Set<Integer> colIndexes = new HashSet<>();
 
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
