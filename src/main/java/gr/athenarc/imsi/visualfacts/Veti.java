@@ -216,6 +216,8 @@ public class Veti {
             file = Paths.get(res.toURI()).toFile();
         } catch (URISyntaxException e) {
             // TODO Auto-generated catch block
+            System.out.println(res.getPath());
+        	file = Paths.get(res.getPath()).toFile();
             e.printStackTrace();
         }
         return "jdbc:calcite:model=" + file.getAbsolutePath();
