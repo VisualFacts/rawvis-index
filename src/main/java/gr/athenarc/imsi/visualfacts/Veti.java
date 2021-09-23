@@ -211,15 +211,8 @@ public class Veti {
     private static String getCalciteConnectionString() {
         URL res = Veti.class.getClassLoader().getResource("model.json");
         File file = null;
-        try {
-            System.out.println(res.toURI());
-            file = Paths.get(res.toURI()).toFile();
-        } catch (URISyntaxException e) {
-            // TODO Auto-generated catch block
-            System.out.println(res.getPath());
-        	file = Paths.get(res.getPath()).toFile();
-            e.printStackTrace();
-        }
+        System.out.println(res.toExternalForm());
+		file = Paths.get(res.toExternalForm()).toFile();
         return "jdbc:calcite:model=" + file.getAbsolutePath();
     }
 
