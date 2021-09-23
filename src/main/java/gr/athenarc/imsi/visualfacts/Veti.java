@@ -249,6 +249,7 @@ public class Veti {
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
         colIndexes.addAll(catColIndexes);
+        colIndexes.addAll(schema.getDedupCols());
 
         Integer measureCol0 = schema.getMeasureCol0();
         Integer measureCol1 = schema.getMeasureCol1();
