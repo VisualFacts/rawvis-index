@@ -212,6 +212,7 @@ public class Veti {
         URL res = Veti.class.getClassLoader().getResource("model.json");
         File file = null;
         try {
+            System.out.println(res.toURI());
             file = Paths.get(res.toURI()).toFile();
         } catch (URISyntaxException e) {
             // TODO Auto-generated catch block
