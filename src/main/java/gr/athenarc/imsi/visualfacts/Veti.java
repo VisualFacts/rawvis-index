@@ -113,7 +113,7 @@ public class Veti {
         String tableName = "";
         final String csv = schema.getCsv();
         if (csv.contains("\\")) tableName = csv.substring(csv.lastIndexOf("\\") + 1).replace(".csv", "");
-        else csv.substring(csv.lastIndexOf("/") + 1).replace(".csv", "");
+        else tableName = csv.substring(csv.lastIndexOf("/") + 1).replace(".csv", "");
 
         // Construct ground truth query
         String calciteConnectionString = getCalciteConnectionString();
@@ -494,14 +494,11 @@ public class Veti {
         });
         queryResults.setRectStats(pairedStatsAccumulator);
 
-        stopwatch.stop();
 
         LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
 
-        stopwatch.reset();
-        stopwatch.start();
         LOG.debug("Starting query deduplication...");
 
         Map<String, Set<Point>> invertedIndex = new HashMap<>();
@@ -515,32 +512,20 @@ public class Veti {
         queryBlockIndex.processQueryResults(queryResults, invertedIndex);
 
         //LOG.debug("QueryTokenMap: " + queryTokenMap.map);
-        stopwatch.stop();
+        
 
         LOG.debug("QueryBlockIndex Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        stopwatch.reset();
-        stopwatch.start();
         // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
-        stopwatch.stop();
 
         LOG.debug("Qids Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        stopwatch.reset();
-        stopwatch.start();
         HashMap<Long, Object[]> queryData = getQueryData(qIds);
-        stopwatch.stop();
 
         LOG.debug("QueryData Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        stopwatch.reset();
-        stopwatch.start();
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
-        stopwatch.stop();
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        stopwatch.reset();
-        stopwatch.start();
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
-        stopwatch.stop();
 
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 

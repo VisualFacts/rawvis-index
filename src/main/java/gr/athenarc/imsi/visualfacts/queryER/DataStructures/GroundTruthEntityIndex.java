@@ -26,11 +26,19 @@ public class GroundTruthEntityIndex {
             System.err.println("Its functionalities can be carried out with same efficiency through a linear search of all comparisons!");
             return;
         }
-
+        
         duplicates = matches;
         enumerateBlocks(blocks);
         setNoOfEntities(blocks);
         indexEntities(blocks);
+//        for(long[] e : entityBlocks) {
+//        	for(long ee : e) {
+//        		System.out.print(ee  + ' ');
+//        	}
+//        	System.out.println();
+//        }
+//        System.out.println(entityBlocks);
+
     }
 
     private void enumerateBlocks(List<AbstractBlock> blocks) {
@@ -69,7 +77,6 @@ public class GroundTruthEntityIndex {
                 }
             }
         }
-
         return indices;
     }
 
@@ -209,9 +216,9 @@ public class GroundTruthEntityIndex {
             }
             
             for (long id2 : bilBlock.getIndex2Entities()) {
-                int entityId = (int) (datasetLimit+id2);
+                long entityId = (datasetLimit+id2);
                 if (matchingEntities.contains(entityId)) {
-                    counters[entityId]++;
+                    counters[(int)entityId]++;
                 }
             }
         }
@@ -234,10 +241,10 @@ public class GroundTruthEntityIndex {
             }
             
             for (long id2 : bilBlock.getIndex2Entities()) {
-                int entityId = (int) (datasetLimit+id2);
+                long entityId = (int) (datasetLimit+id2);
                 if (matchingEntities.contains(entityId)) {
-                    entityBlocks[entityId][counters[entityId]] = block.getBlockIndex();
-                    counters[entityId]++;
+                    entityBlocks[(int)entityId][counters[(int)entityId]] = block.getBlockIndex();
+                    counters[(int)entityId]++;
                 }
             }
         }
@@ -253,10 +260,11 @@ public class GroundTruthEntityIndex {
 
     private void indexUnilateralEntities(List<AbstractBlock> blocks) {
         //find matching entities
-        Set<Integer> matchingEntities = new HashSet<Integer>();
+
+        Set<Long> matchingEntities = new HashSet<Long>();
         for (IdDuplicates pair : duplicates) {
-            matchingEntities.add((int) pair.getEntityId1());
-            matchingEntities.add((int) pair.getEntityId2());
+            matchingEntities.add( pair.getEntityId1());
+            matchingEntities.add( pair.getEntityId2());
         }
 
         //count blocks per matching entity
@@ -282,6 +290,7 @@ public class GroundTruthEntityIndex {
             UnilateralBlock uniBlock = (UnilateralBlock) block;
             for (long id : uniBlock.getEntities()) {
                 if (matchingEntities.contains(id)) {
+                	//System.out.println(id + ", " + counters[(int) id] + " = " + block.getBlockIndex());
                     entityBlocks[(int) id][counters[(int) id]] = block.getBlockIndex();
                     counters[(int) id]++;
                 }
