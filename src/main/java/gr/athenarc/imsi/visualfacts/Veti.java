@@ -499,9 +499,18 @@ public class Veti {
         LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
+        if (query.isDedupEnabled()) {
+            deduplicateQueryResults(queryResults);
+        }
 
+        return queryResults;
+    }
+
+    private void deduplicateQueryResults(QueryResults queryResults) throws IOException {
         LOG.debug("Starting query deduplication...");
+        Query query = queryResults.getQuery();
 
+        Stopwatch stopwatch = Stopwatch.createStarted();
         Map<String, Set<Point>> invertedIndex = new HashMap<>();
 
         this.grid.getOverlappedLeafTiles(query).stream().map(Tile::getBlockIndex).filter(Objects::nonNull).map(BlockIndex::getInvertedIndex)
@@ -511,9 +520,6 @@ public class Veti {
 
         QueryBlockIndex queryBlockIndex = new QueryBlockIndex(schema, rawFileService);
         queryBlockIndex.processQueryResults(queryResults, invertedIndex);
-
-        //LOG.debug("QueryTokenMap: " + queryTokenMap.map);
-        
 
         LOG.debug("QueryBlockIndex Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
@@ -530,11 +536,7 @@ public class Veti {
 
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
-//        Map<Long, Set<Long>> links = entityResolvedTuple.links;
-//        links = links.entrySet().stream().filter(e -> e.getValue().size() > 0).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-//        LOG.debug("Links found: " + links);
         LOG.debug("# of Comparisons: " + entityResolvedTuple.getComparisons());
 
         try {
@@ -546,7 +548,6 @@ public class Veti {
             // TODO Auto-generated catch block
             e1.printStackTrace();
         }
-        return queryResults;
     }
 
     private HashMap<Long, Object[]> getQueryData(Set<Long> qIds) {

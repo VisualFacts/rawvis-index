@@ -364,7 +364,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol,true);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol,schema.getDedupCols() != null && schema.getDedupCols().size() > 0);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
