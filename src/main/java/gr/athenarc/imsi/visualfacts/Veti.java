@@ -53,6 +53,7 @@ public class Veti {
     private Integer catNodeBudget;
     private Integer binCount;
     private String sort = "asc";
+    private String modelPath = "";
     private InitializationPolicy initializationPolicy;
     private int objectsIndexed = 0;
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
@@ -63,6 +64,14 @@ public class Veti {
         this.initMode = initMode;
         this.catNodeBudget = catNodeBudget;
         this.binCount = binCount;
+    }
+    
+    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount, String modelPath) {
+        this.schema = schema;
+        this.initMode = initMode;
+        this.catNodeBudget = catNodeBudget;
+        this.binCount = binCount;
+        this.modelPath = modelPath;
     }
 
     private static OffsetIdsMap offsetToIds(Schema schema) {
@@ -103,7 +112,7 @@ public class Veti {
     }
 
     @SuppressWarnings("unchecked")
-    private static void calculateGroundTruth(String query, String schemaName, Schema schema) throws SQLException, IOException {
+    private void calculateGroundTruth(String query, String schemaName, Schema schema) throws SQLException, IOException {
         // Trick to get table name from a single sp query
         OffsetIdsMap offsetIdsMap = offsetToIds(schema);
 
@@ -208,12 +217,11 @@ public class Veti {
 
     }
 
-    private static String getCalciteConnectionString() {
+    private  String getCalciteConnectionString() {
         URL res = Veti.class.getClassLoader().getResource("model.json");
         File file = null;
-        System.out.println(res.toExternalForm());
 		file = Paths.get(res.toExternalForm()).toFile();
-        return "jdbc:calcite:model=" + file.getAbsolutePath();
+        return "jdbc:calcite:model=" + modelPath;
     }
 
     public void generateGrid(Query q0) {

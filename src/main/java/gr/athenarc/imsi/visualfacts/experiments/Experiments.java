@@ -106,6 +106,8 @@ public class Experiments {
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
 
+    @Parameter(names = "-model", description = "The calcite model file")
+    public String model;
 
     public static void main(String... args) throws IOException, ClassNotFoundException {
         Experiments experiments = new Experiments();
@@ -362,7 +364,7 @@ public class Experiments {
 
         LOG.debug(schema.getCategoricalColumns());
 
-        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
+        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount, model);
 
         Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol,schema.getDedupCols() != null && schema.getDedupCols().size() > 0);
         List<Query> sequence = generateQuerySequence(q0, schema);

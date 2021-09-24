@@ -10,8 +10,9 @@ import java.util.HashSet;
 
 public final class ERConfig {
     private static HashSet<String> stopwords;
+ 
 
-    public static HashSet<String> getStopwords() {
+	public static HashSet<String> getStopwords() {
         try {
             if (stopwords == null) {
                 ObjectInput input = new ObjectInputStream(new BufferedInputStream(ERConfig.class.getClassLoader().getResourceAsStream("stopwords_SER")));
