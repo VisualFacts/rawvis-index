@@ -218,9 +218,10 @@ public class Veti {
     }
 
     private  String getCalciteConnectionString() {
-        URL res = Veti.class.getClassLoader().getResource("model.json");
-        File file = null;
-		file = Paths.get(res.toExternalForm()).toFile();
+//        URL res = Veti.class.getClassLoader().getResource("model.json");
+//        File file = null;
+//		file = Paths.get(res.toExternalForm()).toFile();
+    	LOG.debug("jdbc:calcite:model=" + modelPath);
         return "jdbc:calcite:model=" + modelPath;
     }
 
