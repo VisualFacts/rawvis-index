@@ -12,21 +12,30 @@ public class DedupQueryResults {
 
 	private EntityResolvedTuple entityResolvedTuple;
 	
+	private VizOutput vizOutput;
+	
 	public DedupQueryResults(EntityResolvedTuple entityResolvedTuple) {
 		// TODO Auto-generated constructor stub
 		this.entityResolvedTuple = entityResolvedTuple;
 	}
 
-	public VizOutput groupSimilar(){
+	public void groupSimilar(){
 		
 		HashMap<Long, Set<Long>> revUF = entityResolvedTuple.getRevUF();
 		HashMap<Long, Object[]> data = entityResolvedTuple.getData();
 		HashMap<Long, HashMap<Long,Double>>  similarities = entityResolvedTuple.getSimilarities();
-		return EntityGrouping.groupSimilar(revUF, data, similarities);
+		vizOutput =  EntityGrouping.groupSimilar(revUF, data, similarities);
 	}
+	
 	public Integer getComparisons() {
 		// TODO Auto-generated method stub
 		return entityResolvedTuple.getComparisons();
 	}
 
+	public VizOutput getVizOutput() {
+		return vizOutput;
+	}
+
+
+	
 }

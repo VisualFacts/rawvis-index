@@ -544,13 +544,10 @@ public class Veti {
         		queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
         
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
-        VizOutput vizOutput = dedupQueryResults.groupSimilar();
+        dedupQueryResults.groupSimilar();
+        dedupQueryResults.getVizOutput();
 
-        for(VizCluster cluster : vizOutput.VizDataset) {
-        	System.out.println(cluster.clusterColumns);
-        	System.out.println(cluster.clusterColumnSimilarity);
-        	System.out.println(cluster.clusterSimilarities);
-        }
+        
         
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
        
