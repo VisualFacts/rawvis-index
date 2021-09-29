@@ -22,8 +22,7 @@ import gr.athenarc.imsi.visualfacts.queryER.QueryBlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.BlockStatistics;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
-import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizCluster;
-import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizOutput;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
 import gr.athenarc.imsi.visualfacts.util.*;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.logging.log4j.LogManager;
@@ -32,10 +31,7 @@ import org.apache.logging.log4j.Logger;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.nio.charset.Charset;
-import java.nio.file.Paths;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
@@ -238,7 +234,7 @@ public class Veti {
         }
 
 
-        grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
+        grid = new Grid(schema, initializationPolicy, schema.getBounds(), GRID_SIZE);
         grid.split();
         if (initializationPolicy != null) {
             initializationPolicy.initTileTreeCategoricalAttrs(grid.getLeafTiles());
@@ -508,13 +504,13 @@ public class Veti {
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
         if (query.isDedupEnabled()) {
-            deduplicateQueryResults(queryResults);
+            queryResults.setDedupVizOutput(deduplicateQueryResults(queryResults));
         }
 
         return queryResults;
     }
 
-    private void deduplicateQueryResults(QueryResults queryResults) throws IOException {
+    private DedupVizOutput deduplicateQueryResults(QueryResults queryResults) throws IOException {
         LOG.debug("Starting query deduplication...");
         Query query = queryResults.getQuery();
        
@@ -545,24 +541,13 @@ public class Veti {
         
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
         dedupQueryResults.groupSimilar();
-        dedupQueryResults.getVizOutput();
 
-        
         
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
        
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("# of Comparisons: " + dedupQueryResults.getComparisons());
-        
-        try {
-            calculateGroundTruth(schema);
-        } catch (SQLException e1) {
-            // TODO Auto-generated catch block
-            e1.printStackTrace();
-        } catch (IOException e1) {
-            // TODO Auto-generated catch block
-            e1.printStackTrace();
-        }
+        return dedupQueryResults.getDedupVizOutput();
     }
 
     private HashMap<Long, Object[]> getQueryData(Set<Long> qIds) {

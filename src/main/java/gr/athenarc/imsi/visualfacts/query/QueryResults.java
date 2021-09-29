@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.math.PairedStats;
 import com.google.common.math.PairedStatsAccumulator;
 import gr.athenarc.imsi.visualfacts.Point;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
 
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +30,8 @@ public class QueryResults {
     private int expandedNodeCount;
 
     private int ioCount;
+
+    private DedupVizOutput dedupVizOutput;
 
     public QueryResults(Query query) {
         this.query = query;
@@ -105,6 +108,13 @@ public class QueryResults {
         this.rectStats = rectStats;
     }
 
+    public DedupVizOutput getDedupVizOutput() {
+        return dedupVizOutput;
+    }
+
+    public void setDedupVizOutput(DedupVizOutput dedupVizOutput) {
+        this.dedupVizOutput = dedupVizOutput;
+    }
 
     @Override
     public String toString() {

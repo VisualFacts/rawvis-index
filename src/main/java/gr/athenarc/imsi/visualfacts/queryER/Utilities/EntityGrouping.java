@@ -2,7 +2,7 @@ package gr.athenarc.imsi.visualfacts.queryER.Utilities;
 
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizCluster;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizData;
-import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizOutput;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizStatistic;
 
 import java.util.*;
@@ -25,8 +25,8 @@ public class EntityGrouping {
 		return randomValue.length;
 	}
  
-    public static VizOutput groupSimilar(HashMap<Long, Set<Long>> revUF,
-    		HashMap<Long, Object[]> newData, HashMap<Long, HashMap<Long, Double>> similarities) {
+    public static DedupVizOutput groupSimilar(HashMap<Long, Set<Long>> revUF,
+                                              HashMap<Long, Object[]> newData, HashMap<Long, HashMap<Long, Double>> similarities) {
 
         List<Object[]> finalData = new ArrayList<>();
         Set<Long> checked = new HashSet<>();
@@ -92,7 +92,7 @@ public class EntityGrouping {
         revUF.clear();
         newData.clear();
         VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, clustersColumnValues, finalData.size());
-        VizOutput vizOutput = new VizOutput(VizDataset, VizStatistic);
+        DedupVizOutput vizOutput = new DedupVizOutput(VizDataset, VizStatistic);
         return vizOutput;
     }
 

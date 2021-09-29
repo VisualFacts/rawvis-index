@@ -78,8 +78,11 @@ public class QuadTreeTile extends Tile {
             this.blockIndex.invertedIndex.entrySet().stream().forEach(e -> {
                 e.getValue().stream().forEach(point -> tokenIndex.computeIfAbsent(point, p -> new HashSet<>()).add(e.getKey()));
             });
-
-            this.reAddPoints(root, new Stack<>(), tokenIndex);
+            try {
+                this.reAddPoints(root, new Stack<>(), tokenIndex);
+            } catch (Exception e) {
+                LOG.debug(e);
+            }
             this.blockIndex = null;
             this.root = null;
         } catch (IllegalArgumentException e) {
@@ -131,7 +134,7 @@ public class QuadTreeTile extends Tile {
     }
 
     @Override
-    public TreeNode addPoint(Point point, Stack<Short> labels,  Set<String> tokens) {
+    public TreeNode addPoint(Point point, Stack<Short> labels, Set<String> tokens) {
         if (topLeft != null) {
             return getLeafTile(point).addPoint(point, labels, tokens);
         }

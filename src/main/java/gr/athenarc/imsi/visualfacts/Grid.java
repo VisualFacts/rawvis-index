@@ -14,7 +14,6 @@ import java.util.Stack;
 public class Grid extends Tile {
 
     private static final Logger LOG = LogManager.getLogger(Grid.class);
-    List<CategoricalColumn> categoricalColumns;
     InitializationPolicy initializationPolicy;
     private Tile[][] tiles;
     private Range<Float>[] xRanges;
@@ -26,9 +25,8 @@ public class Grid extends Tile {
     //private RangeMap<Float, Integer> xRangeMap = TreeRangeMap.create();
     //private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
 
-    public Grid(InitializationPolicy initializationPolicy, Rectangle bounds, List<CategoricalColumn> categoricalColumns, int gridSize) {
-        super(initializationPolicy.getSchema(), bounds);
-        this.categoricalColumns = categoricalColumns;
+    public Grid(Schema schema, InitializationPolicy initializationPolicy, Rectangle bounds, int gridSize) {
+        super(schema, bounds);
         this.gridSize = gridSize;
         this.initializationPolicy = initializationPolicy;
     }
@@ -56,7 +54,7 @@ public class Grid extends Tile {
                     splitSize = initializationPolicy.computeSplitSize(rect);
                 }
                 if (splitSize > 1) {
-                    Grid subGrid = new Grid(null, rect, categoricalColumns, splitSize);
+                    Grid subGrid = new Grid(schema, null, rect, splitSize);
                     subGrid.split();
                     tiles[i][j] = subGrid;
                     //LOG.debug("Initial split of tile " + colTileRange + rowTileRange + " : " + splitSize * splitSize);
