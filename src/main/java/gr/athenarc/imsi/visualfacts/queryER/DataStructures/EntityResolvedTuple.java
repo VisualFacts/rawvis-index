@@ -49,8 +49,7 @@ public class EntityResolvedTuple<T> {
 	@SuppressWarnings("unchecked")
 	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
 		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF,
-				this.data, this.similarities, 
-				noOfAttributes, projects, fieldNames);
+				this.data, this.similarities);
 		isGrouped = true;
 
 	}
@@ -171,6 +170,12 @@ public class EntityResolvedTuple<T> {
 
 	public HashMap<Long, Set<Long>> getLinks() {
 		return links;
+	}
+
+
+	public HashMap<Long, HashMap<Long,Double>>  getSimilarities() {
+		// TODO Auto-generated method stub
+		return similarities;
 	}
 
 

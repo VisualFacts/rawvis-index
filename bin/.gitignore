@@ -1,0 +1,10 @@
+/.idea
+/*.iml
+/target
+src/main/java/gr/ploigia/rawvis/Test.java
+.settings/org.eclipse.jdt.core.prefs
+.settings/org.eclipse.core.resources.prefs
+.project
+.DS_Store
+.classpath
+/src/

@@ -7,3 +7,12 @@ src/main/java/gr/ploigia/rawvis/Test.java
 .project
 .DS_Store
 .classpath
+bin/model.json
+bin/pom.xml
+bin/queries/synth_10_queries
+bin/queries/synth_50_queries
+bin/queries/taxi_queries
+model.json
+groundTruthResults.csv
+bin/README.md
+.settings/org.eclipse.m2e.core.prefs

@@ -11,6 +11,7 @@ import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.BlockIndex;
+import gr.athenarc.imsi.visualfacts.queryER.DedupQueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.IdDuplicates;
@@ -21,6 +22,8 @@ import gr.athenarc.imsi.visualfacts.queryER.QueryBlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.BlockStatistics;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizCluster;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizOutput;
 import gr.athenarc.imsi.visualfacts.util.*;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.logging.log4j.LogManager;
@@ -112,7 +115,7 @@ public class Veti {
     }
 
     @SuppressWarnings("unchecked")
-    private void calculateGroundTruth(String query, String schemaName, Schema schema) throws SQLException, IOException {
+    private void calculateGroundTruth(Schema schema) throws SQLException, IOException {
         // Trick to get table name from a single sp query
         OffsetIdsMap offsetIdsMap = offsetToIds(schema);
 
@@ -514,7 +517,7 @@ public class Veti {
     private void deduplicateQueryResults(QueryResults queryResults) throws IOException {
         LOG.debug("Starting query deduplication...");
         Query query = queryResults.getQuery();
-
+       
         Stopwatch stopwatch = Stopwatch.createStarted();
         Map<String, Set<Point>> invertedIndex = new HashMap<>();
 
@@ -537,15 +540,25 @@ public class Veti {
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService);
+        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
+        		queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
+        
+        DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
+        VizOutput vizOutput = dedupQueryResults.groupSimilar();
 
+        for(VizCluster cluster : vizOutput.VizDataset) {
+        	System.out.println(cluster.clusterColumns);
+        	System.out.println(cluster.clusterColumnSimilarity);
+        	System.out.println(cluster.clusterSimilarities);
+        }
+        
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-
+       
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        LOG.debug("# of Comparisons: " + entityResolvedTuple.getComparisons());
-
+        LOG.debug("# of Comparisons: " + dedupQueryResults.getComparisons());
+        
         try {
-            calculateGroundTruth("", "all", schema);
+            calculateGroundTruth(schema);
         } catch (SQLException e1) {
             // TODO Auto-generated catch block
             e1.printStackTrace();

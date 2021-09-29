@@ -24,7 +24,7 @@ public class DeduplicationExecution<T> {
     public static List<AbstractBlock> blocks;
     public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, 
     		HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, 
-    		int noOfAttributes, RawFileService rawFileService) {
+    		int noOfAttributes, RawFileService rawFileService, int key) {
     	
         DeduplicationExecution.qIds = qIds;
      
@@ -86,7 +86,7 @@ public class DeduplicationExecution<T> {
         totalIds.addAll(qIds);
         // Merge queryData with dataWithLinks
         queryData = mergeMaps(queryData, dataWithLinks);
-        ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService);
+        ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService, key);
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
         //this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
 

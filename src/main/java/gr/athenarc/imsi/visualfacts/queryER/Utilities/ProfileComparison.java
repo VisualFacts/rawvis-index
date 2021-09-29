@@ -274,6 +274,57 @@ public class ProfileComparison {
 
 	}
 
+	public static double getJaroSimilarity(Object[] entity1, Object[] entity2, Integer keyIndex) {
+		// TODO Auto-generated method stub
+		String string1 = "";
+		String string2 = "";
+		HashMap<Integer, String> at1 = new HashMap<>();
+		HashMap<Integer, String> at2 = new HashMap<>();
+		Integer length = entity1.length;
+		int index = 0;
+		
+		while (index < length) {
+			if(index != keyIndex) {
+				if (entity1[index] == null || entity1[index].equals("")) {
+					index += 1;
+					continue;
+				}
+				at1.put(index, entity1[index].toString());
+			}
+			index += 1;
+		}
+		length = entity2.length;
+		index = 0;
+		while (index < length) {
+			if(index != keyIndex) {
+				if (entity2[index] == null || entity2[index].equals("")) {
+					index += 1;
+					continue;
+				}
+				at2.put(index, entity2[index].toString());
+			}
+			index += 1;
+		}
+		int total = 0;
+		double mean = 0;
+		double acc = 0;
+		for (Integer key : at1.keySet()) {
+			if (at1.get(key) == null || at1.get(key) == "" || at1.get(key).equals("[\\W_]"))
+				continue;
+			if (at2.get(key) == null || at2.get(key) == "" || at2.get(key).equals("[\\W_]"))
+				continue;
+			string1 = at1.get(key).trim().replaceAll("s*,", "").replaceAll("s*,", "").replaceAll("s*:", "");
+			string2 = at2.get(key).trim().replaceAll("s*,", "").replaceAll("s*,", "").replaceAll("s*:", "");
+
+			acc += new JaroWinklerSimilarity().apply(string1, string2);
+
+			total++;
+		}
+
+		mean = acc / total;
+		return mean;
+		
+	}
 
 
 

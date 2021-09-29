@@ -16,12 +16,14 @@ public class ExecuteBlockComparisons<T> {
     private HashMap<Long, Object[]> newData;
     private Integer noOfFields;
     private RawFileService rawFileService;
+    private Integer key;
 	public static Set<String> matches;
 
 
-    public ExecuteBlockComparisons(HashMap<Long, Object[]> queryData, RawFileService rawFileService) {
+    public ExecuteBlockComparisons(HashMap<Long, Object[]> queryData, RawFileService rawFileService, Integer key) {
         this.newData = queryData;
         this.rawFileService = rawFileService;
+        this.key = key;
     }
 
     public EntityResolvedTuple comparisonExecutionAll(List<AbstractBlock> blocks, Set<Long> qIds, Integer noOfFields) {
@@ -62,7 +64,7 @@ public class ExecuteBlockComparisons<T> {
                 Object[] entity2 = getEntity(id2);
 
                 double compStartTime = System.currentTimeMillis();
-                double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2);
+                double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2, key);
                 double compEndTime = System.currentTimeMillis();
                 compTime += compEndTime - compStartTime;
                 comparisons++;
