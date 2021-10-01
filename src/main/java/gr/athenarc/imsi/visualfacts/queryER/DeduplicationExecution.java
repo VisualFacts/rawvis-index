@@ -10,6 +10,7 @@ import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.MapUtilities;
 import gr.athenarc.imsi.visualfacts.util.RawFileService;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -22,12 +23,26 @@ public class DeduplicationExecution<T> {
     private HashMap<Long, Set<Long>> links = new HashMap<>();
     public static Set<Long> qIds = new HashSet<>();
     public static List<AbstractBlock> blocks;
+    public static int noOfFields = 0;
+    
+    public static int getNoOfFields(HashMap<Long, Object[]> data) {
+		Random generator = new Random();
+		Object[] values = data.values().toArray();
+		Object[] randomValue;
+		do {
+			randomValue = (Object[]) values[generator.nextInt(values.length)];
+		}
+		while(randomValue == null);
+		return randomValue.length;
+	}
+    
     public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, 
     		HashMap<Long, Object[]> queryData, Set<Long> qIds, String tableName, 
     		int noOfAttributes, RawFileService rawFileService, int key) {
     	
         DeduplicationExecution.qIds = qIds;
-     
+        DeduplicationExecution.noOfFields = getNoOfFields(queryData);
+        
     	//System.out.println(DeduplicationExecution.blocks.size());
         boolean firstDedup = false;
         // Check for links and remove qIds that have links
@@ -46,7 +61,7 @@ public class DeduplicationExecution<T> {
             dataWithLinks = (HashMap<Long, Object[]>) links.keySet().stream()
                     .filter(queryData::containsKey)
                     .collect(Collectors.toMap(Function.identity(), queryData::get));
-            dataWithLinks = getExtraData(dataWithLinks, linkedIds, queryData);
+            dataWithLinks = getExtraData(dataWithLinks, linkedIds, rawFileService);
             queryData.keySet().removeAll(links.keySet());
             totalIds.addAll(linkedIds);  // Add links back
 
@@ -88,7 +103,7 @@ public class DeduplicationExecution<T> {
         queryData = mergeMaps(queryData, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(queryData, rawFileService, key);
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
-        //this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
+        this.links = entityResolvedTuple.mergeLinks(links, firstDedup, totalIds);
 
         // Log everything
 
@@ -108,9 +123,16 @@ public class DeduplicationExecution<T> {
     	return clone;
 	}
 
-	private HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, HashMap<Long, Object[]> queryData) {
-
-        return mergeMaps(dataWithLinks, queryData);
+	private HashMap<Long, Object[]> getExtraData(HashMap<Long, Object[]> dataWithLinks, Set<Long> linkedIds, RawFileService rawFileService) {
+		HashMap<Long, Object[]> extraData = new HashMap<>();
+		for(Long id : linkedIds) {
+			try {
+				extraData.put(id, rawFileService.getObject(id));
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+        return mergeMaps(dataWithLinks, extraData);
     }
 
     public Set<Long> getLinkedIds(Map<Long, Set<Long>> links, Set<Long> qIds) {

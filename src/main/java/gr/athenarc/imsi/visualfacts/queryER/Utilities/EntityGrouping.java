@@ -2,6 +2,7 @@ package gr.athenarc.imsi.visualfacts.queryER.Utilities;
 
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizCluster;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizData;
+import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizStatistic;
 
@@ -18,12 +19,6 @@ import java.util.stream.Collectors;
  */
 public class EntityGrouping {
 
-	public static int getNoOfFields(HashMap<Long, Object[]> data) {
-		Random generator = new Random();
-		Object[] values = data.values().toArray();
-		Object[] randomValue = (Object[]) values[generator.nextInt(values.length)];
-		return randomValue.length;
-	}
  
     public static DedupVizOutput groupSimilar(HashMap<Long, Set<Long>> revUF,
                                               HashMap<Long, Object[]> newData, HashMap<Long, HashMap<Long, Double>> similarities) {
@@ -32,8 +27,18 @@ public class EntityGrouping {
         Set<Long> checked = new HashSet<>();
         List<VizCluster> VizDataset = new ArrayList<>();
         List<HashMap<Integer, Double>> columnSimilarities = new ArrayList<>(); // List of the column similarities of each cluster
-        int noOfFields = getNoOfFields(newData);
+        int noOfFields = DeduplicationExecution.noOfFields;
         LinkedHashMap<Integer, HashMap<String, Integer>> clustersColumnValues = new LinkedHashMap<>();
+        revUF.values().removeIf(v -> v.size() == 0);
+       
+//        for( Object[] data : newData.values()) {
+//        	
+//        	for (Object d : data)
+//        	if(d != null)
+//        		System.out.print(d + " ");
+//        	else System.out.print(  "null ");
+//        	System.out.println();
+//        }
         for (long id : revUF.keySet()) {
             List<VizData> entityGroup = new ArrayList<>();
             Set<Long> similar = revUF.get(id);
@@ -45,6 +50,7 @@ public class EntityGrouping {
             for (long idInner : similar) {
             	HashMap<Integer, String> columns = new HashMap<>();
                 Object[] datum = newData.get(idInner);
+                
                 if (datum != null) {
                 	for (int i = 0; i < noOfFields; i++) {
                 		String value = "";
@@ -59,35 +65,32 @@ public class EntityGrouping {
                 			valueFrequencies.put(value, valueFrequency + 1);
 
                 		/* If there are duplicates we get the frequencies of the values of this cluster */
-                		if (similar.size() > 1) {
-                			HashMap<String, Integer> valueFrequenciesDup = clustersColumnValues.computeIfAbsent(i, x -> new HashMap<>());
-                			int valueFrequencyDup = valueFrequenciesDup.containsKey(value) ? valueFrequenciesDup.get(value) : 0;
-                			if (!value.equals("") && !datum[i].equals("[\\W_]"))
-                				valueFrequenciesDup.put(value, valueFrequencyDup + 1);
-                		}
+                		HashMap<String, Integer> valueFrequenciesDup = clustersColumnValues.computeIfAbsent(i, x -> new HashMap<>());
+                		int valueFrequencyDup = valueFrequenciesDup.containsKey(value) ? valueFrequenciesDup.get(value) : 0;
+                		if (!value.equals("") && !datum[i].equals("[\\W_]"))
+                			valueFrequenciesDup.put(value, valueFrequencyDup + 1);	
                 	}
 
                 }
                 entityGroup.add(new VizData(idInner, columns));
             }
-
-            similar.remove(id);
-            Object[] groupedObject = clusterToString(clusterColumns); // Creates the grouped object from the columns map
-            /* If there are duplicates we compute the statistics of the cluster */
-            if (similar.size() > 0) {
-                clusterColumnSimilarity = (HashMap<Integer, Double>) getDistanceMeasure(clusterColumns);
-                for (int i = 0; i < noOfFields; i++) clusterColumnSimilarity.putIfAbsent(i, 0.0);
-                Map<Integer, HashMap<Integer, Double>> clusterSimilarities = new HashMap<>();
-                columnSimilarities.add(clusterColumnSimilarity);
-                if (similarities != null)
-                    similar.stream()
-                            .filter(similarities::containsKey)
-                            .collect(Collectors.toMap(Function.identity(), similarities::get));
-                VizCluster cluster = new VizCluster(entityGroup, clusterColumnSimilarity, clusterColumns, clusterSimilarities, groupedObject);
-                VizDataset.add(cluster);
-
+            if(entityGroup.size() > 1) {
+	            Object[] groupedObject = clusterToString(clusterColumns); // Creates the grouped object from the columns map
+	            /* If there are duplicates we compute the statistics of the cluster */
+	            clusterColumnSimilarity = (HashMap<Integer, Double>) getDistanceMeasure(clusterColumns);
+	            for (int i = 0; i < noOfFields; i++) clusterColumnSimilarity.putIfAbsent(i, 0.0);
+	            Map<Integer, HashMap<Integer, Double>> clusterSimilarities = new HashMap<>();
+	            columnSimilarities.add(clusterColumnSimilarity);
+	            if (similarities != null)
+	            	similar.stream()
+	            	.filter(similarities::containsKey)
+	            	.collect(Collectors.toMap(Function.identity(), similarities::get));
+	
+	            VizCluster cluster = new VizCluster(entityGroup, clusterColumnSimilarity, clusterColumns, clusterSimilarities, groupedObject);
+	            VizDataset.add(cluster);
+	            finalData.add(groupedObject);
             }
-            finalData.add(groupedObject);
+            
         }
         revUF.clear();
         newData.clear();

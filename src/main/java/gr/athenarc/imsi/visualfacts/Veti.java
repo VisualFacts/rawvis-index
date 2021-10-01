@@ -499,7 +499,6 @@ public class Veti {
         });
         queryResults.setRectStats(pairedStatsAccumulator);
 
-
         LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
@@ -538,7 +537,6 @@ public class Veti {
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
         		queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
-        
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
         dedupQueryResults.groupSimilar();
 
