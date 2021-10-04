@@ -80,7 +80,7 @@ public class EntityResolvedTuple<T> {
 			Set<Long> totalIds) {
 		this.links = links;
 		if(!firstDedup) this.combineLinks(links);
-		filterData(totalIds);	
+		//filterData(totalIds);	
 		return links;
 	}
 		

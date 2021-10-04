@@ -27,6 +27,7 @@ import gr.athenarc.imsi.visualfacts.util.*;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.LinksUtilities;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -36,6 +37,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
@@ -56,7 +58,7 @@ public class Veti {
     private InitializationPolicy initializationPolicy;
     private int objectsIndexed = 0;
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
-
+    private HashMap<Long, Set<Long>> links = new HashMap<>();
 
     public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
         this.schema = schema;
@@ -514,51 +516,46 @@ public class Veti {
         Query query = queryResults.getQuery();
        
         Stopwatch stopwatch = Stopwatch.createStarted();
+        
         Map<String, Set<Point>> invertedIndex = new HashMap<>();
-
+        LinksUtilities linksUtilities = checkForLinks(queryResults);
+        
         this.grid.getOverlappedLeafTiles(query).stream().map(Tile::getBlockIndex).filter(Objects::nonNull).map(BlockIndex::getInvertedIndex)
                 .forEach(tileInvIndex -> tileInvIndex.entrySet().stream().
                         forEach(e -> invertedIndex.computeIfAbsent(e.getKey(), s -> new HashSet<>()).addAll(e.getValue())));
 
-
         QueryBlockIndex queryBlockIndex = new QueryBlockIndex(schema, rawFileService);
-        queryBlockIndex.processQueryResults(queryResults, invertedIndex);
-
-        LOG.debug("QueryBlockIndex Created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        // invertedIndex.entrySet().stream().forEach(stringSetEntry -> LOG.debug(stringSetEntry.getKey() + ": " + stringSetEntry.getValue().size()));
-        Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
-
-        LOG.debug("Qids Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        HashMap<Long, Object[]> queryData = getQueryData(qIds);
-
-        LOG.debug("QueryData Retrieved. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+        queryBlockIndex.processQueryResults(linksUtilities.getDataWithoutLinks(), invertedIndex);
+        
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
-        		queryData, qIds, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
+        		linksUtilities, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
+        
+        this.links = entityResolvedTuple.getLinks();
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
+
         dedupQueryResults.groupSimilar();
 
-        
+        System.out.println(dedupQueryResults.getDedupVizOutput().VizDataset.size());
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
        
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("# of Comparisons: " + dedupQueryResults.getComparisons());
         return dedupQueryResults.getDedupVizOutput();
     }
-
-    private HashMap<Long, Object[]> getQueryData(Set<Long> qIds) {
-        return qIds.stream().collect(Collectors.toMap(offset -> offset, offset -> {
-            try {
-                return rawFileService.getObject(offset);
-            } catch (IOException e1) {
-                e1.printStackTrace();
-            }
-            return null;
-        }, (left, right) -> right, HashMap::new));
-
+    
+    private LinksUtilities checkForLinks(QueryResults queryResults) {
+        Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
+        LinksUtilities linksUtilities = new LinksUtilities(links, qIds, rawFileService);
+        linksUtilities.computeQueryData();
+        linksUtilities.divideQueryData();        
+        return linksUtilities;
+        
     }
+
+    
 
     private boolean checkUnknownAttrs(Query query, String[] row, List<CategoricalColumn> unknownCatAttrs) {
         boolean check = true;

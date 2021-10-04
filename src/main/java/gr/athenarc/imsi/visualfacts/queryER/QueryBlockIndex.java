@@ -65,10 +65,9 @@ public class QueryBlockIndex extends BlockIndex {
         return joinedEntityIds;
     }
 
-    public void processQueryResults(QueryResults queryResults, Map<String, Set<Point>> invertedIndex) throws IOException {
+    public void processQueryResults(HashMap<Long, String[]> dataWithoutLinks, Map<String, Set<Point>> invertedIndex) throws IOException {
         Set<String> queryTokens = new HashSet<>();
-        for (Point point : queryResults.getPoints()) {
-            String[] row = rawFileService.getObject(point.getFileOffset());
+        for (String[] row : dataWithoutLinks.values()) {
             queryTokens.addAll(parseRowTokens(row));
         }
         this.invertedIndex = invertedIndex.entrySet().stream().filter(e -> queryTokens.contains(e.getKey()))
