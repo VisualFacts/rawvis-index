@@ -49,7 +49,6 @@ public class DeduplicationExecution<T> {
         if(dataWithoutLinks.size() == 0)
             DeduplicationExecution.noOfFields = getNoOfFields(dataWithLinks);
         else DeduplicationExecution.noOfFields = getNoOfFields(dataWithoutLinks);
-
         // PURGING 
 
         ComparisonsBasedBlockPurging blockPurging = new ComparisonsBasedBlockPurging();
@@ -57,6 +56,7 @@ public class DeduplicationExecution<T> {
 
         
         boolean epFlag = false;
+        System.out.println(blocks.size());
         if (blocks.size() > 10) {
 
             // FILTERING
@@ -65,10 +65,15 @@ public class DeduplicationExecution<T> {
             bFiltering.applyProcessing(blocks);
 
             // EDGE PRUNING
+            double start = System.currentTimeMillis();
+//            if(blocks.size() > 1000) {
+//	            EfficientEdgePruning eEP = new EfficientEdgePruning();
+//	            eEP.applyProcessing(blocks);
+//	            epFlag = true;
+//	            double end = System.currentTimeMillis();
+//	            System.out.println("EP time: " + String.valueOf(end - start));
+//            }
 
-            EfficientEdgePruning eEP = new EfficientEdgePruning();
-            eEP.applyProcessing(blocks);
-            epFlag = true;
         }
 
         DeduplicationExecution.blocks = blocks;
@@ -83,8 +88,11 @@ public class DeduplicationExecution<T> {
         // Merge queryData with dataWithLinks
         dataWithoutLinks = linksUtilities.mergeMaps(dataWithoutLinks, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(dataWithoutLinks, rawFileService, key);
+        double start = System.currentTimeMillis();
 
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
+        double end = System.currentTimeMillis();
+        System.out.println("comp time: " + String.valueOf(end - start));
 
         entityResolvedTuple.mergeLinks(linksUtilities.getLinks(), linksUtilities.isFirstDedup(), totalIds);
         

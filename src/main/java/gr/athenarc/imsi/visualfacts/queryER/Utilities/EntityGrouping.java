@@ -92,9 +92,8 @@ public class EntityGrouping {
             }
             
         }
-        revUF.clear();
-        newData.clear();
-        VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, clustersColumnValues, finalData.size());
+        double percentOfDups = (double) finalData.size() / (double)  revUF.size();
+        VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, clustersColumnValues, percentOfDups);
         DedupVizOutput vizOutput = new DedupVizOutput(VizDataset, VizStatistic);
         return vizOutput;
     }
@@ -142,8 +141,7 @@ public class EntityGrouping {
 
     private static VizStatistic generateVizStatistic(List<VizCluster> VizDataset,
                                                            List<HashMap<Integer, Double>> columnSimilarities,
-                                                           LinkedHashMap<Integer, HashMap<String, Integer>> clustersColumnValues, int size) {
-        double percentOfDups = (double) VizDataset.size() / (double) size;
+                                                           LinkedHashMap<Integer, HashMap<String, Integer>> clustersColumnValues, double percentOfDups) {
         Map<Integer, Double> avgColumSimilarities = new HashMap<>();
         avgColumSimilarities = columnSimilarities.stream()
                 .flatMap(map -> map.entrySet().stream())
