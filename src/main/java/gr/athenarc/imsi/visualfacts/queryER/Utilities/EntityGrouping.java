@@ -99,7 +99,6 @@ public class EntityGrouping {
     }
 
     static Map<Integer, Double> getDistanceMeasure(LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumns) {
-
         Map<Integer, Double> distMeasures = clusterColumns.entrySet().stream()
                 .collect(Collectors.toMap(Entry::getKey, e -> {
                     Object[] keys = e.getValue().keySet().toArray();
@@ -112,12 +111,15 @@ public class EntityGrouping {
     static Double elementWiseJaro(Object[] vals) {
         double avg = 0.0;
         int size = vals.length;
+        int count = 0;
         for (int i = 0; i < size; i++) {
             for (int j = i + 1; j < size; j++) {
                 avg += ProfileComparison.jaro(vals[i].toString(), vals[j].toString());
+                count += 1;
             }
         }
-        return avg / size;
+        Double result = avg / count;
+        return ( Double.isNaN(result) ? 0 : result) ;
     }
 
     static Object[] clusterToString(LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumns) {
@@ -147,7 +149,7 @@ public class EntityGrouping {
                 .flatMap(map -> map.entrySet().stream())
                 .collect(Collectors.groupingBy(Map.Entry::getKey,
                         Collectors.averagingDouble(value -> (value.getValue()))));
-
+        System.out.println(avgColumSimilarities);
         VizStatistic VizStatistic = new VizStatistic(percentOfDups, (HashMap<Integer, Double>) avgColumSimilarities, clustersColumnValues);
         return VizStatistic;
     }
