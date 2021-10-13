@@ -532,7 +532,12 @@ public class Veti {
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
         		linksUtilities, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
-        
+
+        queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
+            Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
+            return links == null || links.size() > 1;
+        }).collect(Collectors.toList()));
+
         this.links = entityResolvedTuple.getLinks();
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
 
