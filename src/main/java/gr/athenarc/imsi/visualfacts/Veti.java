@@ -11,23 +11,23 @@ import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.BlockIndex;
-import gr.athenarc.imsi.visualfacts.queryER.DedupQueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.IdDuplicates;
+import gr.athenarc.imsi.visualfacts.queryER.DedupQueryResults;
 import gr.athenarc.imsi.visualfacts.queryER.DeduplicationExecution;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.AbstractDuplicatePropagation;
 import gr.athenarc.imsi.visualfacts.queryER.EfficiencyLayer.ComparisonRefinement.UnilateralDuplicatePropagation;
 import gr.athenarc.imsi.visualfacts.queryER.QueryBlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.BlockStatistics;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
+import gr.athenarc.imsi.visualfacts.queryER.Utilities.LinksUtilities;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
 import gr.athenarc.imsi.visualfacts.util.*;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import gr.athenarc.imsi.visualfacts.queryER.Utilities.LinksUtilities;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -37,7 +37,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
@@ -66,7 +65,7 @@ public class Veti {
         this.catNodeBudget = catNodeBudget;
         this.binCount = binCount;
     }
-    
+
     public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount, String modelPath) {
         this.schema = schema;
         this.initMode = initMode;
@@ -110,6 +109,12 @@ public class Veti {
 
         }
         return new OffsetIdsMap(offsetToId, idToOffset);
+    }
+
+    private static ResultSet runQuery(CalciteConnection calciteConnection, String query) throws SQLException {
+        System.out.println("Running query...");
+        return calciteConnection.createStatement().executeQuery(query);
+
     }
 
     @SuppressWarnings("unchecked")
@@ -212,17 +217,11 @@ public class Veti {
         csvWriter.flush();
     }
 
-    private static ResultSet runQuery(CalciteConnection calciteConnection, String query) throws SQLException {
-        System.out.println("Running query...");
-        return calciteConnection.createStatement().executeQuery(query);
-
-    }
-
-    private  String getCalciteConnectionString() {
+    private String getCalciteConnectionString() {
 //        URL res = Veti.class.getClassLoader().getResource("model.json");
 //        File file = null;
 //		file = Paths.get(res.toExternalForm()).toFile();
-    	LOG.debug("jdbc:calcite:model=" + modelPath);
+        LOG.debug("jdbc:calcite:model=" + modelPath);
         return "jdbc:calcite:model=" + modelPath;
     }
 
@@ -244,6 +243,8 @@ public class Veti {
     }
 
     public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
+        rawFileService = new RawFileService(schema);
+
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
@@ -324,6 +325,11 @@ public class Veti {
         return objectsIndexed;
     }
 
+    public String[] getObject(long offset) throws IOException {
+        return rawFileService.getObject(offset);
+    }
+
+
     public synchronized QueryResults executeQuery(Query query) throws IOException, ClassNotFoundException {
         Stopwatch stopwatch = Stopwatch.createStarted();
         if (!isInitialized) {
@@ -338,9 +344,7 @@ public class Veti {
 
         QueryResults queryResults = new QueryResults(query);
 
-        if (rawFileService == null) {
-            rawFileService = new RawFileService(schema);
-        }
+
         List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
@@ -514,24 +518,24 @@ public class Veti {
     private DedupVizOutput deduplicateQueryResults(QueryResults queryResults) throws IOException {
         LOG.debug("Starting query deduplication...");
         Query query = queryResults.getQuery();
-       
+
         Stopwatch stopwatch = Stopwatch.createStarted();
-        
+
         Map<String, Set<Point>> invertedIndex = new HashMap<>();
         LinksUtilities linksUtilities = checkForLinks(queryResults);
-        
+
         this.grid.getOverlappedLeafTiles(query).stream().map(Tile::getBlockIndex).filter(Objects::nonNull).map(BlockIndex::getInvertedIndex)
                 .forEach(tileInvIndex -> tileInvIndex.entrySet().stream().
                         forEach(e -> invertedIndex.computeIfAbsent(e.getKey(), s -> new HashSet<>()).addAll(e.getValue())));
 
         QueryBlockIndex queryBlockIndex = new QueryBlockIndex(schema, rawFileService);
         queryBlockIndex.processQueryResults(linksUtilities.getDataWithoutLinks(), invertedIndex);
-        
+
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
-        		linksUtilities, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
+                linksUtilities, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
 
         queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
             Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
@@ -545,22 +549,21 @@ public class Veti {
 
         System.out.println(dedupQueryResults.getDedupVizOutput().VizDataset.size());
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-       
+
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("# of Comparisons: " + dedupQueryResults.getComparisons());
         return dedupQueryResults.getDedupVizOutput();
     }
-    
+
     private LinksUtilities checkForLinks(QueryResults queryResults) {
         Set<Long> qIds = queryResults.getPoints().stream().mapToLong(Point::getFileOffset).boxed().collect(Collectors.toSet());
         LinksUtilities linksUtilities = new LinksUtilities(links, qIds, rawFileService);
         linksUtilities.computeQueryData();
-        linksUtilities.divideQueryData();        
+        linksUtilities.divideQueryData();
         return linksUtilities;
-        
+
     }
 
-    
 
     private boolean checkUnknownAttrs(Query query, String[] row, List<CategoricalColumn> unknownCatAttrs) {
         boolean check = true;
