@@ -103,6 +103,7 @@ public class Schema {
         parserSettings.getFormat().setDelimiter(delimiter);
         parserSettings.setIgnoreLeadingWhitespaces(false);
         parserSettings.setIgnoreTrailingWhitespaces(false);
+        parserSettings.setQuoteDetectionEnabled(true);
         return parserSettings;
     }
 
