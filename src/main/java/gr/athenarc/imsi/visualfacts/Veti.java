@@ -59,18 +59,16 @@ public class Veti {
     private DeduplicationExecution deduplicationExecution = new DeduplicationExecution();
     private HashMap<Long, Set<Long>> links = new HashMap<>();
 
-    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
+    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) throws IOException {
         this.schema = schema;
         this.initMode = initMode;
         this.catNodeBudget = catNodeBudget;
         this.binCount = binCount;
+        this.rawFileService = new RawFileService(schema);
     }
 
-    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount, String modelPath) {
-        this.schema = schema;
-        this.initMode = initMode;
-        this.catNodeBudget = catNodeBudget;
-        this.binCount = binCount;
+    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount, String modelPath) throws IOException {
+        this(schema, catNodeBudget, initMode, binCount);
         this.modelPath = modelPath;
     }
 
@@ -242,9 +240,7 @@ public class Veti {
         }
     }
 
-    public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
-        rawFileService = new RawFileService(schema);
-
+    public QueryResults initialize(Query q0) throws IOException {
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
