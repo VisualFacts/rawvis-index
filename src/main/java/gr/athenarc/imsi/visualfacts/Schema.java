@@ -15,6 +15,7 @@ public class Schema {
     private final Rectangle bounds;
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Set<Integer> dedupCols;
+    private Set<Integer> blockingCols;
     private Character delimiter = ',';
     private int objectCount;
     private int idColumn;
@@ -90,7 +91,15 @@ public class Schema {
         this.dedupCols = dedupCols;
     }
 
-    public CategoricalColumn getCategoricalColumn(int colIndex) {
+    public Set<Integer> getBlockingCols() {
+		return blockingCols;
+	}
+
+	public void setBlockingCols(Set<Integer> blockingCols) {
+		this.blockingCols = blockingCols;
+	}
+
+	public CategoricalColumn getCategoricalColumn(int colIndex) {
         return categoricalColumns.get(colIndex);
     }
 
@@ -101,9 +110,11 @@ public class Schema {
     public CsvParserSettings createCsvParserSettings() {
         CsvParserSettings parserSettings = new CsvParserSettings();
         parserSettings.getFormat().setDelimiter(delimiter);
-        parserSettings.getFormat().setQuote('“');
+        parserSettings.getFormat().setQuote('"');
         parserSettings.setIgnoreLeadingWhitespaces(false);
         parserSettings.setIgnoreTrailingWhitespaces(false);
+        parserSettings.setSkipEmptyLines(true);
+
         return parserSettings;
     }
 
@@ -119,6 +130,7 @@ public class Schema {
                 ", bounds=" + bounds +
                 ", categoricalColumns=" + categoricalColumns +
                 ", dedupCols=" + dedupCols +
+                ", dedupCols=" + blockingCols +
                 ", delimiter=" + delimiter +
                 ", objectCount=" + objectCount +
                 ", idColumn=" + idColumn +

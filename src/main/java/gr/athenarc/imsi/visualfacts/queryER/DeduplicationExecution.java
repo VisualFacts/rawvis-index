@@ -1,5 +1,6 @@
 package gr.athenarc.imsi.visualfacts.queryER;
 
+import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.UnilateralBlock;
@@ -36,11 +37,10 @@ public class DeduplicationExecution<T> {
 		return randomValue.length;
 	}
     
-    public EntityResolvedTuple deduplicate(List<AbstractBlock> blocks, LinksUtilities linksUtilities,
-    		 String tableName, int noOfAttributes, RawFileService rawFileService, int key) {
+    public EntityResolvedTuple  deduplicate(List<AbstractBlock> blocks, LinksUtilities linksUtilities, Schema schema, RawFileService rawFileService) {
     	
         
-    	
+    	Set<Integer> dedupColumns = schema.getDedupCols();
         Set<Long> totalIds = linksUtilities.getTotalIds();
         Set<Long> qIdsNoLinks = linksUtilities.getTotalIds();
         HashMap<Long, String[]> dataWithLinks = linksUtilities.getDataWithLinks();
@@ -87,10 +87,10 @@ public class DeduplicationExecution<T> {
         totalIds.addAll(qIds);
         // Merge queryData with dataWithLinks
         dataWithoutLinks = linksUtilities.mergeMaps(dataWithoutLinks, dataWithLinks);
-        ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(dataWithoutLinks, rawFileService, key);
+        ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(dataWithoutLinks, rawFileService);
         double start = System.currentTimeMillis();
 
-        EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, noOfAttributes);
+        EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, dedupColumns);
         double end = System.currentTimeMillis();
         System.out.println("comp time: " + String.valueOf(end - start));
 
@@ -116,17 +116,6 @@ public class DeduplicationExecution<T> {
 	}
 
 	
-
-    /**
-     * @param <T>
-     * @param entityResolvedTuple The tuple as created by the deduplication/join
-     * @return AbstractEnumerable that combines the hashmap and the UnionFind to create the merged/fusioned data
-     */
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    public EntityResolvedTuple mergeEntities(EntityResolvedTuple entityResolvedTuple, List<Integer> projects, List<String> fieldNames) {
-        entityResolvedTuple.groupEntities(projects, fieldNames);
-        return entityResolvedTuple;
-    }
 
 
 }

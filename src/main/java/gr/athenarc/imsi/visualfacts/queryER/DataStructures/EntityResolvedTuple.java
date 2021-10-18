@@ -21,38 +21,27 @@ public class EntityResolvedTuple<T> {
 	public HashMap<Long, Set<Long>> links; // these are the total links
 	public HashMap<Long, HashMap<Long,Double>> similarities;
 	public List<T> finalData;
-	private boolean isGrouped = false;
 	private int matches;
 	private Integer comparisons;
 	private double compTime;
 	private double revUFCreationTime;
-	private Integer noOfAttributes;
 	
-	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind, Integer noOfAttributes) {
+	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind) {
 		super();
 		this.data = data;
 		this.uFind = uFind;
 		this.finalData = new ArrayList<>();
 		this.revUF = new HashMap<>();
-		this.noOfAttributes = noOfAttributes;
 	}
 	
 	
-	public EntityResolvedTuple(List<Object[]> finalData, UnionFind uFind, Integer noOfAttributes) {
+	public EntityResolvedTuple(List<Object[]> finalData, UnionFind uFind) {
 		super();
 		this.finalData = (List<T>) finalData;
 		this.revUF = new HashMap<>();
 	}
 	
 
-	
-	@SuppressWarnings("unchecked")
-	public void groupEntities(List<Integer> projects, List<String> fieldNames) {
-		this.finalData = (List<T>) EntityGrouping.groupSimilar(this.revUF,
-				this.data, this.similarities);
-		isGrouped = true;
-
-	}
 	
 	@SuppressWarnings("unchecked")
 	public void getAll() {

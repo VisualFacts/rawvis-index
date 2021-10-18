@@ -16,23 +16,21 @@ public class ExecuteBlockComparisons<T> {
     private HashMap<Long, Object[]> newData;
     private Integer noOfFields;
     private RawFileService rawFileService;
-    private Integer key;
 	public static Set<String> matches;
 
 
-    public ExecuteBlockComparisons(HashMap<Long, Object[]> queryData, RawFileService rawFileService, Integer key) {
+	public ExecuteBlockComparisons(HashMap<Long, Object[]> queryData, RawFileService rawFileService) { 
         this.newData = queryData;
         this.rawFileService = rawFileService;
-        this.key = key;
     }
 
-    public EntityResolvedTuple comparisonExecutionAll(List<AbstractBlock> blocks, Set<Long> qIds, Integer noOfFields) {
-        return comparisonExecutionJdk(blocks, qIds, noOfFields);
-    }
+	public EntityResolvedTuple comparisonExecutionAll(List<AbstractBlock> blocks, Set<Long> qIds, Set<Integer> dedupColumns) {
+        return comparisonExecutionJdk(blocks, qIds, dedupColumns);
+	}
 
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    public EntityResolvedTuple comparisonExecutionJdk(List<AbstractBlock> blocks, Set<Long> qIds, Integer noOfFields) {
+    public EntityResolvedTuple comparisonExecutionJdk(List<AbstractBlock> blocks, Set<Long> qIds, Set<Integer> dedupColumns) {
         int comparisons = 0;
         UnionFind uFind = new UnionFind(qIds);
 
@@ -64,18 +62,18 @@ public class ExecuteBlockComparisons<T> {
                 Object[] entity2 = getEntity(id2);
 
                 double compStartTime = System.currentTimeMillis();
-                double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2, key);
+                double similarity = ProfileComparison.getJaroSimilarity(entity1, entity2, dedupColumns);
                 double compEndTime = System.currentTimeMillis();
                 compTime += compEndTime - compStartTime;
                 comparisons++;
-                if (similarity >= 0.92) {
+                if (similarity >= 0.85) {
                     matches.add(uniqueComp);
                     uFind.union(id1, id2);
                 }
             }
         }
 
-        EntityResolvedTuple eRT = new EntityResolvedTuple(newData, uFind, noOfFields);
+        EntityResolvedTuple eRT = new EntityResolvedTuple(newData, uFind);
         eRT.setComparisons(comparisons);
         eRT.setMatches(matches.size());
         eRT.setCompTime(compTime / 1000);

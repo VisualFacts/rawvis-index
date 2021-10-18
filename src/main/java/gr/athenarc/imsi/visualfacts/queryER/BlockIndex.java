@@ -37,7 +37,7 @@ public class BlockIndex {
     public Set<String> parseRowTokens(String[] row) {
         Set<String> tokens = new HashSet<>();
 
-        for (Integer col : schema.getDedupCols()) {
+        for (Integer col : schema.getBlockingCols()) {
             String value = row[col];
             if (value == null)
                 continue;

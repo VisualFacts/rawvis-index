@@ -252,7 +252,7 @@ public class Veti {
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
         colIndexes.addAll(catColIndexes);
-        colIndexes.addAll(schema.getDedupCols());
+        colIndexes.addAll(schema.getBlockingCols());
 
         Integer measureCol0 = schema.getMeasureCol0();
         Integer measureCol1 = schema.getMeasureCol1();
@@ -276,6 +276,10 @@ public class Veti {
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
             try {
+//            	for(int i = 0; i < row.length; i ++) {
+//            		System.out.print("'" + row[i] + "', ");
+//            	}
+//            	System.out.println();
                 Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
                 TreeNode node = this.grid.addPoint(point, row);
@@ -530,9 +534,8 @@ public class Veti {
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks,
-                linksUtilities, schema.getCsv().replace(".csv", ""), schema.getCategoricalColumns().size(), rawFileService, schema.getidColumn());
-
+        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, linksUtilities,  schema,  rawFileService);
+        
         queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
             Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
             return links == null || links.size() > 1;

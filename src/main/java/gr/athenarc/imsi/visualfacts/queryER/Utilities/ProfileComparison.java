@@ -273,9 +273,9 @@ public class ProfileComparison {
 		return mean;
 
 	}
-
-	public static double getJaroSimilarity(Object[] entity1, Object[] entity2, Integer keyIndex) {
-		// TODO Auto-generated method stub
+	
+	public static double getJaroSimilarity(Object[] entity1, Object[] entity2, Set<Integer> dedupCols) {
+	
 		String string1 = "";
 		String string2 = "";
 		HashMap<Integer, String> at1 = new HashMap<>();
@@ -284,7 +284,7 @@ public class ProfileComparison {
 		int index = 0;
 		
 		while (index < length) {
-			if(index != keyIndex) {
+			if(dedupCols.contains(index)) {
 				if (entity1[index] == null || entity1[index].equals("")) {
 					index += 1;
 					continue;
@@ -296,7 +296,7 @@ public class ProfileComparison {
 		length = entity2.length;
 		index = 0;
 		while (index < length) {
-			if(index != keyIndex) {
+			if(dedupCols.contains(index)) {
 				if (entity2[index] == null || entity2[index].equals("")) {
 					index += 1;
 					continue;
