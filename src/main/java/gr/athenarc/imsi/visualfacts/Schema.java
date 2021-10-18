@@ -101,9 +101,9 @@ public class Schema {
     public CsvParserSettings createCsvParserSettings() {
         CsvParserSettings parserSettings = new CsvParserSettings();
         parserSettings.getFormat().setDelimiter(delimiter);
+        parserSettings.getFormat().setQuote('“');
         parserSettings.setIgnoreLeadingWhitespaces(false);
         parserSettings.setIgnoreTrailingWhitespaces(false);
-        parserSettings.setQuoteDetectionEnabled(true);
         return parserSettings;
     }
 
