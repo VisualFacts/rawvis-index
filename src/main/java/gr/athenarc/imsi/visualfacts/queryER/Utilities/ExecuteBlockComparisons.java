@@ -66,7 +66,7 @@ public class ExecuteBlockComparisons<T> {
                 double compEndTime = System.currentTimeMillis();
                 compTime += compEndTime - compStartTime;
                 comparisons++;
-                if (similarity >= 0.85) {
+                if (similarity >= 0.92) {
                     matches.add(uniqueComp);
                     uFind.union(id1, id2);
                 }
