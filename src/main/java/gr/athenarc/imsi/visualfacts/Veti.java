@@ -10,6 +10,7 @@ import gr.athenarc.imsi.visualfacts.CalciteConnectionPool.CalciteConnectionPool;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
+import gr.athenarc.imsi.visualfacts.query.Stats;
 import gr.athenarc.imsi.visualfacts.queryER.BlockIndex;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.AbstractBlock;
 import gr.athenarc.imsi.visualfacts.queryER.DataStructures.EntityResolvedTuple;
@@ -343,6 +344,7 @@ public class Veti {
         }
 
         QueryResults queryResults = new QueryResults(query);
+        Stats stats = new Stats();
 
 
         List<NodePointsIterator> rawIterators = new ArrayList<>();
@@ -397,7 +399,7 @@ public class Veti {
 
                 //todo unknownCatAttrs may not be empty but including only attrs missing from the node but not present in the query
                 if (isFullyContained && nodeStats != null && !hasUnknownAttrs) {
-                    queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null :
+                    stats.add(groupByColumns == null || groupByColumns.isEmpty() ? null :
                             groupByColumns.stream().map(categoricalColumn -> {
                                 return categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()));
                             }).collect(ImmutableList.toImmutableList()), nodeStats.snapshot());
@@ -475,7 +477,7 @@ public class Veti {
                         }
 
                         if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
-                            queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
+                            stats.add(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
                         }
                     }
                 }
@@ -498,12 +500,9 @@ public class Veti {
         queryResults.setIoCount(ioCount);
         queryResults.setExpandedNodeCount(nodesToExpand.size());
         queryResults.setPoints(points);
+        queryResults.setStats(stats);
 
-        PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
-        queryResults.getStats().entrySet().stream().forEach(e -> {
-            pairedStatsAccumulator.addAll(e.getValue());
-        });
-        queryResults.setRectStats(pairedStatsAccumulator);
+
 
         LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());

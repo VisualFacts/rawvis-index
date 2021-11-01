@@ -393,7 +393,7 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
+            csvWriter.addValue(queryResults.getStats().getGroupStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
