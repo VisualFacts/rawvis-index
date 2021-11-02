@@ -25,6 +25,8 @@ import gr.athenarc.imsi.visualfacts.queryER.Utilities.ExecuteBlockComparisons;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.LinksUtilities;
 import gr.athenarc.imsi.visualfacts.queryER.Utilities.OffsetIdsMap;
 import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.DedupVizOutput;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizCluster;
+import gr.athenarc.imsi.visualfacts.queryER.VizUtilities.VizData;
 import gr.athenarc.imsi.visualfacts.util.*;
 import org.apache.calcite.jdbc.CalciteConnection;
 import org.apache.logging.log4j.LogManager;
@@ -503,12 +505,61 @@ public class Veti {
         queryResults.setStats(stats);
 
 
-
         LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
         if (query.isDedupEnabled()) {
             queryResults.setDedupVizOutput(deduplicateQueryResults(queryResults));
+            Stats cleanedStats = new Stats();
+            for (Point point : queryResults.getPoints()) {
+                row = rawFileService.getObject(point.getFileOffset());
+                Float measureValue0 = null;
+                Float measureValue1 = null;
+                if (measureCol0 != null && row[measureCol0] != null) {
+                    measureValue0 = Float.parseFloat(row[measureCol0]);
+                    if (measureCol1 == null) {
+                        measureValue1 = 0f;
+                    } else if (row[measureCol1] != null) {
+                        measureValue1 = Float.parseFloat(row[measureCol1]);
+                    }
+                }
+                ImmutableList<String> groupByValuesList = null;
+                if (query.getGroupByCols() != null) {
+                    String[] finalRow = row;
+                    groupByValuesList = groupByColumns.stream().map(categoricalColumn -> finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
+                }
+                cleanedStats.add(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
+            }
+
+            List<VizCluster> vizClusters = queryResults.getDedupVizOutput().VizDataset;
+            for (VizCluster vizCluster : vizClusters) {
+                List<VizData> vizDataList = vizCluster.VizData;
+                ImmutableList<String> groupByValuesList = null;
+                if (query.getGroupByCols() != null && !vizDataList.isEmpty()) {
+                    groupByValuesList = groupByColumns.stream().map(categoricalColumn -> {
+                        return vizDataList.get(0).columns.get(categoricalColumn.getIndex());
+                    }).collect(ImmutableList.toImmutableList());
+                }
+                Float measureValue0 = 0f;
+                int countMeasure0 = 0;
+                Float measureValue1 = 0f;
+                int countMeasure1 = 0;
+                for (VizData vizData : vizDataList) {
+                    if (measureCol0 != null && vizData.columns.get(measureCol0) != null) {
+                        measureValue0 += Float.parseFloat(vizData.columns.get(measureCol0));
+                        countMeasure0++;
+                    }
+                    if (measureCol1 != null && vizData.columns.get(measureCol1) != null) {
+                        measureValue1 += Float.parseFloat(vizData.columns.get(measureCol1));
+                        countMeasure1++;
+                    }
+                }
+                measureValue0 = measureValue0 / countMeasure0;
+                measureValue1 = measureValue1 / countMeasure1;
+                cleanedStats.add(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
+            }
+
+            queryResults.setCleanedStats(cleanedStats);
         }
 
         return queryResults;
@@ -533,8 +584,8 @@ public class Veti {
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, linksUtilities,  schema,  rawFileService);
-        
+        EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, linksUtilities, schema, rawFileService);
+
         queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
             Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
             return links == null || links.size() > 1;
@@ -622,5 +673,6 @@ public class Veti {
     public void setSort(String sort) {
         this.sort = sort;
     }
+
 
 }

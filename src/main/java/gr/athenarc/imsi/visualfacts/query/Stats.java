@@ -31,6 +31,7 @@ public class Stats {
 
     }
 
+
     public PairedStatsAccumulator getRectStats() {
         return rectStats;
     }
