@@ -15,7 +15,6 @@ import java.util.stream.Collectors;
 /**
  * @author bstam
  * Utility functions to merge an enumerable and a reverse UnionFind into merged entities.
- * @param newData 
  */
 public class EntityGrouping {
 
@@ -28,17 +27,8 @@ public class EntityGrouping {
         List<VizCluster> VizDataset = new ArrayList<>();
         List<HashMap<Integer, Double>> columnSimilarities = new ArrayList<>(); // List of the column similarities of each cluster
         int noOfFields = DeduplicationExecution.noOfFields;
-        LinkedHashMap<Integer, HashMap<String, Integer>> clustersColumnValues = new LinkedHashMap<>();
         revUF.values().removeIf(v -> v.size() == 0);
-       
-//        for( Object[] data : newData.values()) {
-//        	
-//        	for (Object d : data)
-//        	if(d != null)
-//        		System.out.print(d + " ");
-//        	else System.out.print(  "null ");
-//        	System.out.println();
-//        }
+
         for (long id : revUF.keySet()) {
             List<VizData> entityGroup = new ArrayList<>();
             Set<Long> similar = revUF.get(id);
@@ -46,7 +36,7 @@ public class EntityGrouping {
             if (checked.contains(id)) continue;
             checked.addAll(similar);
             HashMap<Integer, Double> clusterColumnSimilarity = new HashMap<>(); // This cluster's column similarities
-            LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumns = new LinkedHashMap<>(); // Columns of this cluster
+            LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumnValues = new LinkedHashMap<>(); // Columns of this cluster
             for (long idInner : similar) {
             	HashMap<Integer, String> columns = new HashMap<>();
                 Object[] datum = newData.get(idInner);
@@ -59,67 +49,26 @@ public class EntityGrouping {
                 		}
                 		catch(Exception e) {}
             			columns.put(i, value); // for json
-                		HashMap<String, Integer> valueFrequencies = clusterColumns.computeIfAbsent(i, x -> new HashMap<>());
+                		HashMap<String, Integer> valueFrequencies = clusterColumnValues.computeIfAbsent(i, x -> new HashMap<>());
                 		int valueFrequency = valueFrequencies.containsKey(value) ? valueFrequencies.get(value) : 0;
                 		if (!value.equals("") && !datum[i].equals("[\\W_]"))
                 			valueFrequencies.put(value, valueFrequency + 1);
-
-                		/* If there are duplicates we get the frequencies of the values of this cluster */
-                		HashMap<String, Integer> valueFrequenciesDup = clustersColumnValues.computeIfAbsent(i, x -> new HashMap<>());
-                		int valueFrequencyDup = valueFrequenciesDup.containsKey(value) ? valueFrequenciesDup.get(value) : 0;
-                		if (!value.equals("") && !datum[i].equals("[\\W_]"))
-                			valueFrequenciesDup.put(value, valueFrequencyDup + 1);	
                 	}
-
+                    entityGroup.add(new VizData(idInner, columns));
                 }
-                entityGroup.add(new VizData(idInner, columns));
             }
             if(entityGroup.size() > 1) {
-	            Object[] groupedObject = clusterToString(clusterColumns); // Creates the grouped object from the columns map
-	            /* If there are duplicates we compute the statistics of the cluster */
-	            clusterColumnSimilarity = (HashMap<Integer, Double>) getDistanceMeasure(clusterColumns);
-	            for (int i = 0; i < noOfFields; i++) clusterColumnSimilarity.putIfAbsent(i, 0.0);
-	            Map<Integer, HashMap<Integer, Double>> clusterSimilarities = new HashMap<>();
-	            columnSimilarities.add(clusterColumnSimilarity);
-	            if (similarities != null)
-	            	similar.stream()
-	            	.filter(similarities::containsKey)
-	            	.collect(Collectors.toMap(Function.identity(), similarities::get));
-	
-	            VizCluster cluster = new VizCluster(entityGroup, clusterColumnSimilarity, clusterColumns, clusterSimilarities, groupedObject);
+	            Object[] groupedObject = clusterToString(clusterColumnValues); // Creates the grouped object from the columns map
+                VizCluster cluster = new VizCluster(entityGroup, clusterColumnValues, groupedObject);
 	            VizDataset.add(cluster);
 	            finalData.add(groupedObject);
             }
             
         }
         double percentOfDups = (double) finalData.size() / (double)  revUF.size();
-        VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, clustersColumnValues, percentOfDups);
+        VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, percentOfDups);
         DedupVizOutput vizOutput = new DedupVizOutput(VizDataset, VizStatistic);
         return vizOutput;
-    }
-
-    static Map<Integer, Double> getDistanceMeasure(LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumns) {
-        Map<Integer, Double> distMeasures = clusterColumns.entrySet().stream()
-                .collect(Collectors.toMap(Entry::getKey, e -> {
-                    Object[] keys = e.getValue().keySet().toArray();
-                    return elementWiseJaro(keys);
-                }));
-        return distMeasures;
-
-    }
-
-    static Double elementWiseJaro(Object[] vals) {
-        double avg = 0.0;
-        int size = vals.length;
-        int count = 0;
-        for (int i = 0; i < size; i++) {
-            for (int j = i + 1; j < size; j++) {
-                avg += ProfileComparison.jaro(vals[i].toString(), vals[j].toString());
-                count += 1;
-            }
-        }
-        Double result = avg / count;
-        return ( Double.isNaN(result) ? 0 : result) ;
     }
 
     static Object[] clusterToString(LinkedHashMap<Integer, HashMap<String, Integer>> clusterColumns) {
@@ -135,22 +84,15 @@ public class EntityGrouping {
 
             return colVal;
         }).toArray();
-//		for(int i = 0; i < columnValues.length; i ++) System.out.print(columnValues[i] + ", ") ;
-//		System.out.println();
         return columnValues;
 
     }
 
     private static VizStatistic generateVizStatistic(List<VizCluster> VizDataset,
                                                            List<HashMap<Integer, Double>> columnSimilarities,
-                                                           LinkedHashMap<Integer, HashMap<String, Integer>> clustersColumnValues, double percentOfDups) {
-        Map<Integer, Double> avgColumSimilarities = new HashMap<>();
-        avgColumSimilarities = columnSimilarities.stream()
-                .flatMap(map -> map.entrySet().stream())
-                .collect(Collectors.groupingBy(Map.Entry::getKey,
-                        Collectors.averagingDouble(value -> (value.getValue()))));
-        System.out.println(avgColumSimilarities);
-        VizStatistic VizStatistic = new VizStatistic(percentOfDups, (HashMap<Integer, Double>) avgColumSimilarities, clustersColumnValues);
+                                                           double percentOfDups) {
+
+        VizStatistic VizStatistic = new VizStatistic(percentOfDups);
         return VizStatistic;
     }
 
