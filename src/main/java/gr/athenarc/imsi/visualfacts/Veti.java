@@ -243,7 +243,7 @@ public class Veti {
         }
     }
 
-    public QueryResults initialize(Query q0) throws IOException {
+    public QueryResults initialize(Query q0) throws IOException, ClassNotFoundException {
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
@@ -319,9 +319,8 @@ public class Veti {
         //csvWriter.append("query,runs,time,no_of_blocks,agg_cardinality,CC,total_entities,entities_in_blocks,singleton_entities,average_block,BC,detected_duplicates,PC,PQ\n");
         csvWriter.append("query,runs,time,no_of_blocks,agg_cardinality,CC,entities_in_blocks,detected_duplicates,PC,PQ\n");
         //LOG.debug("Global Token Map: " + tokenMap.map);
-        // todo evaluate q0
-        QueryResults queryResults = new QueryResults(q0);
-        return queryResults;
+        // todo evaluate q0 while initial parsing instead
+        return this.executeQuery(q0);
     }
 
     public int getObjectsIndexed() {
