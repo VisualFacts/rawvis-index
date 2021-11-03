@@ -42,10 +42,10 @@ public class DeduplicationExecution<T> {
         
     	Set<Integer> dedupColumns = schema.getDedupCols();
         Set<Long> totalIds = linksUtilities.getTotalIds();
-        Set<Long> qIdsNoLinks = linksUtilities.getTotalIds();
+        Set<Long> qIdsNoLinks = linksUtilities.getqIdsNoLinks();
         HashMap<Long, String[]> dataWithLinks = linksUtilities.getDataWithLinks();
         HashMap<Long, String[]> dataWithoutLinks = linksUtilities.getDataWithoutLinks();
-        DeduplicationExecution.qIds = linksUtilities.getqIdsNoLinks();
+        DeduplicationExecution.qIds = linksUtilities.getqIds();
         if(dataWithoutLinks.size() == 0)
             DeduplicationExecution.noOfFields = getNoOfFields(dataWithLinks);
         else DeduplicationExecution.noOfFields = getNoOfFields(dataWithoutLinks);
