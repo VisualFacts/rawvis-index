@@ -81,7 +81,7 @@ public class Veti {
 
         List<Integer> colIndexes = new ArrayList<>();
 
-        colIndexes.add(schema.getidColumn());
+        colIndexes.add(schema.getIdColumn());
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
@@ -95,7 +95,7 @@ public class Veti {
         HashMap<Long, Integer> offsetToId = new HashMap<>();
         HashMap<Integer, Long> idToOffset = new HashMap<>();
         while ((row = parser.parseNext()) != null) {
-            int idCol = schema.getidColumn();
+            int idCol = schema.getIdColumn();
 //        	System.out.println(rowOffset + ": " + row[idCol]);
             try {
                 Integer id = Integer.parseInt(row[idCol]);

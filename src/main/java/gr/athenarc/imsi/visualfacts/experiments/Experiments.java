@@ -46,6 +46,9 @@ public class Experiments {
     @Parameter(names = "-dedupCols", variableArity = true, description = "Deduplication columns")
     List<Integer> dedupCols = new ArrayList<>();
 
+    @Parameter(names = "-blockingCols", variableArity = true, description = "Deduplication columns")
+    List<Integer> blockingCols = new ArrayList<>();
+
     @Parameter(names = "-c", required = true)
     private String command;
     @Parameter(names = "-xCol", description = "The x column")
@@ -54,6 +57,8 @@ public class Experiments {
     private String yCol;
     @Parameter(names = "-idCol", description = "The id column")
     private String idCol;
+    @Parameter(names = "-dataSourceCol", description = "The datasource column")
+    private String datasourceCol;
     @Parameter(names = "-cols", description = "Number of columns")
     private Integer cols = 10;
     @Parameter(names = "-out", description = "The output file")
@@ -210,7 +215,7 @@ public class Experiments {
 
         csv = "NO CSV";
 
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol));
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol), Integer.parseInt(datasourceCol));
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
             categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -262,7 +267,7 @@ public class Experiments {
         if (csv != null)
             schema = getSchemaWithSampling();
         else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, 0);
+            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol), Integer.parseInt(datasourceCol));
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
                 categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -401,9 +406,9 @@ public class Experiments {
 
 
     private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol));
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount, Integer.parseInt(idCol), Integer.parseInt(datasourceCol));
         schema.setDedupCols(new HashSet<>(dedupCols));
-
+        schema.setBlockingCols(new HashSet<>(blockingCols));
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
             categoricalColumns.add(new CategoricalColumn(categoricalCols.get(i)));

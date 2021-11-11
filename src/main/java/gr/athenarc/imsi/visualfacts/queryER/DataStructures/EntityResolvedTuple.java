@@ -25,6 +25,7 @@ public class EntityResolvedTuple<T> {
 	private Integer comparisons;
 	private double compTime;
 	private double revUFCreationTime;
+	private int datasourceColumn;
 	
 	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind) {
 		super();
@@ -40,8 +41,6 @@ public class EntityResolvedTuple<T> {
 		this.finalData = (List<T>) finalData;
 		this.revUF = new HashMap<>();
 	}
-	
-
 	
 	@SuppressWarnings("unchecked")
 	public void getAll() {
@@ -155,6 +154,14 @@ public class EntityResolvedTuple<T> {
 
 	public void setRevUFCreationTime(double revUFCreationTime) {
 		this.revUFCreationTime = revUFCreationTime;
+	}
+
+	public void setDatasourceColumn(int datasourceColumn) {
+		this.datasourceColumn = datasourceColumn;
+	}
+
+	public int getDatasourceColumn() {
+		return datasourceColumn;
 	}
 
 	public HashMap<Long, Set<Long>> getLinks() {

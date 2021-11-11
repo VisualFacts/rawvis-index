@@ -19,8 +19,9 @@ public class Schema {
     private Character delimiter = ',';
     private int objectCount;
     private int idColumn;
+    private int dataSourceColumn;
 
-    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, int idColumn) {
+    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, int idColumn, int dataSourceColumn) {
         this.csv = csv;
         this.delimiter = delimiter;
         this.xColumn = xColumn;
@@ -30,6 +31,7 @@ public class Schema {
         this.bounds = bounds;
         this.objectCount = objectCount;
         this.idColumn = idColumn;
+        this.dataSourceColumn = dataSourceColumn;
     }
 
     public boolean getHasHeader() {
@@ -61,8 +63,8 @@ public class Schema {
         return yColumn;
     }
 
-    public int getidColumn() {
-        return idColumn;
+    public int getDataSourceColumn() {
+        return dataSourceColumn;
     }
 
     public Integer getMeasureCol0() {
@@ -107,6 +109,10 @@ public class Schema {
         return objectCount;
     }
 
+    public int getIdColumn() {
+        return idColumn;
+    }
+
     public CsvParserSettings createCsvParserSettings() {
         CsvParserSettings parserSettings = new CsvParserSettings();
         parserSettings.getFormat().setDelimiter(delimiter);
@@ -130,9 +136,10 @@ public class Schema {
                 ", bounds=" + bounds +
                 ", categoricalColumns=" + categoricalColumns +
                 ", dedupCols=" + dedupCols +
-                ", dedupCols=" + blockingCols +
+                ", blockingCols=" + blockingCols +
                 ", delimiter=" + delimiter +
                 ", objectCount=" + objectCount +
+                ", dataSourceColumn=" + dataSourceColumn +
                 ", idColumn=" + idColumn +
                 '}';
     }

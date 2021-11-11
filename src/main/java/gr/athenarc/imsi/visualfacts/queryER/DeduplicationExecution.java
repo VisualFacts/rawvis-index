@@ -37,9 +37,9 @@ public class DeduplicationExecution<T> {
 		return randomValue.length;
 	}
     
-    public EntityResolvedTuple  deduplicate(List<AbstractBlock> blocks, LinksUtilities linksUtilities, Schema schema, RawFileService rawFileService) {
+    public EntityResolvedTuple  deduplicate(List<AbstractBlock> blocks, LinksUtilities linksUtilities,
+                                            Schema schema, RawFileService rawFileService) {
     	
-        
     	Set<Integer> dedupColumns = schema.getDedupCols();
         Set<Long> totalIds = linksUtilities.getTotalIds();
         Set<Long> qIdsNoLinks = linksUtilities.getqIdsNoLinks();
@@ -88,12 +88,9 @@ public class DeduplicationExecution<T> {
         // Merge queryData with dataWithLinks
         dataWithoutLinks = linksUtilities.mergeMaps(dataWithoutLinks, dataWithLinks);
         ExecuteBlockComparisons<?> ebc = new ExecuteBlockComparisons(dataWithoutLinks, rawFileService);
-        double start = System.currentTimeMillis();
 
         EntityResolvedTuple<?> entityResolvedTuple = ebc.comparisonExecutionAll(blocks, qIdsNoLinks, dedupColumns);
-        double end = System.currentTimeMillis();
-        System.out.println("comp time: " + String.valueOf(end - start));
-
+        entityResolvedTuple.setDatasourceColumn(schema.getDataSourceColumn());
         entityResolvedTuple.mergeLinks(linksUtilities.getLinks(), linksUtilities.isFirstDedup(), totalIds);
         
         // Log everything
