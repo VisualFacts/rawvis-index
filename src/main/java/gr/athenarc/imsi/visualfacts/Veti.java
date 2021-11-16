@@ -585,17 +585,17 @@ public class Veti {
         LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, linksUtilities, schema, rawFileService);
 
+        System.out.println(queryResults.getPoints().size());
         queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
             Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
-            return links == null || links.size() > 1;
+            return links == null || links.size() == 0;
         }).collect(Collectors.toList()));
-
-        this.links = entityResolvedTuple.getLinks();
+        System.out.println(queryResults.getPoints().size());
+        //this.links = entityResolvedTuple.getLinks();
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
 
         dedupQueryResults.groupSimilar();
 
-        System.out.println(dedupQueryResults.getDedupVizOutput().VizDataset.size());
         LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
         LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");

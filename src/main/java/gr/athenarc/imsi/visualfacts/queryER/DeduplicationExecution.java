@@ -56,7 +56,6 @@ public class DeduplicationExecution<T> {
 
         
         boolean epFlag = false;
-        System.out.println(blocks.size());
         if (blocks.size() > 10) {
 
             // FILTERING

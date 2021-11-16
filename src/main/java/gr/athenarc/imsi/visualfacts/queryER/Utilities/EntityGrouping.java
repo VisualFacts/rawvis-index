@@ -34,6 +34,7 @@ public class EntityGrouping {
         for (long id : revUF.keySet()) {
             List<VizData> entityGroup = new ArrayList<>();
             Set<Long> similar = revUF.get(id);
+            similar.add(id);
             /* Because we resolve all duplicates when found the first id of the cluster we use this set */
             if (checked.contains(id)) continue;
             checked.addAll(similar);
@@ -43,7 +44,10 @@ public class EntityGrouping {
             	HashMap<Integer, String> columns = new HashMap<>();
                 Object[] datum = newData.get(idInner);
                 String dataSource = "No Available Sources.";
-                if(datasourceColumn != null) dataSource = datum[datasourceColumn].toString();
+                try {
+                    if (datasourceColumn != null) dataSource = datum[datasourceColumn].toString();
+                }
+                catch (Exception e) {e.printStackTrace();}
                 if (datum != null) {
                 	for (int i = 0; i < noOfFields; i++) {
                 		String value = "";
