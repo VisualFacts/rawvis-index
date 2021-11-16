@@ -22,7 +22,7 @@ public class EntityGrouping {
     public static DedupVizOutput groupSimilar(HashMap<Long, Set<Long>> revUF,
                                               HashMap<Long, Object[]> newData,
                                               HashMap<Long, HashMap<Long, Double>> similarities,
-                                              int datasourceColumn) {
+                                              Integer datasourceColumn) {
 
         List<Object[]> finalData = new ArrayList<>();
         Set<Long> checked = new HashSet<>();
@@ -42,7 +42,8 @@ public class EntityGrouping {
             for (long idInner : similar) {
             	HashMap<Integer, String> columns = new HashMap<>();
                 Object[] datum = newData.get(idInner);
-                String dataSource = datum[datasourceColumn].toString();
+                String dataSource = "No Available Sources.";
+                if(datasourceColumn != null) dataSource = datum[datasourceColumn].toString();
                 if (datum != null) {
                 	for (int i = 0; i < noOfFields; i++) {
                 		String value = "";

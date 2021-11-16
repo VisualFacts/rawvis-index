@@ -18,10 +18,10 @@ public class Schema {
     private Set<Integer> blockingCols;
     private Character delimiter = ',';
     private int objectCount;
-    private int idColumn;
-    private int dataSourceColumn;
+    private Integer idColumn;
+    private Integer dataSourceColumn;
 
-    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, int idColumn, int dataSourceColumn) {
+    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, Integer idColumn, Integer dataSourceColumn) {
         this.csv = csv;
         this.delimiter = delimiter;
         this.xColumn = xColumn;
@@ -63,7 +63,7 @@ public class Schema {
         return yColumn;
     }
 
-    public int getDataSourceColumn() {
+    public Integer getDataSourceColumn() {
         return dataSourceColumn;
     }
 
@@ -109,7 +109,7 @@ public class Schema {
         return objectCount;
     }
 
-    public int getIdColumn() {
+    public Integer getIdColumn() {
         return idColumn;
     }
 

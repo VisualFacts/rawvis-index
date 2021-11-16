@@ -25,7 +25,7 @@ public class EntityResolvedTuple<T> {
 	private Integer comparisons;
 	private double compTime;
 	private double revUFCreationTime;
-	private int datasourceColumn;
+	private Integer datasourceColumn;
 	
 	public EntityResolvedTuple(HashMap<Long, Object[]> data, UnionFind uFind) {
 		super();
@@ -156,11 +156,11 @@ public class EntityResolvedTuple<T> {
 		this.revUFCreationTime = revUFCreationTime;
 	}
 
-	public void setDatasourceColumn(int datasourceColumn) {
+	public void setDatasourceColumn(Integer datasourceColumn) {
 		this.datasourceColumn = datasourceColumn;
 	}
 
-	public int getDatasourceColumn() {
+	public Integer getDatasourceColumn() {
 		return datasourceColumn;
 	}
 

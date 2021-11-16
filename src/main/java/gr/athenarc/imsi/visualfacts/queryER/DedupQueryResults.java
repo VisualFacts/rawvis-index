@@ -23,7 +23,7 @@ public class DedupQueryResults {
 		HashMap<Long, Set<Long>> revUF = entityResolvedTuple.getRevUF();
 		HashMap<Long, Object[]> data = entityResolvedTuple.getData();
 		HashMap<Long, HashMap<Long,Double>>  similarities = entityResolvedTuple.getSimilarities();
-		int datasourceColumn = entityResolvedTuple.getDatasourceColumn();
+		Integer datasourceColumn = entityResolvedTuple.getDatasourceColumn();
 		dedupVizOutput =  EntityGrouping.groupSimilar(revUF, data, similarities, datasourceColumn);
 	}
 	
