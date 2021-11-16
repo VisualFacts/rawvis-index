@@ -69,6 +69,7 @@ public class EntityResolvedTuple<T> {
 		this.links = links;
 		if(!firstDedup) this.combineLinks(links);
 		filterData(totalIds);
+
 		return links;
 	}
 		
@@ -84,6 +85,7 @@ public class EntityResolvedTuple<T> {
 			this.finalData.add((T) datum);
 		}
 		this.data = filteredData;
+		revUF.values().removeIf(v -> v.size() > 7);
 	}
 	
 	public void combineLinks(Map<Long, Set<Long>> links) {
