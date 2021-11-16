@@ -591,7 +591,7 @@ public class Veti {
             return links == null || links.size() == 0;
         }).collect(Collectors.toList()));
         System.out.println(queryResults.getPoints().size());
-        //this.links = entityResolvedTuple.getLinks();
+        this.links = entityResolvedTuple.getLinks();
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
 
         dedupQueryResults.groupSimilar();
