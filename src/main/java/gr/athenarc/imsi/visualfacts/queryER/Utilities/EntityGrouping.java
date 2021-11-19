@@ -73,7 +73,7 @@ public class EntityGrouping {
             }
             
         }
-        double percentOfDups = (double) finalData.size() / (double)  revUF.size();
+        double percentOfDups = (double) revUF.size() / (double)  newData.size();
         VizStatistic VizStatistic = generateVizStatistic(VizDataset, columnSimilarities, percentOfDups);
         DedupVizOutput vizOutput = new DedupVizOutput(VizDataset, VizStatistic);
         return vizOutput;

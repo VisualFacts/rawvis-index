@@ -85,6 +85,7 @@ public class EntityResolvedTuple<T> {
 			this.finalData.add((T) datum);
 		}
 		this.data = filteredData;
+		//TODO: Find a way to do this dynamically, ie remove potentially wrong duplicates (7 is the number of datasources)
 		revUF.values().removeIf(v -> v.size() > 7);
 	}
 	
