@@ -31,7 +31,10 @@ public class RawFileService {
             randomAccessReader.seek(offset);
             String row = randomAccessReader.readLine();
             if (row != null) {
-                object = parser.parseLine(row);
+                try {
+                    object = parser.parseLine(row);
+                }
+                catch(Exception e) {object = null;}
             } else object = null;
             cache.put(offset, object);
         } else {
