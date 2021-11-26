@@ -84,6 +84,8 @@ public class Experiments {
     private boolean measureMem = false;
     @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
     private boolean measureMaxDepth = false;
+    @Parameter(names = "-dedup", description = "Is dedup enabled")
+    private Boolean dedup = false;
     @Parameter(names = "-rect", converter = RectangleConverter.class, description = "Rectangle")
     private Rectangle rect = null;
     @Parameter(names = "-measureCol", description = "The measure column")
@@ -113,6 +115,9 @@ public class Experiments {
 
     @Parameter(names = "-model", description = "The calcite model file")
     public String model;
+
+    public Experiments() {
+    }
 
     public static void main(String... args) throws IOException, ClassNotFoundException {
         Experiments experiments = new Experiments();
@@ -228,7 +233,7 @@ public class Experiments {
         Stopwatch stopwatch = Stopwatch.createUnstarted();
         stopwatch.start();
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, dedup);
         veti.generateGrid(q0);
         stopwatch.stop();
 
@@ -277,7 +282,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, dedup);
         veti.generateGrid(q0);
 
 
@@ -320,7 +325,7 @@ public class Experiments {
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
         veti.setSort(sort);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, true);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, dedup);
         veti.initialize(q0);
         stopwatch.stop();
 
@@ -371,7 +376,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount, model);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol,schema.getDedupCols() != null && schema.getDedupCols().size() > 0);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol, dedup);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {

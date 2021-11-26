@@ -504,8 +504,8 @@ public class Veti {
         queryResults.setStats(stats);
 
 
-        LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        LOG.debug("Number of query objects: " + queryResults.getPoints().size());
+//        LOG.debug("Actual query execution complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+//        LOG.debug("Number of query objects: " + queryResults.getPoints().size());
 
         if (query.isDedupEnabled()) {
             queryResults.setDedupVizOutput(deduplicateQueryResults(queryResults));
@@ -582,24 +582,17 @@ public class Veti {
 
         List<AbstractBlock> abstractBlocks = QueryBlockIndex.parseIndex(queryBlockIndex.invertedIndex);
 
-        LOG.debug("Blocks created. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
         EntityResolvedTuple entityResolvedTuple = deduplicationExecution.deduplicate(abstractBlocks, linksUtilities, schema, rawFileService);
 
-        System.out.println(queryResults.getPoints().size());
         queryResults.setPoints(queryResults.getPoints().stream().filter(point -> {
             Set<Long> links = (Set<Long>) entityResolvedTuple.revUF.get(point.getFileOffset());
             return links == null || links.size() == 0;
         }).collect(Collectors.toList()));
-        System.out.println(queryResults.getPoints().size());
         this.links = entityResolvedTuple.getLinks();
         DedupQueryResults dedupQueryResults = new DedupQueryResults(entityResolvedTuple);
 
         dedupQueryResults.groupSimilar();
 
-        LOG.debug("Actual Deduplication Completed. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-
-        LOG.debug("Deduplication complete. Time required: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
-        LOG.debug("# of Comparisons: " + dedupQueryResults.getComparisons());
         return dedupQueryResults.getDedupVizOutput();
     }
 
