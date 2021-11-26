@@ -85,7 +85,7 @@ public class Experiments {
     @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
     private boolean measureMaxDepth = false;
     @Parameter(names = "-dedup", description = "Is dedup enabled")
-    private Boolean dedup = false;
+    private Boolean dedup = true;
     @Parameter(names = "-rect", converter = RectangleConverter.class, description = "Rectangle")
     private Rectangle rect = null;
     @Parameter(names = "-measureCol", description = "The measure column")
