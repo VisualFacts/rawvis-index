@@ -36,7 +36,8 @@ public class RawFileService {
                 }
                 catch(Exception e) {
                     System.out.println("Cant parse " + row);
-                    object = null;
+                    row = row.substring(1);
+                    object = parser.parseLine(row);
                 }
             } else object = null;
             cache.put(offset, object);
