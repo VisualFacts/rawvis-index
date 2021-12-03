@@ -666,5 +666,9 @@ public class Veti {
         this.sort = sort;
     }
 
+    public void destroy() throws IOException {
+        rawFileService.close();
+    }
+
 
 }

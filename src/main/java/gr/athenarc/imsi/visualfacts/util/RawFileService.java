@@ -46,4 +46,8 @@ public class RawFileService {
         }
         return object;
     }
+
+    public void close() throws IOException {
+        this.randomAccessReader.close();
+    }
 }
