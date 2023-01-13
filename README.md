@@ -29,7 +29,7 @@ Build the JAR file:
 
 ```
 
-./mvnw clean install
+maven clean install
 
 
 ```
@@ -65,7 +65,7 @@ First, build the JAR file:
 
 ```
 
-./mvnw clean install
+maven clean install
 
 
 ```
