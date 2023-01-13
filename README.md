@@ -29,7 +29,7 @@ Build the JAR file:
 
 ```
 
-maven clean install
+mvn clean install
 
 
 ```
@@ -65,7 +65,7 @@ First, build the JAR file:
 
 ```
 
-maven clean install
+mvn clean install
 
 
 ```
