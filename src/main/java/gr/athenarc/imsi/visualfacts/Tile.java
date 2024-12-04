@@ -1,10 +1,16 @@
 package gr.athenarc.imsi.visualfacts;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
+import java.util.stream.Collectors;
+
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
-
-import java.util.*;
-import java.util.stream.Collectors;
 
 public abstract class Tile {
 
@@ -97,11 +103,11 @@ public abstract class Tile {
         if (query.getGroupByCols() != null) {
             queryAttrs.addAll(query.getGroupByCols());
         }
-        List<CategoricalColumn> unknownQueryAttrs = queryAttrs.stream().filter(attr -> !treeAttrIndexes.contains(attr))
-                .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
-                .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
+        // List<CategoricalColumn> unknownQueryAttrs = queryAttrs.stream().filter(attr -> !treeAttrIndexes.contains(attr))
+        //         .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
+        //         .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
 
-        categoricalColumns.addAll(unknownQueryAttrs);
+        // categoricalColumns.addAll(unknownQueryAttrs);
 
 
         List<QueryNode> queryNodes = new ArrayList<>();

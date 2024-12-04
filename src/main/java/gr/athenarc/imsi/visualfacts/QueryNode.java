@@ -1,10 +1,10 @@
 package gr.athenarc.imsi.visualfacts;
 
-import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
-
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+
+import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 
 
 public class QueryNode implements Iterable<Point> {
@@ -15,6 +15,16 @@ public class QueryNode implements Iterable<Point> {
     private ContainmentExaminer containmentExaminer;
     private List<CategoricalColumn> unknownCatAttrs;
 
+    public boolean traversed = false;
+    public int intersectionCount = 0;
+    public double minSum = Double.NEGATIVE_INFINITY;
+    public double maxSum = Double.POSITIVE_INFINITY;
+    public double maxErrorBound = Double.NEGATIVE_INFINITY;
+
+
+    public double getMaxErrorBound() {
+        return maxErrorBound;
+    }
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,  Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs) {
         this.groupByValues = groupByValues;

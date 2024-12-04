@@ -7,14 +7,14 @@ import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
+import java.util.Stack;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
 import com.univocity.parsers.csv.CsvParser;
@@ -29,7 +29,7 @@ import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 
-public class Veti {
+public class ApproximateVeti {
 
     private static final Logger LOG = LogManager.getLogger(Veti.class);
 
@@ -53,11 +53,13 @@ public class Veti {
 
     private int objectsIndexed = 0;
 
-    public Veti(Schema schema, Integer catNodeBudget, String initMode, Integer binCount) {
+    private double errorBound = 0.05;
+
+    public ApproximateVeti(Schema schema, Integer catNodeBudget, String initMode, Double errorBound) {
         this.schema = schema;
         this.initMode = initMode;
         this.catNodeBudget = catNodeBudget;
-        this.binCount = binCount;
+        this.errorBound = errorBound;
     }
 
     public void generateGrid(Query q0) {
@@ -65,10 +67,10 @@ public class Veti {
             throw new IllegalStateException("The index is already initialized");
 
         if (q0 != null) {
-            initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0, (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
+            initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0,
+                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
             initializationPolicy.setSort(sort);
         }
-
 
         grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
         grid.split();
@@ -82,8 +84,8 @@ public class Veti {
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
 
-
-        List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed().collect(Collectors.toList());
+        List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed()
+                .collect(Collectors.toList());
         List<Integer> colIndexes = new ArrayList<>();
 
         colIndexes.add(schema.getxColumn());
@@ -91,12 +93,8 @@ public class Veti {
         colIndexes.addAll(catColIndexes);
 
         Integer measureCol0 = schema.getMeasureCol0();
-        Integer measureCol1 = schema.getMeasureCol1();
         if (measureCol0 != null) {
             colIndexes.add(measureCol0);
-            if (measureCol1 != null) {
-                colIndexes.add(measureCol1);
-            }
         }
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
@@ -112,7 +110,8 @@ public class Veti {
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
             try {
-                Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+                Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
+                        Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
                 TreeNode node = this.grid.addPoint(point, row);
                 if (node == null) {
@@ -122,9 +121,6 @@ public class Veti {
                 if (measureCol0 != null) {
                     Float value0 = Float.parseFloat(row[measureCol0]);
                     Float value1 = 0f;
-                    if (measureCol1 != null) {
-                        value1 = Float.parseFloat(row[measureCol1]);
-                    }
                     node.adjustStats(value0, value1);
                 }
                 if (++objectsIndexed % 1000000 == 0) {
@@ -164,16 +160,17 @@ public class Veti {
         if (randomAccessReader == null) {
             randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
         }
-        List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
+        List<float[]> points = new ArrayList<>();
 
         int fullyContainedTilesCount = 0;
 
-        List<QueryNode> nodesToExpand = new ArrayList<>();
-
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
+        List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
+        List<QueryNode> partiallyContainedNodesWithStats = new ArrayList<>();
+        List<QueryNode> nodesWithoutStats = new ArrayList<>();
 
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
@@ -183,67 +180,144 @@ public class Veti {
             }
 
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
-            int count = 0;
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
-                if ((!isFullyContained || !node.hasStats()) && node.getPoints() != null) {
-                    count += node.getPoints().size();
-                }
-            }
-
-            if (count > THRESHOLD) {
-                leafTile.split();
-                queryNodes = leafTile.getOverlappedLeafTiles(query).stream()
-                        .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream()).collect(Collectors.toList());
-            }
-
-            for (QueryNode queryNode : queryNodes) {
-                TreeNode node = queryNode.getNode();
-
-
-                PairedStatsAccumulator nodeStats = node.getStats();
-                Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
-
-                boolean hasUnknownAttrs = queryNode.getUnknownCatAttrs() != null && !queryNode.getUnknownCatAttrs().isEmpty();
-
-                if (isFullyContained && hasUnknownAttrs && !initMode.equals("valinor")) {
-                    nodesToExpand.add(queryNode);
+                if (node.getPoints() == null) {
+                    continue;
                 }
 
-                //todo unknownCatAttrs may not be empty but including only attrs missing from the node but not present in the query
-                if (isFullyContained && nodeStats != null && !hasUnknownAttrs) {
-                    queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null :
-                            groupByColumns.stream().map(categoricalColumn -> {
-                                return categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()));
-                            }).collect(ImmutableList.toImmutableList()), nodeStats.snapshot());
-                    nonRawNodes.add(queryNode);
+                if (!node.hasStats()) {
+                    if (node.points.size() > THRESHOLD) {
+                        leafTile.split();
+                        nodesWithoutStats.addAll(leafTile.getOverlappedLeafTiles(query).stream()
+                                .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer,
+                                        schema).stream())
+                                .collect(Collectors.toList()));
+                    } else {
+                        nodesWithoutStats.add(queryNode);
+                    }
+                } else if (isFullyContained) {
+                    fullyContainedNodesWithStats.add(queryNode);
                 } else {
-                    rawIterators.add(new NodePointsIterator(queryNode));
+                    partiallyContainedNodesWithStats.add(queryNode);
                 }
             }
+        }
+        for (QueryNode queryNode : fullyContainedNodesWithStats) {
+            queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
+            nonRawNodes.add(queryNode);
         }
 
         List<Integer> cols = new ArrayList<>();
 
         Integer measureCol0 = schema.getMeasureCol0();
-        Integer measureCol1 = schema.getMeasureCol1();
         if (measureCol0 != null) {
             cols.add(measureCol0);
-            if (measureCol1 != null) {
-                cols.add(measureCol1);
-            }
         }
-        // cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
 
-        CsvParserSettings parserSettings = schema.createCsvParserSettings();
+        CsvParserSettings parserSettings = schema
+                .createCsvParserSettings();
         parserSettings.selectIndexes(cols.toArray(new Integer[cols.size()]));
         parserSettings.setColumnReorderingEnabled(false);
         CsvParser parser = new CsvParser(parserSettings);
 
-        KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
         int ioCount = 0;
-        String line = null;
-        String[] row = null;
+
+        KWayMergePointIterator pointIterator;
+
+        pointIterator = new KWayMergePointIterator(nodesWithoutStats.stream()
+                .map(queryNode -> new NodePointsIterator(queryNode)).collect(Collectors.toList()));
+        ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
+
+        for (QueryNode queryNode : partiallyContainedNodesWithStats) {
+            NodePointsIterator nodePointsIterator = new NodePointsIterator(queryNode);
+            int count = 0;
+            while (nodePointsIterator.hasNext()) {
+                nodePointsIterator.next();
+                count++;
+            }
+            queryNode.intersectionCount = count;
+            queryNode.minSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().min();
+            queryNode.maxSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().max();
+            queryNode.traversed = true;
+            queryNode.maxErrorBound = (queryNode.maxSum - queryNode.minSum) / (queryNode.minSum + queryNode.maxSum);
+        }
+
+        Stack<QueryNode> stack = new Stack<>();
+        partiallyContainedNodesWithStats.sort(Comparator.comparingDouble(QueryNode::getMaxErrorBound));
+
+        int currentIndex = 0;
+        double maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
+
+        LOG.debug("Max Error Bound: " + maxErrorBound);
+        while (currentIndex < partiallyContainedNodesWithStats.size() && maxErrorBound > errorBound) {
+            QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
+            pointIterator = new KWayMergePointIterator(Arrays.asList(new NodePointsIterator(queryNode)));
+            ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
+            currentIndex++;
+            maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
+            LOG.debug("Max Error Bound: " + maxErrorBound);
+        }
+
+        while (currentIndex < partiallyContainedNodesWithStats.size()) {
+            QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
+            NodePointsIterator nodePointsIterator = new NodePointsIterator(queryNode);
+            
+            while (nodePointsIterator.hasNext()) {
+                nodePointsIterator.next();
+                queryResults.adjustStats(null, (float) queryNode.getNode().getStats().xStats().mean(), 0f);
+            }
+            currentIndex++;
+        }
+
+        // for (QueryNode queryNode : partiallyContainedNodesWithStats) {
+        // pointIterator = new KWayMergePointIterator(Arrays.asList(new
+        // NodePointsIterator(queryNode)));
+        // ioCount += readFromFile(query, queryResults, measureCol0, parser,
+        // pointIterator);
+        // }
+
+        // for (NodePointsIterator nodePointsIterator : rawIterators) {
+        // if (errorBound > upperErrorThreshold) {
+        // break;
+        // }
+
+        // }
+
+        queryResults.setTileCount(leafTiles.size());
+        queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
+        queryResults.setIoCount(ioCount);
+
+        PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
+        queryResults.getStats().entrySet().stream().forEach(e -> {
+            pairedStatsAccumulator.addAll(e.getValue());
+        });
+        queryResults.setRectStats(pairedStatsAccumulator);
+        return queryResults;
+    }
+
+    private double calculateMaxErrorBound(List<QueryNode> queryNodes, int current, QueryResults queryResults) {
+        double minSum = 0, maxSum = 0;
+        try {
+            minSum = queryResults.getStats().get(null).xStats().sum();
+            maxSum = queryResults.getStats().get(null).xStats().sum();
+        } catch (Exception e) {
+            LOG.debug(e);
+        }
+        for (int i = current; i < queryNodes.size(); i++) {
+            QueryNode queryNode = queryNodes.get(i);
+            minSum += queryNode.minSum;
+            maxSum += queryNode.maxSum;
+        }
+        LOG.debug("Min Sum: " + minSum + " Max Sum: " + maxSum);
+        return (maxSum - minSum) / (minSum + maxSum);
+    }
+
+    private int readFromFile(Query query, QueryResults queryResults, Integer measureCol0,
+            CsvParser parser, KWayMergePointIterator pointIterator) {
+        String line;
+        String[] row;
+        int ioCount = 0;
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
@@ -257,19 +331,16 @@ public class Veti {
                     if (row != null) {
                         if (measureCol0 != null && row[measureCol0] != null) {
                             measureValue0 = Float.parseFloat(row[measureCol0]);
-                            if (measureCol1 == null) {
-                                measureValue1 = 0f;
-                            } else if (row[measureCol1] != null) {
-                                measureValue1 = Float.parseFloat(row[measureCol1]);
-                            }
+                            measureValue1 = 0f;
                         }
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         TreeNode node = queryNode.getNode();
 
                         if (queryNode.isFullyContained()) {
-                            //we expand the node with unknown attrs
-                            if (!initMode.equals("valinor") && queryNode.getUnknownCatAttrs() != null && !queryNode.getUnknownCatAttrs().isEmpty()) {
+                            // we expand the node with unknown attrs
+                            if (!initMode.equals("valinor") && queryNode.getUnknownCatAttrs() != null
+                                    && !queryNode.getUnknownCatAttrs().isEmpty()) {
                                 for (CategoricalColumn unknownAttr : queryNode.getUnknownCatAttrs()) {
                                     node = node.getOrAddChild(unknownAttr.getValueKey(row[unknownAttr.getIndex()]));
                                 }
@@ -277,23 +348,16 @@ public class Veti {
                                 if (measureValue0 != null && measureValue1 != null) {
                                     node.adjustStats(measureValue0, measureValue1);
                                 }
-                            } else if (queryNode.getUnknownCatAttrs() == null || queryNode.getUnknownCatAttrs().isEmpty()) {
+                            } else if (queryNode.getUnknownCatAttrs() == null
+                                    || queryNode.getUnknownCatAttrs().isEmpty()) {
                                 if (measureValue0 != null && measureValue1 != null) {
                                     queryNode.getNode().adjustStats(measureValue0, measureValue1);
                                 }
                             }
                         }
-                        ImmutableList<String> groupByValuesList = null;
-                        // if (query.getGroupByCols() != null) {
-                        //     String[] finalRow = row;
-                        //     groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
-                        //             queryNode.getGroupByValues().containsKey(categoricalColumn.getIndex()) ?
-                        //                     categoricalColumn.getValue(queryNode.getGroupByValues().get(categoricalColumn.getIndex())) :
-                        //                     finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
-                        // }
-
-                        if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
-                            queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
+                        if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null
+                                && measureValue1 != null) {
+                            queryResults.adjustStats(null, measureValue0, measureValue1);
                         }
                     }
                 }
@@ -301,23 +365,7 @@ public class Veti {
                 LOG.debug(e);
             }
         }
-
-
-        for (QueryNode queryNode : nodesToExpand) {
-            queryNode.getNode().convertToNonleaf();
-        }
-
-        queryResults.setTileCount(leafTiles.size());
-        queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
-        queryResults.setIoCount(ioCount);
-        queryResults.setExpandedNodeCount(nodesToExpand.size());
-
-        PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
-        queryResults.getStats().entrySet().stream().forEach(e -> {
-            pairedStatsAccumulator.addAll(e.getValue());
-        });
-        queryResults.setRectStats(pairedStatsAccumulator);
-        return queryResults;
+        return ioCount;
     }
 
     private boolean checkUnknownAttrs(Query query, String[] row, List<CategoricalColumn> unknownCatAttrs) {
@@ -353,7 +401,6 @@ public class Veti {
     public int getLeafTileCount() {
         return this.grid.getLeafTileCount();
     }
-
 
     public int getMaxDepth() {
         return grid.getMaxDepth();

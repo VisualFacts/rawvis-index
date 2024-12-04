@@ -1,18 +1,25 @@
 package gr.athenarc.imsi.visualfacts.experiments.util;
 
-import com.google.common.collect.Range;
-import gr.athenarc.imsi.visualfacts.CategoricalColumn;
-import gr.athenarc.imsi.visualfacts.Rectangle;
-import gr.athenarc.imsi.visualfacts.Schema;
-import gr.athenarc.imsi.visualfacts.query.Query;
+import static gr.athenarc.imsi.visualfacts.experiments.util.UserOpType.*;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
 import org.apache.commons.math3.distribution.EnumeratedDistribution;
 import org.apache.commons.math3.util.Pair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.*;
+import com.google.common.collect.Range;
 
-import static gr.athenarc.imsi.visualfacts.experiments.util.UserOpType.*;
+import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.Rectangle;
+import gr.athenarc.imsi.visualfacts.Schema;
+import gr.athenarc.imsi.visualfacts.query.Query;
 
 public class QuerySequenceGenerator {
 
@@ -37,7 +44,8 @@ public class QuerySequenceGenerator {
     public List<Query> generateQuerySequence(Query q0, int count, Schema schema) {
         Direction[] directions = Direction.getRandomDirections(count);
         int[] shifts = new Random(0).ints(count, minShift, maxShift + 1).toArray();
-        int[] filterCounts = new Random(0).ints(count, minFilters, maxFilters + 1).toArray();
+        int[] filterCounts = new int[count];
+        // int[] filterCounts = new Random(0).ints(count, minFilters, maxFilters + 1).toArray();
 
         List<Pair<CategoricalColumn, Double>> catColPairs = new ArrayList<>();
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
@@ -46,10 +54,13 @@ public class QuerySequenceGenerator {
             }
         }
         Random opRand = new Random(0);
-        List<UserOpType> ops = Arrays.asList(new UserOpType[]{P, P, ZI, ZO});
+        // List<UserOpType> ops = Arrays.asList(new UserOpType[] { P, P, ZI, ZO });
+        List<UserOpType> ops = Arrays.asList(new UserOpType[] { P, P});
 
-        EnumeratedDistribution<CategoricalColumn> colDistribution = new EnumeratedDistribution<>(catColPairs);
-        colDistribution.reseedRandomGenerator(0);
+        if (!catColPairs.isEmpty()) {
+            EnumeratedDistribution<CategoricalColumn> colDistribution = new EnumeratedDistribution<>(catColPairs);
+            colDistribution.reseedRandomGenerator(0);
+        }
 
         Random randomFilterValueGen = new Random(0);
         List<Query> queries = new ArrayList<>();
@@ -67,17 +78,8 @@ public class QuerySequenceGenerator {
             }
 
             Map<Integer, String> filters = new HashMap<>();
-            int filterCount = filterCounts[i];
-
-            while (filterCount > 0) {
-                CategoricalColumn column = colDistribution.sample();
-                if (!filters.containsKey(column.getIndex())) {
-                    String filterValue = column.getValue((short) randomFilterValueGen.nextInt(column.getCardinality()));
-                    filters.put(column.getIndex(), filterValue);
-                    filterCount--;
-                }
-            }
-            query = new Query(rect, filters, q0.getGroupByCols(), q0.getMeasureCol());
+            
+            query = new Query(rect, filters, null, q0.getMeasureCol());
             queries.add(query);
         }
         return queries;

@@ -1,15 +1,17 @@
 package gr.athenarc.imsi.visualfacts.experiments.util;
 
-import com.univocity.parsers.csv.CsvWriter;
-import com.univocity.parsers.csv.CsvWriterSettings;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+
 import org.apache.commons.math3.random.RandomDataGenerator;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
+import com.univocity.parsers.csv.CsvWriter;
+import com.univocity.parsers.csv.CsvWriterSettings;
 
 public class SyntheticDatasetGenerator {
 
@@ -45,6 +47,17 @@ public class SyntheticDatasetGenerator {
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
+    }
+
+public static void main(String[] args) throws IOException {
+        int rowCount = 1000000; // 1 million rows
+        int colCount = 10; // Number of columns 
+        int cardinality = 0; // Not used since we have no categorical columns
+        List<Integer> categoricalCols = Collections.emptyList(); // Empty list for categorical columns
+        String file = "synth1M_10cols.csv"; // Output file
+
+        SyntheticDatasetGenerator generator = new SyntheticDatasetGenerator(rowCount, colCount, categoricalCols, cardinality, file);
+        generator.generate();
     }
 
 

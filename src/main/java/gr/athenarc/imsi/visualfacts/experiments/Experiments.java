@@ -1,22 +1,6 @@
 package gr.athenarc.imsi.visualfacts.experiments;
 
-import com.beust.jcommander.JCommander;
-import com.beust.jcommander.Parameter;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Stopwatch;
-import com.google.common.collect.Range;
-import com.univocity.parsers.csv.CsvParser;
-import com.univocity.parsers.csv.CsvParserSettings;
-import com.univocity.parsers.csv.CsvWriter;
-import com.univocity.parsers.csv.CsvWriterSettings;
-import gr.athenarc.imsi.visualfacts.*;
-import gr.athenarc.imsi.visualfacts.config.IndexConfig;
-import gr.athenarc.imsi.visualfacts.experiments.util.*;
-import gr.athenarc.imsi.visualfacts.query.Query;
-import gr.athenarc.imsi.visualfacts.query.QueryResults;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.ehcache.sizeof.SizeOf;
+import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -28,13 +12,43 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static gr.athenarc.imsi.visualfacts.config.IndexConfig.DELIMITER;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.ehcache.sizeof.SizeOf;
 
+import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Stopwatch;
+import com.google.common.collect.Range;
+import com.univocity.parsers.csv.CsvParser;
+import com.univocity.parsers.csv.CsvParserSettings;
+import com.univocity.parsers.csv.CsvWriter;
+import com.univocity.parsers.csv.CsvWriterSettings;
+
+import gr.athenarc.imsi.visualfacts.ApproximateVeti;
+import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.DummyCategoricalColumn;
+import gr.athenarc.imsi.visualfacts.Rectangle;
+import gr.athenarc.imsi.visualfacts.Schema;
+import gr.athenarc.imsi.visualfacts.TreeNode;
+import gr.athenarc.imsi.visualfacts.Veti;
+import gr.athenarc.imsi.visualfacts.config.IndexConfig;
+import gr.athenarc.imsi.visualfacts.experiments.util.FilterConverter;
+import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.RangeConverter;
+import gr.athenarc.imsi.visualfacts.experiments.util.RectangleConverter;
+import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
+import gr.athenarc.imsi.visualfacts.query.Query;
+import gr.athenarc.imsi.visualfacts.query.QueryResults;
 
 public class Experiments {
 
     private static final Logger LOG = LogManager.getLogger(Experiments.class);
 
+    
+    @Parameter(names = "-errorBound", description = "")
+    public Double errorBound;
 
     @Parameter(names = "-catBudget", description = "Categorical Node budget in GB")
     public Double catBudget;
@@ -103,7 +117,6 @@ public class Experiments {
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
 
-
     public static void main(String... args) throws IOException, ClassNotFoundException {
         Experiments experiments = new Experiments();
         JCommander jCommander = new JCommander(experiments, args);
@@ -125,6 +138,9 @@ public class Experiments {
                 break;
             case "timeQueries":
                 timeQueries();
+                break;
+            case "timeApproximateQueries":
+                timeApproximateQueries();
                 break;
             case "findBounds":
                 findBounds();
@@ -189,22 +205,20 @@ public class Experiments {
         LOG.debug(new Rectangle(Range.open(minX, maxX), Range.open(minY, maxY)));
     }
 
-
     private void timeAssignmentTime() throws IOException {
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
 
-
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-
 
         int leafTiles = 0;
         int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
 
         csv = "NO CSV";
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+                bounds, objCount);
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
             categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -221,9 +235,10 @@ public class Experiments {
         veti.generateGrid(q0);
         stopwatch.stop();
 
-
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "grid size", "Leaf tiles", "initCatBudget (Gb)", "initCatBudget (nodes)", "q0", "# of categorical columns", "cardinality", "Total Util", "Time (sec)");
+            csvWriter.writeHeaders("csv", "initMode", "grid size", "Leaf tiles", "initCatBudget (Gb)",
+                    "initCatBudget (nodes)", "q0", "# of categorical columns", "cardinality", "Total Util",
+                    "Time (sec)");
         }
 
         csvWriter.addValue(csv);
@@ -247,16 +262,15 @@ public class Experiments {
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
 
-
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
         int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-
 
         Schema schema;
         if (csv != null)
             schema = getSchemaWithSampling();
         else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+                    bounds, objCount);
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
                 categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -269,9 +283,9 @@ public class Experiments {
         Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
         veti.generateGrid(q0);
 
-
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count", "q0", "categoricalColumns", "Total Util");
+            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count",
+                    "q0", "categoricalColumns", "Total Util");
         }
 
         csvWriter.addValue(csv);
@@ -293,9 +307,7 @@ public class Experiments {
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
 
-
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-
 
         long memorySize = 0;
         SizeOf sizeOf = SizeOf.newInstance();
@@ -319,7 +331,8 @@ public class Experiments {
         } catch (Exception e) {
         }
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count", "q0", "categoricalColumns", "Time (sec)", "Total Util", "Leaf tiles", "Memory (Gb)");
+            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count",
+                    "q0", "categoricalColumns", "Time (sec)", "Total Util", "Leaf tiles", "Memory (Gb)");
         }
 
         csvWriter.addValue(csv);
@@ -345,11 +358,11 @@ public class Experiments {
         boolean addHeader = new File(outFile).length() == 0;
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "categoricalCols", "initMode", "initCatBudget (Gb)",
-                    "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles", "Overlapped tiles",
+            csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
+                    "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                    "Overlapped tiles",
                     "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result");
         }
-
 
         Stopwatch stopwatch;
 
@@ -372,7 +385,7 @@ public class Experiments {
             stopwatch.stop();
 
             csvWriter.addValue(csv);
-            csvWriter.addValue(schema.getCategoricalColumns());
+            csvWriter.addValue(0);
             csvWriter.addValue(initMode);
             csvWriter.addValue(catBudget);
             csvWriter.addValue(categoricalNodeBudget);
@@ -387,15 +400,74 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
+            csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
+                    entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
     }
 
+    private void timeApproximateQueries() throws IOException {
+        Preconditions.checkNotNull(csv, "You must define the csv file.");
+        Preconditions.checkNotNull(outFile, "No out file specified.");
+
+        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
+        boolean addHeader = new File(outFile).length() == 0;
+        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
+        if (addHeader) {
+            csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
+                    "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                    "Overlapped tiles",
+                    "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result");
+        }
+
+        Stopwatch stopwatch;
+
+        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
+        Schema schema = getSchemaWithSampling();
+
+        LOG.debug(schema.getCategoricalColumns());
+
+        ApproximateVeti veti = new ApproximateVeti(schema, categoricalNodeBudget, initMode, errorBound);
+
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        List<Query> sequence = generateQuerySequence(q0, schema);
+
+        for (int i = 0; i < sequence.size(); i++) {
+            Query query = sequence.get(i);
+            LOG.debug("Executing query " + i);
+
+            stopwatch = Stopwatch.createStarted();
+            QueryResults queryResults = veti.executeQuery(query);
+            stopwatch.stop();
+
+            csvWriter.addValue(csv);
+            csvWriter.addValue(errorBound);
+            csvWriter.addValue(initMode);
+            csvWriter.addValue(catBudget);
+            csvWriter.addValue(categoricalNodeBudget);
+            csvWriter.addValue(binCount);
+            csvWriter.addValue(i);
+            csvWriter.addValue(queryResults.getQuery());
+            csvWriter.addValue(veti.getTotalUtil());
+            csvWriter.addValue(TreeNode.getInstanceCount());
+            csvWriter.addValue(veti.getLeafTileCount());
+            csvWriter.addValue(queryResults.getTileCount());
+            csvWriter.addValue(queryResults.getFullyContainedTileCount());
+            csvWriter.addValue(queryResults.getExpandedNodeCount());
+            csvWriter.addValue(queryResults.getIoCount());
+            csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
+            csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
+                    entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
+            csvWriter.writeValuesToRow();
+            csvWriter.flush();
+        }
+        csvWriter.close();
+    }
 
     private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null, bounds, objCount);
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+                bounds, objCount);
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
@@ -419,7 +491,6 @@ public class Experiments {
         return schema;
     }
 
-
     private List<Query> generateQuerySequence(Query q0, Schema schema) {
         Preconditions.checkNotNull(seqCount, "No sequence count specified.");
         Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
@@ -427,7 +498,8 @@ public class Experiments {
         Preconditions.checkNotNull(minFilters, "Min filters must be specified.");
         Preconditions.checkNotNull(maxFilters, "Max filters must be specified.");
 
-        QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters, maxFilters, zoomFactor);
+        QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
+                maxFilters, zoomFactor);
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
     }
 
