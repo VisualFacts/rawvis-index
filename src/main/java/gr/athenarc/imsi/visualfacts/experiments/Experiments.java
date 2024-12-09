@@ -114,6 +114,9 @@ public class Experiments {
     @Parameter(names = "-cardinality")
     private Integer cardinality;
 
+    @Parameter(names = "-run")
+    private Integer run;
+
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
 
@@ -412,14 +415,12 @@ public class Experiments {
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
-        boolean addHeader = new File(outFile).length() == 0;
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-        if (addHeader) {
-            csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
-                    "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                    "Overlapped tiles",
-                    "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result");
-        }
+        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
+        csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
+                "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                "Overlapped tiles",
+                "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result", "run");
+        
 
         Stopwatch stopwatch;
 
@@ -459,6 +460,7 @@ public class Experiments {
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
             csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
                     entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
+            csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
             csvWriter.flush();
         }
