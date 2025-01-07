@@ -26,7 +26,7 @@ import com.univocity.parsers.csv.CsvParserSettings;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
 
-import gr.athenarc.imsi.visualfacts.ApproximateVeti;
+import gr.athenarc.imsi.visualfacts.ApproximateValinor;
 import gr.athenarc.imsi.visualfacts.CategoricalColumn;
 import gr.athenarc.imsi.visualfacts.DummyCategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Rectangle;
@@ -83,9 +83,9 @@ public class Experiments {
     @Parameter(names = "-maxShift", description = "Max shift in the query sequence")
     private Integer maxShift;
     @Parameter(names = "-minFilters", description = "Min filters in the query sequence")
-    private Integer minFilters;
+    private Integer minFilters = 0;
     @Parameter(names = "-maxFilters", description = "Max filters in the query sequence")
-    private Integer maxFilters;
+    private Integer maxFilters = 0;
     @Parameter(names = "--measureMem", description = "Measure index memory after every query in the sequence")
     private boolean measureMem = false;
     @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
@@ -234,7 +234,7 @@ public class Experiments {
         Stopwatch stopwatch = Stopwatch.createUnstarted();
         stopwatch.start();
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
         veti.generateGrid(q0);
         stopwatch.stop();
 
@@ -283,7 +283,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
         veti.generateGrid(q0);
 
         if (addHeader) {
@@ -368,15 +368,17 @@ public class Experiments {
         }
 
         Stopwatch stopwatch;
+        int categoricalNodeBudget = 0;
+        if (categoricalCols != null && categoricalCols.size() > 0) {
+            categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
+        }
 
-        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
         Schema schema = getSchemaWithSampling();
 
-        LOG.debug(schema.getCategoricalColumns());
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCol);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
@@ -416,43 +418,35 @@ public class Experiments {
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
-        csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
-                "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                "Overlapped tiles",
-                "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result", "run");
+        csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                "Overlapped tiles", "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result", "run");
         
 
         Stopwatch stopwatch;
 
-        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
         Schema schema = getSchemaWithSampling();
 
-        LOG.debug(schema.getCategoricalColumns());
+        ApproximateValinor index = new ApproximateValinor(schema, errorBound);
 
-        ApproximateVeti veti = new ApproximateVeti(schema, categoricalNodeBudget, initMode, errorBound);
-
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
             Query query = sequence.get(i);
-            LOG.debug("Executing query " + i);
+            LOG.debug("Executing query {}: {}", i, query);
 
             stopwatch = Stopwatch.createStarted();
-            QueryResults queryResults = veti.executeQuery(query);
+            QueryResults queryResults = index.executeQuery(query);
             stopwatch.stop();
 
             csvWriter.addValue(csv);
             csvWriter.addValue(errorBound);
             csvWriter.addValue(initMode);
-            csvWriter.addValue(catBudget);
-            csvWriter.addValue(categoricalNodeBudget);
-            csvWriter.addValue(binCount);
             csvWriter.addValue(i);
             csvWriter.addValue(queryResults.getQuery());
-            csvWriter.addValue(veti.getTotalUtil());
+            csvWriter.addValue(index.getTotalUtil());
             csvWriter.addValue(TreeNode.getInstanceCount());
-            csvWriter.addValue(veti.getLeafTileCount());
+            csvWriter.addValue(index.getLeafTileCount());
             csvWriter.addValue(queryResults.getTileCount());
             csvWriter.addValue(queryResults.getFullyContainedTileCount());
             csvWriter.addValue(queryResults.getExpandedNodeCount());
@@ -497,8 +491,7 @@ public class Experiments {
         Preconditions.checkNotNull(seqCount, "No sequence count specified.");
         Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
         Preconditions.checkNotNull(maxShift, "Max query shift must be specified.");
-        Preconditions.checkNotNull(minFilters, "Min filters must be specified.");
-        Preconditions.checkNotNull(maxFilters, "Max filters must be specified.");
+
 
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
                 maxFilters, zoomFactor);

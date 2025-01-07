@@ -29,9 +29,9 @@ import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 
-public class ApproximateVeti {
+public class ApproximateValinor {
 
-    private static final Logger LOG = LogManager.getLogger(Veti.class);
+    private static final Logger LOG = LogManager.getLogger(ApproximateValinor.class);
 
     private boolean isInitialized = false;
 
@@ -43,10 +43,6 @@ public class ApproximateVeti {
 
     private String initMode;
 
-    private Integer catNodeBudget;
-
-    private Integer binCount;
-
     private String sort = "asc";
 
     private InitializationPolicy initializationPolicy;
@@ -55,10 +51,8 @@ public class ApproximateVeti {
 
     private double errorBound = 0.05;
 
-    public ApproximateVeti(Schema schema, Integer catNodeBudget, String initMode, Double errorBound) {
+    public ApproximateValinor(Schema schema, Double errorBound) {
         this.schema = schema;
-        this.initMode = initMode;
-        this.catNodeBudget = catNodeBudget;
         this.errorBound = errorBound;
     }
 
@@ -67,8 +61,8 @@ public class ApproximateVeti {
             throw new IllegalStateException("The index is already initialized");
 
         if (q0 != null) {
-            initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0,
-                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
+            initializationPolicy = InitializationPolicy.getInitializationPolicy("valinor", q0,
+                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, null, null);
             initializationPolicy.setSort(sort);
         }
 
@@ -152,8 +146,6 @@ public class ApproximateVeti {
             return initialize(query);
         }
         Rectangle rect = query.getRect();
-
-        List<CategoricalColumn> groupByColumns = null;
 
         QueryResults queryResults = new QueryResults(query);
 
@@ -239,26 +231,26 @@ public class ApproximateVeti {
             queryNode.intersectionCount = count;
             queryNode.minSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().min();
             queryNode.maxSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().max();
-            queryNode.traversed = true;
             queryNode.maxErrorBound = (queryNode.maxSum - queryNode.minSum) / (queryNode.minSum + queryNode.maxSum);
         }
 
-        Stack<QueryNode> stack = new Stack<>();
+
+        // Sort partially contained nodes by their respective max error bound
         partiallyContainedNodesWithStats.sort(Comparator.comparingDouble(QueryNode::getMaxErrorBound));
 
         int currentIndex = 0;
         double maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
 
-        LOG.debug("Max Error Bound: " + maxErrorBound);
+        // Process partially contained tiles and read from the file until the error bound is acceptable.
         while (currentIndex < partiallyContainedNodesWithStats.size() && maxErrorBound > errorBound) {
             QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
             pointIterator = new KWayMergePointIterator(Arrays.asList(new NodePointsIterator(queryNode)));
             ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
             currentIndex++;
             maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
-            LOG.debug("Max Error Bound: " + maxErrorBound);
         }
 
+        // For the remaining partially contained tiles, we approximate their values using the mean value for all the objects in each tile
         while (currentIndex < partiallyContainedNodesWithStats.size()) {
             QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
             NodePointsIterator nodePointsIterator = new NodePointsIterator(queryNode);
@@ -269,20 +261,6 @@ public class ApproximateVeti {
             }
             currentIndex++;
         }
-
-        // for (QueryNode queryNode : partiallyContainedNodesWithStats) {
-        // pointIterator = new KWayMergePointIterator(Arrays.asList(new
-        // NodePointsIterator(queryNode)));
-        // ioCount += readFromFile(query, queryResults, measureCol0, parser,
-        // pointIterator);
-        // }
-
-        // for (NodePointsIterator nodePointsIterator : rawIterators) {
-        // if (errorBound > upperErrorThreshold) {
-        // break;
-        // }
-
-        // }
 
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);

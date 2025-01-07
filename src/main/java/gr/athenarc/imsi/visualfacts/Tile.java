@@ -1,16 +1,10 @@
 package gr.athenarc.imsi.visualfacts;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.Stack;
-import java.util.stream.Collectors;
-
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
+
+import java.util.*;
+import java.util.stream.Collectors;
 
 public abstract class Tile {
 
@@ -95,21 +89,20 @@ public abstract class Tile {
         //we keep the old list of attrs in case node nodes match the query in this tile so that we dont expand trees unnecessarily
         List<CategoricalColumn> oldCatAttrs = categoricalColumns;
 
-        categoricalColumns = categoricalColumns == null ? new ArrayList<>() : new ArrayList<>(categoricalColumns);
+        categoricalColumns = categoricalColumns == null || categoricalColumns.isEmpty() ? new ArrayList<>() : new ArrayList<>(categoricalColumns);
         Set<Integer> treeAttrIndexes = categoricalColumns.stream().map(CategoricalColumn::getIndex).collect(Collectors.toSet());
 
         //we check if the tree's categorical attributes lack any of the attrs included in the query
         Set<Integer> queryAttrs = new HashSet<>(query.getCategoricalFilters().keySet());
+
         if (query.getGroupByCols() != null) {
             queryAttrs.addAll(query.getGroupByCols());
         }
-        // List<CategoricalColumn> unknownQueryAttrs = queryAttrs.stream().filter(attr -> !treeAttrIndexes.contains(attr))
-        //         .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
-        //         .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
+        List<CategoricalColumn> unknownQueryAttrs = queryAttrs.stream().filter(attr -> !treeAttrIndexes.contains(attr))
+                .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
+                .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
 
-        // categoricalColumns.addAll(unknownQueryAttrs);
-
-
+        categoricalColumns.addAll(unknownQueryAttrs);
         List<QueryNode> queryNodes = new ArrayList<>();
         if (root != null) {
             List<Short> pattern = categoricalColumns.stream().map(categoricalColumn -> {

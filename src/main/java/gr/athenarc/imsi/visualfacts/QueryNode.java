@@ -15,7 +15,6 @@ public class QueryNode implements Iterable<Point> {
     private ContainmentExaminer containmentExaminer;
     private List<CategoricalColumn> unknownCatAttrs;
 
-    public boolean traversed = false;
     public int intersectionCount = 0;
     public double minSum = Double.NEGATIVE_INFINITY;
     public double maxSum = Double.POSITIVE_INFINITY;

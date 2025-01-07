@@ -1,25 +1,10 @@
 package gr.athenarc.imsi.visualfacts;
 
-import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
-
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
@@ -28,6 +13,16 @@ import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
 public class Veti {
 
@@ -158,6 +153,10 @@ public class Veti {
         Rectangle rect = query.getRect();
 
         List<CategoricalColumn> groupByColumns = null;
+        if (query.getGroupByCols() != null) {
+            LOG.debug("query cat cols: " + query.getGroupByCols());
+            groupByColumns = query.getGroupByCols().stream().map(index -> schema.getCategoricalColumn(index)).collect(Collectors.toList());
+        }
 
         QueryResults queryResults = new QueryResults(query);
 
@@ -167,6 +166,7 @@ public class Veti {
         List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
+        List<float[]> points = new ArrayList<>();
 
         int fullyContainedTilesCount = 0;
 
@@ -175,6 +175,7 @@ public class Veti {
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
 
+        Set<CategoricalColumn> catAttrsToRead = new HashSet<>();
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
@@ -200,6 +201,8 @@ public class Veti {
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
 
+                //add unknown attrs for that node to cat attrs to read. These do not include only query attrs but also missing attrs in incomplete leaves
+                catAttrsToRead.addAll(queryNode.getUnknownCatAttrs());
 
                 PairedStatsAccumulator nodeStats = node.getStats();
                 Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
@@ -233,7 +236,7 @@ public class Veti {
                 cols.add(measureCol1);
             }
         }
-        // cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
+        cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(cols.toArray(new Integer[cols.size()]));
@@ -247,6 +250,7 @@ public class Veti {
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
+            points.add(new float[]{point.getY(), point.getX()});
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
@@ -284,13 +288,13 @@ public class Veti {
                             }
                         }
                         ImmutableList<String> groupByValuesList = null;
-                        // if (query.getGroupByCols() != null) {
-                        //     String[] finalRow = row;
-                        //     groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
-                        //             queryNode.getGroupByValues().containsKey(categoricalColumn.getIndex()) ?
-                        //                     categoricalColumn.getValue(queryNode.getGroupByValues().get(categoricalColumn.getIndex())) :
-                        //                     finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
-                        // }
+                        if (query.getGroupByCols() != null) {
+                            String[] finalRow = row;
+                            groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
+                                    queryNode.getGroupByValues().containsKey(categoricalColumn.getIndex()) ?
+                                            categoricalColumn.getValue(queryNode.getGroupByValues().get(categoricalColumn.getIndex())) :
+                                            finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
+                        }
 
                         if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
                             queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
@@ -301,7 +305,11 @@ public class Veti {
                 LOG.debug(e);
             }
         }
-
+        for (QueryNode node : nonRawNodes) {
+            for (Point point : node) {
+                points.add(new float[]{point.getY(), point.getX()});
+            }
+        }
 
         for (QueryNode queryNode : nodesToExpand) {
             queryNode.getNode().convertToNonleaf();
@@ -311,6 +319,7 @@ public class Veti {
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
         queryResults.setExpandedNodeCount(nodesToExpand.size());
+        queryResults.setPoints(points);
 
         PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
         queryResults.getStats().entrySet().stream().forEach(e -> {
