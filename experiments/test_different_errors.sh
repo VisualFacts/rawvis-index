@@ -16,7 +16,7 @@ do
     do
         echo "Running experiment with errorBound $error_bound, run $run..."
         java -Xmx16G -jar target/experiments.jar -c \
-        timeApproximateQueries -csv synth10.csv -bounds 0:1000,0:1000 \
+        timeApproximateQueries -csv /data-nonraid/maroulis/data/data_10_cols.csv -bounds 0:1000,0:1000 \
         -rect 544:574,323:353 -xCol 0 -yCol 1 -measureCol 9 \
         -initMode valinor \
         -objCount 100000000 -seqCount 100 -minShift 10 \
