@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # Create the directory if it doesn't exist
-mkdir -p synth10/different_errors
+mkdir -p experiments/synth10/different_errors
 
 # Define the error bounds
 error_bounds=(0.05 0.01 0)
 
 # Number of times to run each experiment
-num_runs=1
+num_runs=2
 
 # Iterate over each error bound and run the experiment multiple times
 for error_bound in "${error_bounds[@]}"
@@ -20,7 +20,7 @@ do
         -rect 544:574,323:353 -xCol 0 -yCol 1 -measureCol 9 \
         -initMode valinor \
         -objCount 100000000 -seqCount 100 -minShift 10 \
-        -maxShift 20 -out synth10/different_errors/results_${error_bound}_run${run}.csv \
+        -maxShift 20 -out experiments/synth10/different_errors/results_${error_bound}_run${run}.csv \
         -errorBound $error_bound -run $run
     done
 done
