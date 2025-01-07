@@ -416,6 +416,12 @@ public class Experiments {
         Preconditions.checkNotNull(csv, "You must define the csv file.");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
+        // If errorBound is 0, we are using the exact index
+        if (errorBound == 0){
+            timeQueries();
+            return;
+        }
+
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
         csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
