@@ -246,8 +246,15 @@ public class ApproximateValinor {
             QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
             pointIterator = new KWayMergePointIterator(Arrays.asList(new NodePointsIterator(queryNode)));
             ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
+            // split tile
             currentIndex++;
             maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
+        }
+
+        for (QueryNode queryNode : partiallyContainedNodesWithStats) {
+            if (queryNode.getNode().getPoints().size() > THRESHOLD) {
+                queryNode.getTile().split();
+            }
         }
 
         // For the remaining partially contained tiles, we approximate their values using the mean value for all the objects in each tile
