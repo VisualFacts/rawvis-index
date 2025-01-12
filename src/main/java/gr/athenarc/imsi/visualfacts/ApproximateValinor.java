@@ -287,7 +287,7 @@ public class ApproximateValinor {
             minSum = queryResults.getStats().get(null).xStats().sum();
             maxSum = queryResults.getStats().get(null).xStats().sum();
         } catch (Exception e) {
-            LOG.debug(e);
+            LOG.error("Error calculating max error bound: ", e);
         }
         for (int i = current; i < queryNodes.size(); i++) {
             QueryNode queryNode = queryNodes.get(i);
@@ -347,7 +347,7 @@ public class ApproximateValinor {
                     }
                 }
             } catch (Exception e) {
-                LOG.debug(e);
+                LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
             }
         }
         return ioCount;
@@ -417,7 +417,7 @@ public class ApproximateValinor {
         try {
             randomAccessReader.close();
         } catch (IOException e) {
-            LOG.error(e);
+            LOG.error("Error closing RandomAccessReader: " + e.getMessage(), e);
         }
     }
 }
