@@ -228,11 +228,12 @@ public class ApproximateValinor {
             queryNode.intersectionCount = count;
             queryNode.minSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().min();
             queryNode.maxSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().max();
-            queryNode.maxErrorBound = (queryNode.maxSum - queryNode.minSum) / (queryNode.minSum + queryNode.maxSum);
+            // queryNode.maxErrorBound = (queryNode.maxSum - queryNode.minSum) / (queryNode.minSum + queryNode.maxSum);
         }
 
         // Sort partially contained nodes by their respective max error bound
-        partiallyContainedNodesWithStats.sort(Comparator.comparingDouble(QueryNode::getMaxErrorBound));
+        partiallyContainedNodesWithStats.sort(Comparator.<QueryNode>comparingDouble(queryNode -> queryNode.maxSum - queryNode.minSum).reversed());
+
 
         int currentIndex = 0;
         double maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);

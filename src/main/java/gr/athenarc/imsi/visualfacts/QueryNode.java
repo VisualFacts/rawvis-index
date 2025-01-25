@@ -18,12 +18,14 @@ public class QueryNode implements Iterable<Point> {
     public int intersectionCount = 0;
     public double minSum = Double.NEGATIVE_INFINITY;
     public double maxSum = Double.POSITIVE_INFINITY;
-    public double maxErrorBound = Double.NEGATIVE_INFINITY;
+    // public double maxErrorBound = Double.NEGATIVE_INFINITY;
 
 
-    public double getMaxErrorBound() {
-        return maxErrorBound;
-    }
+    // public double getMaxErrorBound() {
+    //     return maxErrorBound;
+    // }
+
+    
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,  Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs) {
         this.groupByValues = groupByValues;
@@ -31,6 +33,14 @@ public class QueryNode implements Iterable<Point> {
         this.tile = tile;
         this.containmentExaminer = containmentExaminer;
         this.unknownCatAttrs = unknownCatAttrs;
+    }
+
+    public double getMinSum() {
+        return minSum;
+    }
+
+    public double getMaxSum() {
+        return maxSum;
     }
 
     public  Map<Integer, Short> getGroupByValues() {
