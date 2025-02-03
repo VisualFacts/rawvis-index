@@ -16,10 +16,12 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
+import com.google.common.util.concurrent.AtomicDouble;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
+import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
@@ -46,11 +48,11 @@ public class ApproximateValinor {
 
     private int objectsIndexed = 0;
 
-    private double errorBound = 0.05;
+    private double errorThreshold = 0.05;
 
-    public ApproximateValinor(Schema schema, Double errorBound) {
+    public ApproximateValinor(Schema schema, Double errorThreshold) {
         this.schema = schema;
-        this.errorBound = errorBound;
+        this.errorThreshold = errorThreshold;
     }
 
     public void generateGrid(Query q0) {
@@ -144,22 +146,19 @@ public class ApproximateValinor {
         }
         Rectangle rect = query.getRect();
 
-        QueryResults queryResults = new QueryResults(query);
+        ApproximateQueryResults queryResults = new ApproximateQueryResults(query);
 
         if (randomAccessReader == null) {
             randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        List<float[]> points = new ArrayList<>();
-
         int fullyContainedTilesCount = 0;
 
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
         List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
-        List<QueryNode> partiallyContainedNodesWithStats = new ArrayList<>();
-        List<QueryNode> nodesWithoutStats = new ArrayList<>();
+        List<QueryNode> samplingNodes = new ArrayList<>();
 
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
@@ -175,21 +174,18 @@ public class ApproximateValinor {
                     continue;
                 }
 
-                if (!node.hasStats()) {
-                    if (node.points.size() > THRESHOLD) {
-                        leafTile.split();
-                        nodesWithoutStats.addAll(leafTile.getOverlappedLeafTiles(query).stream()
-                                .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer,
-                                        schema).stream())
-                                .collect(Collectors.toList()));
-                    } else {
-                        nodesWithoutStats.add(queryNode);
-                    }
-                } else if (isFullyContained) {
+                if (isFullyContained && node.hasStats()) {
                     fullyContainedNodesWithStats.add(queryNode);
+                } else if (node.points.size() > THRESHOLD) {
+                    leafTile.split();
+                    samplingNodes.addAll(leafTile.getOverlappedLeafTiles(query).stream()
+                            .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer,
+                                    schema).stream())
+                            .collect(Collectors.toList()));
                 } else {
-                    partiallyContainedNodesWithStats.add(queryNode);
+                    samplingNodes.add(queryNode);
                 }
+
             }
         }
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
@@ -211,91 +207,77 @@ public class ApproximateValinor {
         CsvParser parser = new CsvParser(parserSettings);
 
         int ioCount = 0;
+        AtomicDouble samplingRate = new AtomicDouble(0.01d);  // Start with small sampling rate (1%)
+        double[] confidenceInterval;
+        double maxErrorBound;
+        do {
+            // Create Sampling Iterators for all tiles needing sampling
+            KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingNodes.stream()
+                    .map(queryNode -> new SamplingNodePointsIterator(queryNode, samplingRate.get()))
+                    .collect(Collectors.toList()));
 
-        KWayMergePointIterator pointIterator;
-
-        pointIterator = new KWayMergePointIterator(nodesWithoutStats.stream()
-                .map(queryNode -> new NodePointsIterator(queryNode)).collect(Collectors.toList()));
-        ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
-
-        for (QueryNode queryNode : partiallyContainedNodesWithStats) {
-            NodePointsIterator nodePointsIterator = new NodePointsIterator(queryNode);
-            int count = 0;
-            while (nodePointsIterator.hasNext()) {
-                nodePointsIterator.next();
-                count++;
-            }
-            queryNode.intersectionCount = count;
-            queryNode.minSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().min();
-            queryNode.maxSum = queryNode.intersectionCount * queryNode.getNode().getStats().xStats().max();
-            // queryNode.maxErrorBound = (queryNode.maxSum - queryNode.minSum) / (queryNode.minSum + queryNode.maxSum);
-        }
-
-        // Sort partially contained nodes by their respective max error bound
-        partiallyContainedNodesWithStats.sort(Comparator.<QueryNode>comparingDouble(queryNode -> queryNode.maxSum - queryNode.minSum).reversed());
-
-
-        int currentIndex = 0;
-        double maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
-
-        // Process partially contained tiles and read from the file until the error
-        // bound is acceptable.
-        while (currentIndex < partiallyContainedNodesWithStats.size() && maxErrorBound > errorBound) {
-            QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
-            pointIterator = new KWayMergePointIterator(Arrays.asList(new NodePointsIterator(queryNode)));
+            // Read the sampled points from the file in sorted order
             ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
-            // split tile
-            currentIndex++;
-            maxErrorBound = calculateMaxErrorBound(partiallyContainedNodesWithStats, currentIndex, queryResults);
-        }
 
-        for (QueryNode queryNode : partiallyContainedNodesWithStats) {
-            if (queryNode.getNode().getPoints().size() > THRESHOLD) {
-                queryNode.getTile().split();
+            // Calculate the confidence interval for the query
+            confidenceInterval = getQueryConfidenceInterval(samplingNodes, queryResults);
+            // Recalculate the error bound
+            maxErrorBound = calculateMaxErrorBound(confidenceInterval);
+
+            // If error bound is still too high, increase sampling rate
+            if (maxErrorBound > errorThreshold) {
+                samplingRate.set(adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
+                LOG.info("Increasing sampling rate to: {}", samplingRate.get());
             }
-        }
 
-        // For the remaining partially contained tiles, we approximate their values
-        // using the mean value for all the objects in each tile
-        while (currentIndex < partiallyContainedNodesWithStats.size()) {
-            QueryNode queryNode = partiallyContainedNodesWithStats.get(currentIndex);
-            NodePointsIterator nodePointsIterator = new NodePointsIterator(queryNode);
-
-            while (nodePointsIterator.hasNext()) {
-                nodePointsIterator.next();
-                queryResults.adjustStats(null, (float) queryNode.getNode().getStats().xStats().mean(), 0f);
-            }
-            currentIndex++;
-        }
+        } while (maxErrorBound > errorThreshold);
 
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
-
-        PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
-        queryResults.getStats().entrySet().stream().forEach(e -> {
-            pairedStatsAccumulator.addAll(e.getValue());
-        });
-        queryResults.setRectStats(pairedStatsAccumulator);
+        queryResults.setConfidenceInterval(confidenceInterval);
+        queryResults.setErrorBound(maxErrorBound);
         return queryResults;
     }
 
-    private double calculateMaxErrorBound(List<QueryNode> queryNodes, int current, QueryResults queryResults) {
-        double minSum = 0, maxSum = 0;
-        try {
-            minSum = queryResults.getStats().get(null).xStats().sum();
-            maxSum = queryResults.getStats().get(null).xStats().sum();
-        } catch (Exception e) {
-            LOG.error("Error calculating max error bound: ", e);
-        }
-        for (int i = current; i < queryNodes.size(); i++) {
-            QueryNode queryNode = queryNodes.get(i);
-            minSum += queryNode.minSum;
-            maxSum += queryNode.maxSum;
-        }
-        LOG.debug("Min Sum: " + minSum + " Max Sum: " + maxSum);
-        return (maxSum - minSum) / (minSum + maxSum);
+    private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
+        LOG.debug("Adjusting sampling rate: currentRate={}, currentError={}, errorThreshold={}", currentRate,
+                currentError, errorThreshold);
+        double adjustmentFactor = (currentError - errorThreshold) / errorThreshold; // How far above the limit we are
+        return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
     }
+
+    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
+        double exactSum = queryResults.getStats().get(null).xStats().sum(); // Fully contained nodes' sum (trusted data)
+
+        double minSum = exactSum; // Start with fully contained sum
+        double maxSum = exactSum;
+
+        for (QueryNode queryNode : samplingNodes) {
+            double[] confidenceInterval = queryNode.getConfidenceInterval(0.95);
+
+            if (!Double.isNaN(confidenceInterval[0]) && !Double.isNaN(confidenceInterval[1])) {
+                // Use confidence interval from sampling
+                minSum += confidenceInterval[0];
+                maxSum += confidenceInterval[1];
+            } else {
+                // Use deterministic bounds for unsampled nodes
+                minSum += queryNode.getMinSum();
+                maxSum += queryNode.getMaxSum();
+            }
+        }
+
+        return new double[] { minSum, maxSum };
+    }
+
+    private double calculateMaxErrorBound(double[] confidenceInterval) {
+        double minSum = confidenceInterval[0];
+        double maxSum = confidenceInterval[1];
+        return (maxSum - minSum) / (maxSum + minSum);
+    }
+
+    
+
 
     private int readFromFile(Query query, QueryResults queryResults, Integer measureCol0,
             CsvParser parser, KWayMergePointIterator pointIterator) {
@@ -319,7 +301,7 @@ public class ApproximateValinor {
                         }
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        TreeNode node = queryNode.getNode();
+                        queryNode.addSampleValue(measureValue0);
                         if (queryNode.isFullyContained()) {
                             if (measureValue0 != null) {
                                 queryNode.getNode().adjustStats(measureValue0, measureValue1);

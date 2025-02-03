@@ -14,7 +14,7 @@ public class KWayMergePointIterator extends AbstractPointIterator {
     private PriorityQueue<NodePointsPeekingIterator> tilesPQueue;
 
 
-    public KWayMergePointIterator(List<NodePointsIterator> nodePointsIterators) {
+    public KWayMergePointIterator(List<AbstractNodePointIterator> nodePointsIterators) {
         Comparator<NodePointsPeekingIterator> comparator = new Ordering<NodePointsPeekingIterator>() {
             @Override
             public int compare(NodePointsPeekingIterator i1, NodePointsPeekingIterator i2) {
@@ -22,7 +22,7 @@ public class KWayMergePointIterator extends AbstractPointIterator {
             }
         };
         tilesPQueue = new PriorityQueue<>(nodePointsIterators.size() > 0 ? nodePointsIterators.size() : 1, comparator);
-        for (NodePointsIterator nodePointsIterator : nodePointsIterators) {
+        for (AbstractNodePointIterator nodePointsIterator : nodePointsIterators) {
             if (nodePointsIterator.hasNext()) {
                 tilesPQueue.add(new NodePointsPeekingIterator(nodePointsIterator));
             }

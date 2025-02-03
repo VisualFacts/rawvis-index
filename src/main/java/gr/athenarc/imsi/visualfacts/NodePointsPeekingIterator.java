@@ -6,9 +6,9 @@ import com.google.common.collect.PeekingIterator;
 public class NodePointsPeekingIterator implements PeekingIterator<Point> {
 
     private PeekingIterator<Point> peekingIterator;
-    private NodePointsIterator nodePointsIterator;
+    private AbstractNodePointIterator nodePointsIterator;
 
-    public NodePointsPeekingIterator(NodePointsIterator nodePointsIterator) {
+    public NodePointsPeekingIterator(AbstractNodePointIterator nodePointsIterator) {
         this.nodePointsIterator = nodePointsIterator;
         peekingIterator = Iterators.peekingIterator(nodePointsIterator);
     }

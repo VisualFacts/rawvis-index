@@ -1,11 +1,12 @@
 package gr.athenarc.imsi.visualfacts;
 
+import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
-
+import com.google.common.math.StatsAccumulator;
 
 public class QueryNode implements Iterable<Point> {
 
@@ -15,35 +16,105 @@ public class QueryNode implements Iterable<Point> {
     private ContainmentExaminer containmentExaminer;
     private List<CategoricalColumn> unknownCatAttrs;
 
+    // Deterministic bounds
     public int intersectionCount = 0;
-    public double minSum = Double.NEGATIVE_INFINITY;
-    public double maxSum = Double.POSITIVE_INFINITY;
-    // public double maxErrorBound = Double.NEGATIVE_INFINITY;
 
+    // BitSet for tracking which points are inside the query
+    private BitSet queryPointsBitSet;
 
-    // public double getMaxErrorBound() {
-    //     return maxErrorBound;
-    // }
+    // Sampling-based statistics
+    private StatsAccumulator sampleStatsAcc = new StatsAccumulator();
+    private BitSet sampledTracker;
 
-    
-
-    public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,  Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs) {
+    public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
+            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs) {
         this.groupByValues = groupByValues;
         this.node = node;
         this.tile = tile;
         this.containmentExaminer = containmentExaminer;
         this.unknownCatAttrs = unknownCatAttrs;
+
+        // Initialize BitSet with the size of points in the node
+        this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+
+        computeQueryIntersection();
     }
 
+    /**
+     * Iterates over the points in the tile, checks against the containment
+     * examiner,
+     * and sets up the BitSet marking points inside the query.
+     */
+    private void computeQueryIntersection() {
+        List<Point> points = node.getPoints();
+        queryPointsBitSet = new BitSet(points.size());
+
+        // If the tile is fully contained, all points belong to the query
+        if (containmentExaminer == null) {
+            queryPointsBitSet.set(0, points.size()); // Mark all points
+            intersectionCount = points.size();
+            return;
+        }
+
+        // Otherwise, check containment for each point
+        intersectionCount = 0;
+        for (int i = 0; i < points.size(); i++) {
+            if (containmentExaminer.contains(points.get(i))) {
+                queryPointsBitSet.set(i); // Mark this point as inside the query
+                intersectionCount++;
+            }
+        }
+    }
+
+    // Deterministic bounds getters
     public double getMinSum() {
-        return minSum;
+        return intersectionCount * node.getStats().xStats().min();
     }
 
     public double getMaxSum() {
-        return maxSum;
+        return intersectionCount * node.getStats().xStats().max();
     }
 
-    public  Map<Integer, Short> getGroupByValues() {
+    // Sampling-based statistics methods
+    public void addSampleValue(double value) {
+        sampleStatsAcc.add(value);
+    }
+
+    public double[] getConfidenceInterval(double confidenceLevel) {
+        if (sampleStatsAcc.count() > 0) {
+            double sampleMean = sampleStatsAcc.mean();
+            double sampleVariance = sampleStatsAcc.populationVariance(); // Use population variance
+            double sampleSize = sampleStatsAcc.count();
+
+            double z = getZScoreForConfidence(confidenceLevel);
+            double standardError = Math.sqrt(
+                    (sampleVariance / sampleSize)
+                            * ((intersectionCount - sampleSize) / (double) (intersectionCount - 1)));
+
+            double lowerBound = intersectionCount * (sampleMean - z * standardError);
+            double upperBound = intersectionCount * (sampleMean + z * standardError);
+
+            return new double[] { lowerBound, upperBound };
+        }
+        return new double[] { Double.NaN, Double.NaN }; // Return NaN if no samples
+    }
+
+    // Helper to retrieve z-score for a confidence level
+    private double getZScoreForConfidence(double confidenceLevel) {
+        switch ((int) (confidenceLevel * 100)) {
+            case 90:
+                return 1.645; // 90% confidence
+            case 95:
+                return 1.960; // 95% confidence
+            case 99:
+                return 2.576; // 99% confidence
+            default:
+                throw new IllegalArgumentException("Unsupported confidence level: " + confidenceLevel);
+        }
+    }
+
+
+    public Map<Integer, Short> getGroupByValues() {
         return groupByValues;
     }
 
@@ -67,6 +138,18 @@ public class QueryNode implements Iterable<Point> {
         return containmentExaminer == null;
     }
 
+    public int getIntersectionCount() {
+        return intersectionCount;
+    }
+
+    public StatsAccumulator getSampleStatsAcc() {
+        return sampleStatsAcc;
+    }
+
+    public BitSet getSampledTracker() {
+        return sampledTracker;
+    }
+
     @Override
     public Iterator<Point> iterator() {
         return new NodePointsIterator(this);
@@ -81,5 +164,9 @@ public class QueryNode implements Iterable<Point> {
                 ", containmentExaminer=" + containmentExaminer +
                 ", unknownCatAttrs=" + unknownCatAttrs +
                 '}';
+    }
+
+    public BitSet getQueryPointsBitSet() {
+        return queryPointsBitSet;
     }
 }

@@ -5,8 +5,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 
-public class NodePointsIterator extends AbstractPointIterator {
-    QueryNode queryNode;
+public class NodePointsIterator extends AbstractNodePointIterator {
     private int i = -1;
     private static final Logger LOG = LogManager.getLogger(NodePointsIterator.class);
 
