@@ -163,7 +163,7 @@ public class Veti {
         if (randomAccessReader == null) {
             randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
         }
-        List<NodePointsIterator> rawIterators = new ArrayList<>();
+        List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
         List<float[]> points = new ArrayList<>();
