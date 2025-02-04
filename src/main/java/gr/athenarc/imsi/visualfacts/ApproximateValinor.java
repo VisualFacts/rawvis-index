@@ -254,8 +254,10 @@ public class ApproximateValinor {
         double maxSum = exactSum;
 
         for (QueryNode queryNode : samplingNodes) {
+            if (queryNode.getIntersectionCount() == 0) {
+                continue;
+            }
             double[] confidenceInterval = queryNode.getConfidenceInterval(0.95);
-
             if (!Double.isNaN(confidenceInterval[0]) && !Double.isNaN(confidenceInterval[1])) {
                 // Use confidence interval from sampling
                 minSum += confidenceInterval[0];
