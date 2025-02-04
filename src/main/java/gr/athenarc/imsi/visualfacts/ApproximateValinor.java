@@ -72,7 +72,7 @@ public class ApproximateValinor {
         }
     }
 
-    public QueryResults initialize(Query q0) {
+    public ApproximateQueryResults initialize(Query q0) {
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
@@ -132,7 +132,7 @@ public class ApproximateValinor {
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         // todo evaluate q0
-        QueryResults queryResults = new QueryResults(q0);
+        ApproximateQueryResults queryResults = new ApproximateQueryResults(q0);
         return queryResults;
     }
 
@@ -140,7 +140,7 @@ public class ApproximateValinor {
         return objectsIndexed;
     }
 
-    public synchronized QueryResults executeQuery(Query query) throws IOException {
+    public synchronized ApproximateQueryResults executeQuery(Query query) throws IOException {
         if (!isInitialized) {
             return initialize(query);
         }
@@ -278,9 +278,6 @@ public class ApproximateValinor {
         return (maxSum - minSum) / (maxSum + minSum);
     }
 
-    
-
-
     private int readFromFile(Query query, QueryResults queryResults, Integer measureCol0,
             CsvParser parser, KWayMergePointIterator pointIterator) {
         String line;
@@ -304,11 +301,11 @@ public class ApproximateValinor {
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.addSampleValue(measureValue0);
-                        if (queryNode.isFullyContained()) {
-                            if (measureValue0 != null) {
-                                queryNode.getNode().adjustStats(measureValue0, measureValue1);
-                            }
-                        }
+                        // if (queryNode.isFullyContained()) {
+                        //     if (measureValue0 != null) {
+                        //         queryNode.getNode().adjustStats(measureValue0, measureValue1);
+                        //     }
+                        // }
                     }
                 }
             } catch (Exception e) {
