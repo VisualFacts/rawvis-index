@@ -248,87 +248,73 @@ public class ApproximateValinor {
         return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
     }
 
-    /**
-     * Computes a single confidence interval for the sum of all tiles that need
-     * sampling.
-     * Also incorporates the exact sum from any fully contained tiles that already
-     * have stats.
-     *
-     * @param samplingNodes the tiles (nodes) that either are partially contained
-     *                      or are fully contained with no stats, and thus we need
-     *                      to sample them
-     * @param queryResults  contains stats for any fully contained tiles that do
-     *                      have stats
-     * @return a 2-element array [lowerBound, upperBound] of the confidence interval
-     */
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
-        // 1) Exact sum from fully-contained tiles that already have stats
-        double exactSum = 0.0;
+        double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
-            // 'null' key implies "fully contained" group with known stats
-            exactSum = queryResults.getStats().get(null).xStats().sum();
+            exactSum = queryResults.getStats().get(null).xStats().sum(); 
+            // sum from "fully contained" nodes with known stats
         }
-
-        // 2) Single aggregator for all sampled points across these nodes
-        StatsAccumulator globalSampleAcc = new StatsAccumulator();
-        long totalSampledCount = 0L; // total # of points in the query from "sampled" nodes
-
-        // 3) Fallback bounds for nodes we haven't sampled at all
-        double fallbackMinSum = 0.0;
-        double fallbackMaxSum = 0.0;
-
-        for (QueryNode queryNode : samplingNodes) {
-            int intersectionSize = queryNode.getIntersectionCount();
-            if (intersectionSize == 0) {
-                // Not actually intersecting the query
+    
+        // We'll accumulate total estimated sum & total variance from partial/sampled nodes:
+        double totalEstimate = 0.0;
+        double totalVariance = 0.0;
+    
+        for (QueryNode qnode : samplingNodes) {
+            int n = (int) qnode.getSampleStatsAcc().count();
+            // if no samples, fallback to deterministic bounds or skip
+            if (n < 2) {
+                // fallback path: use minSum / maxSum or skip
+                // Or you can add a big variance chunk if you want to keep it approximate
                 continue;
             }
+    
+            double mean = qnode.getSampleStatsAcc().mean();
+            double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
+            double N = qnode.getIntersectionCount();
+    
+            // node-level estimate
+            double nodeEstimate = N * mean;
+            // node-level variance: N^2 * stdev^2 / n
+            double nodeVariance = N*N * (stdev*stdev / n);
+    
+            totalEstimate += nodeEstimate;
+            totalVariance += nodeVariance;
+        }
+    
+        // final estimate = exactSum + partialEstimate
+        double finalEstimate = exactSum + totalEstimate;
+        
+        // standard error from partial region
+        double stdError = Math.sqrt(totalVariance);
+        // no variance from "exactSum" portion (fully contained is known exactly)
+        
+        // pick a z-score
+        double z = getZScoreForConfidence(0.95);
+    
+        double margin = z * stdError;
+        double lower = finalEstimate - margin;
+        double upper = finalEstimate + margin;
+        return new double[] { lower, upper };
+    }
 
-            long nodeSampleCount = queryNode.getSampleStatsAcc().count();
-            if (nodeSampleCount > 0) {
-                // We have samples for this node -> merge them into global aggregator
-                globalSampleAcc.addAll(queryNode.getSampleStatsAcc().snapshot());
-                // We'll treat the entire intersection as "covered by our sampling"
-                totalSampledCount += intersectionSize;
-            } else {
-                // No samples for this node -> fallback to bounding approach
-                fallbackMinSum += queryNode.getMinSum();
-                fallbackMaxSum += queryNode.getMaxSum();
-            }
+    // Helper to retrieve z-score for a confidence level
+    private double getZScoreForConfidence(double confidenceLevel) {
+        // For a two-tailed confidence interval, the "confidenceLevel"
+        // is usually something like 0.90, 0.95, or 0.99.
+        // We map these to z-scores from the standard Normal distribution.
+
+        if (confidenceLevel == 0.90) {
+            return 1.645; // ~90% CI
+        } else if (confidenceLevel == 0.95) {
+            return 1.96; // ~95% CI
+        } else if (confidenceLevel == 0.99) {
+            return 2.575; // ~99% CI
         }
 
-        // 4) If fewer than 2 total samples, we can't compute a valid sample std dev
-        long grandSampleCount = globalSampleAcc.count();
-        if (grandSampleCount < 2) {
-            // Just add up the fallback bounds for *all* these tiles
-            double minSum = exactSum + fallbackMinSum;
-            double maxSum = exactSum + fallbackMaxSum;
-            return new double[] { minSum, maxSum };
-        }
+        // Fallback: either throw or pick a default
+        throw new IllegalArgumentException(
+                "Unsupported confidence level: " + confidenceLevel);
 
-        // 5) Compute one confidence interval for all sampled nodes
-        double z = 1.96; // ~95% confidence
-        double mean = globalSampleAcc.mean();
-        double stdDev = globalSampleAcc.sampleStandardDeviation();
-
-        // Estimated total from those sampled nodes
-        double samplingEst = mean * totalSampledCount;
-
-        // Standard error of that sum
-        double seSum = totalSampledCount * (stdDev / Math.sqrt(grandSampleCount));
-        double margin = z * seSum;
-
-        double samplingLow = samplingEst - margin;
-        double samplingHigh = samplingEst + margin;
-
-        // 6) Combine
-        // - exactSum: fully contained tiles with known stats (no uncertainty)
-        // - fallbackMinSum / fallbackMaxSum: tiles that remain unsampled
-        // - [samplingLow, samplingHigh]: the combined confidence interval for all
-        // sampled tiles
-        double minSum = exactSum + samplingLow + fallbackMinSum;
-        double maxSum = exactSum + samplingHigh + fallbackMaxSum;
-        return new double[] { minSum, maxSum };
     }
 
     // private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes,
