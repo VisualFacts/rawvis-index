@@ -99,7 +99,8 @@ public class QueryNode implements Iterable<Point> {
 
             return new double[] { lowerBound, upperBound };
         }
-        LOG.debug("No samples available to compute confidence interval. QueryNode context: {}", this.toString());
+        System.out.println("No samples available to compute confidence interval. QueryNode context: " + this.toString());
+        // LOG.debug("No samples available to compute confidence interval. QueryNode context: {}", this.toString());
         return new double[] { Double.NaN, Double.NaN }; // Return NaN if no samples
     }
 
