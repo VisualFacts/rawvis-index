@@ -459,7 +459,7 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getConfidenceInterval());
+            csvWriter.addValue(Arrays.toString(queryResults.getConfidenceInterval()));
             csvWriter.addValue(queryResults.getErrorBound());
             csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
