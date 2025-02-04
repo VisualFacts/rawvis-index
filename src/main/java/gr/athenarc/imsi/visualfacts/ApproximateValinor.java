@@ -248,9 +248,15 @@ public class ApproximateValinor {
     }
 
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
-        double exactSum = queryResults.getStats().get(null).xStats().sum(); // Fully contained nodes' sum (trusted data)
+        double exactSum = 0; // Default to zero if no fully contained stats exist
 
-        double minSum = exactSum; // Start with fully contained sum
+        if (queryResults.getStats().containsKey(null)) {
+            exactSum = queryResults.getStats().get(null).xStats().sum(); // Use fully contained nodes' sum if available
+        } else {
+            LOG.warn("No fully contained tiles with stats found. Using only approximate information.");
+        }
+        
+        double minSum = exactSum; // Start with fully contained sum (or 0 if none exist)
         double maxSum = exactSum;
 
         for (QueryNode queryNode : samplingNodes) {
