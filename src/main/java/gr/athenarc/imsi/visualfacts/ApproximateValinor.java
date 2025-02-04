@@ -263,6 +263,7 @@ public class ApproximateValinor {
                 minSum += confidenceInterval[0];
                 maxSum += confidenceInterval[1];
             } else {
+                LOG.debug("No samples available to compute confidence interval. QueryNode context: {}", queryNode.toString());
                 // Use deterministic bounds for unsampled nodes
                 minSum += queryNode.getMinSum();
                 maxSum += queryNode.getMaxSum();
