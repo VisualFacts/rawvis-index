@@ -88,19 +88,26 @@ public class QueryNode implements Iterable<Point> {
             double sampleMean = sampleStatsAcc.mean();
             double sampleVariance = sampleStatsAcc.populationVariance(); // Use population variance
             double sampleSize = sampleStatsAcc.count();
-
+    
+            // If all points are sampled, return exact sum (no uncertainty)
+            if (sampleSize == intersectionCount) {
+                double exactSum = intersectionCount * sampleMean;
+                return new double[] { exactSum, exactSum };
+            }
+    
             double z = getZScoreForConfidence(confidenceLevel);
-            double standardError = Math.sqrt(
-                    (sampleVariance / sampleSize)
-                            * ((intersectionCount - sampleSize) / (double) (intersectionCount - 1)));
-
+            
+            // Corrected standard error calculation
+            double standardError = Math.sqrt(sampleVariance / sampleSize);
+    
             double lowerBound = intersectionCount * (sampleMean - z * standardError);
             double upperBound = intersectionCount * (sampleMean + z * standardError);
-
+    
             return new double[] { lowerBound, upperBound };
-        }        
+        }
         return new double[] { Double.NaN, Double.NaN }; // Return NaN if no samples
     }
+    
 
     // Helper to retrieve z-score for a confidence level
     private double getZScoreForConfidence(double confidenceLevel) {
@@ -115,7 +122,6 @@ public class QueryNode implements Iterable<Point> {
                 throw new IllegalArgumentException("Unsupported confidence level: " + confidenceLevel);
         }
     }
-
 
     public Map<Integer, Short> getGroupByValues() {
         return groupByValues;
@@ -158,13 +164,12 @@ public class QueryNode implements Iterable<Point> {
         return new NodePointsIterator(this);
     }
 
-
-
     @Override
     public String toString() {
         return "QueryNode [node=" + node + ", tile=" + tile + ", containmentExaminer=" + containmentExaminer
                 + ", intersectionCount=" + intersectionCount + ", queryPointsBitSet=" + queryPointsBitSet
-                + ", sampleStatsAcc.count=" + sampleStatsAcc.count() + ", sampleStatsAcc.sum=" + sampleStatsAcc.sum() + ", sampledTracker=" + sampledTracker + "]";
+                + ", sampleStatsAcc.count=" + sampleStatsAcc.count() + ", sampleStatsAcc.sum=" + sampleStatsAcc.sum()
+                + ", sampledTracker=" + sampledTracker + "]";
     }
 
     public BitSet getQueryPointsBitSet() {
