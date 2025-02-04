@@ -16,6 +16,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Range;
 import com.google.common.math.PairedStatsAccumulator;
+import com.google.common.math.StatsAccumulator;
 import com.google.common.util.concurrent.AtomicDouble;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
@@ -207,7 +208,7 @@ public class ApproximateValinor {
         CsvParser parser = new CsvParser(parserSettings);
 
         int ioCount = 0;
-        AtomicDouble samplingRate = new AtomicDouble(0.01d);  // Start with small sampling rate (1%)
+        AtomicDouble samplingRate = new AtomicDouble(0.01d); // Start with small sampling rate (1%)
         double[] confidenceInterval;
         double maxErrorBound;
         do {
@@ -247,37 +248,126 @@ public class ApproximateValinor {
         return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
     }
 
+    /**
+     * Computes a single confidence interval for the sum of all tiles that need
+     * sampling.
+     * Also incorporates the exact sum from any fully contained tiles that already
+     * have stats.
+     *
+     * @param samplingNodes the tiles (nodes) that either are partially contained
+     *                      or are fully contained with no stats, and thus we need
+     *                      to sample them
+     * @param queryResults  contains stats for any fully contained tiles that do
+     *                      have stats
+     * @return a 2-element array [lowerBound, upperBound] of the confidence interval
+     */
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
-        double exactSum = 0; // Default to zero if no fully contained stats exist
-
+        // 1) Exact sum from fully-contained tiles that already have stats
+        double exactSum = 0.0;
         if (queryResults.getStats().containsKey(null)) {
-            exactSum = queryResults.getStats().get(null).xStats().sum(); // Use fully contained nodes' sum if available
-        } else {
-            LOG.warn("No fully contained tiles with stats found. Using only approximate information.");
+            // 'null' key implies "fully contained" group with known stats
+            exactSum = queryResults.getStats().get(null).xStats().sum();
         }
-        
-        double minSum = exactSum; // Start with fully contained sum (or 0 if none exist)
-        double maxSum = exactSum;
+
+        // 2) Single aggregator for all sampled points across these nodes
+        StatsAccumulator globalSampleAcc = new StatsAccumulator();
+        long totalSampledCount = 0L; // total # of points in the query from "sampled" nodes
+
+        // 3) Fallback bounds for nodes we haven't sampled at all
+        double fallbackMinSum = 0.0;
+        double fallbackMaxSum = 0.0;
 
         for (QueryNode queryNode : samplingNodes) {
-            if (queryNode.getIntersectionCount() == 0) {
+            int intersectionSize = queryNode.getIntersectionCount();
+            if (intersectionSize == 0) {
+                // Not actually intersecting the query
                 continue;
             }
-            double[] confidenceInterval = queryNode.getConfidenceInterval(0.95);
-            if (!Double.isNaN(confidenceInterval[0]) && !Double.isNaN(confidenceInterval[1])) {
-                // Use confidence interval from sampling
-                minSum += confidenceInterval[0];
-                maxSum += confidenceInterval[1];
+
+            long nodeSampleCount = queryNode.getSampleStatsAcc().count();
+            if (nodeSampleCount > 0) {
+                // We have samples for this node -> merge them into global aggregator
+                globalSampleAcc.addAll(queryNode.getSampleStatsAcc().snapshot());
+                // We'll treat the entire intersection as "covered by our sampling"
+                totalSampledCount += intersectionSize;
             } else {
-                LOG.debug("No samples available to compute confidence interval. QueryNode context: {}", queryNode.toString());
-                // Use deterministic bounds for unsampled nodes
-                minSum += queryNode.getMinSum();
-                maxSum += queryNode.getMaxSum();
+                // No samples for this node -> fallback to bounding approach
+                fallbackMinSum += queryNode.getMinSum();
+                fallbackMaxSum += queryNode.getMaxSum();
             }
         }
 
+        // 4) If fewer than 2 total samples, we can't compute a valid sample std dev
+        long grandSampleCount = globalSampleAcc.count();
+        if (grandSampleCount < 2) {
+            // Just add up the fallback bounds for *all* these tiles
+            double minSum = exactSum + fallbackMinSum;
+            double maxSum = exactSum + fallbackMaxSum;
+            return new double[] { minSum, maxSum };
+        }
+
+        // 5) Compute one confidence interval for all sampled nodes
+        double z = 1.96; // ~95% confidence
+        double mean = globalSampleAcc.mean();
+        double stdDev = globalSampleAcc.sampleStandardDeviation();
+
+        // Estimated total from those sampled nodes
+        double samplingEst = mean * totalSampledCount;
+
+        // Standard error of that sum
+        double seSum = totalSampledCount * (stdDev / Math.sqrt(grandSampleCount));
+        double margin = z * seSum;
+
+        double samplingLow = samplingEst - margin;
+        double samplingHigh = samplingEst + margin;
+
+        // 6) Combine
+        // - exactSum: fully contained tiles with known stats (no uncertainty)
+        // - fallbackMinSum / fallbackMaxSum: tiles that remain unsampled
+        // - [samplingLow, samplingHigh]: the combined confidence interval for all
+        // sampled tiles
+        double minSum = exactSum + samplingLow + fallbackMinSum;
+        double maxSum = exactSum + samplingHigh + fallbackMaxSum;
         return new double[] { minSum, maxSum };
     }
+
+    // private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes,
+    // QueryResults queryResults) {
+    // double exactSum = 0; // Default to zero if no fully contained stats exist
+
+    // if (queryResults.getStats().containsKey(null)) {
+    // exactSum = queryResults.getStats().get(null).xStats().sum(); // Use fully
+    // contained nodes' sum if available
+    // } else {
+    // LOG.warn("No fully contained tiles with stats found. Using only approximate
+    // information.");
+    // }
+
+    // double minSum = exactSum; // Start with fully contained sum (or 0 if none
+    // exist)
+    // double maxSum = exactSum;
+
+    // for (QueryNode queryNode : samplingNodes) {
+    // if (queryNode.getIntersectionCount() == 0) {
+    // continue;
+    // }
+    // double[] confidenceInterval = queryNode.getConfidenceInterval(0.95);
+    // if (!Double.isNaN(confidenceInterval[0]) &&
+    // !Double.isNaN(confidenceInterval[1])) {
+    // // Use confidence interval from sampling
+    // minSum += confidenceInterval[0];
+    // maxSum += confidenceInterval[1];
+    // } else {
+    // LOG.debug("No samples available to compute confidence interval. QueryNode
+    // context: {}", queryNode.toString());
+    // // Use deterministic bounds for unsampled nodes
+    // minSum += queryNode.getMinSum();
+    // maxSum += queryNode.getMaxSum();
+    // }
+    // }
+
+    // return new double[] { minSum, maxSum };
+    // }
 
     private double calculateMaxErrorBound(double[] confidenceInterval) {
         double minSum = confidenceInterval[0];
@@ -309,9 +399,9 @@ public class ApproximateValinor {
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.addSampleValue(measureValue0);
                         // if (queryNode.isFullyContained()) {
-                        //     if (measureValue0 != null) {
-                        //         queryNode.getNode().adjustStats(measureValue0, measureValue1);
-                        //     }
+                        // if (measureValue0 != null) {
+                        // queryNode.getNode().adjustStats(measureValue0, measureValue1);
+                        // }
                         // }
                     }
                 }
