@@ -15,7 +15,7 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     public SamplingNodePointsIterator(QueryNode queryNode, double samplingRate) {
         this.queryNode = queryNode;
         int intersectionCount = queryNode.getIntersectionCount();
-        int targetSampleCount = (int) Math.ceil(samplingRate * intersectionCount);
+        int targetSampleCount = Math.max(2, (int) Math.ceil(samplingRate * intersectionCount));
 
         // Compute remaining samples needed
         int alreadySampled = queryNode.getSampledTracker().cardinality();
