@@ -20,7 +20,6 @@ public class QueryNode implements Iterable<Point> {
     private ContainmentExaminer containmentExaminer;
     private List<CategoricalColumn> unknownCatAttrs;
 
-    // Deterministic bounds
     public int intersectionCount = 0;
 
     // BitSet for tracking which points are inside the query
@@ -100,7 +99,7 @@ public class QueryNode implements Iterable<Point> {
 
             return new double[] { lowerBound, upperBound };
         }
-        LOG.warn("No samples available to compute confidence interval. QueryNode context: {}", this.toString());
+        LOG.debug("No samples available to compute confidence interval. QueryNode context: {}", this.toString());
         return new double[] { Double.NaN, Double.NaN }; // Return NaN if no samples
     }
 
