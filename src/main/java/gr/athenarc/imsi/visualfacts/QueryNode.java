@@ -164,7 +164,7 @@ public class QueryNode implements Iterable<Point> {
     public String toString() {
         return "QueryNode [node=" + node + ", tile=" + tile + ", containmentExaminer=" + containmentExaminer
                 + ", intersectionCount=" + intersectionCount + ", queryPointsBitSet=" + queryPointsBitSet
-                + ", sampleStatsAcc=" + sampleStatsAcc + ", sampledTracker=" + sampledTracker + "]";
+                + ", sampleStatsAcc.count=" + sampleStatsAcc.count() + ", sampleStatsAcc.sum=" + sampleStatsAcc.sum() + ", sampledTracker=" + sampledTracker + "]";
     }
 
     public BitSet getQueryPointsBitSet() {
