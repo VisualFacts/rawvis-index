@@ -5,10 +5,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import com.google.common.math.StatsAccumulator;
 
 public class QueryNode implements Iterable<Point> {
+    private static final Logger LOG = LogManager.getLogger(QueryNode.class);
 
     private Map<Integer, Short> groupByValues;
     private TreeNode node;
@@ -96,6 +100,7 @@ public class QueryNode implements Iterable<Point> {
 
             return new double[] { lowerBound, upperBound };
         }
+        LOG.warn("No samples available to compute confidence interval. QueryNode context: {}", this.toString());
         return new double[] { Double.NaN, Double.NaN }; // Return NaN if no samples
     }
 
@@ -155,15 +160,13 @@ public class QueryNode implements Iterable<Point> {
         return new NodePointsIterator(this);
     }
 
+
+
     @Override
     public String toString() {
-        return "QueryNode{" +
-                "groupByValues=" + groupByValues +
-                ", node=" + node +
-                ", tile=" + tile +
-                ", containmentExaminer=" + containmentExaminer +
-                ", unknownCatAttrs=" + unknownCatAttrs +
-                '}';
+        return "QueryNode [node=" + node + ", tile=" + tile + ", containmentExaminer=" + containmentExaminer
+                + ", intersectionCount=" + intersectionCount + ", queryPointsBitSet=" + queryPointsBitSet
+                + ", sampleStatsAcc=" + sampleStatsAcc + ", sampledTracker=" + sampledTracker + "]";
     }
 
     public BitSet getQueryPointsBitSet() {
