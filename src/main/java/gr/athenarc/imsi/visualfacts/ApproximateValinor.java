@@ -262,6 +262,7 @@ public class ApproximateValinor {
         queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
         queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedNodesWithoutStats.size());
         queryResults.setSamplingTileCount(samplingNodes.size());
+        queryResults.setSamplingRate(samplingRate.get());
         queryResults.setIoCount(ioCount);
         queryResults.setConfidenceInterval(confidenceInterval);
         queryResults.setErrorBound(maxErrorBound);

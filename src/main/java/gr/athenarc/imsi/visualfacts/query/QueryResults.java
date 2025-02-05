@@ -27,6 +27,7 @@ public class QueryResults {
 
     private int samplingTileCount;
 
+    private double samplingRate;
 
     private int tileCount;
 
@@ -87,6 +88,16 @@ public class QueryResults {
 
     public void setSamplingTileCount(int samplingTileCount) {
         this.samplingTileCount = samplingTileCount;
+    }
+
+    
+
+    public double getSamplingRate() {
+        return samplingRate;
+    }
+
+    public void setSamplingRate(double samplingRate) {
+        this.samplingRate = samplingRate;
     }
 
     public int getTileCount() {
