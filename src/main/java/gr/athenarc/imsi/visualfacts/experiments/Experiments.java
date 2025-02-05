@@ -460,8 +460,8 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getConfidenceInterval()[0]);
-            csvWriter.addValue(queryResults.getConfidenceInterval()[1]);
+            csvWriter.addValue(queryResults.getConfidenceInterval() != null ? queryResults.getConfidenceInterval()[0] : null);
+            csvWriter.addValue(queryResults.getConfidenceInterval() != null ? queryResults.getConfidenceInterval()[1] : null);
             csvWriter.addValue(queryResults.getErrorBound());
             csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
