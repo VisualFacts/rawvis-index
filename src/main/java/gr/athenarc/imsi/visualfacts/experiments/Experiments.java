@@ -427,7 +427,7 @@ public class Experiments {
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
         csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                "Overlapped tiles", "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval LB", "Confidence Interval UB", "Error Bound", "run");
+                "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats", "Sampling Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval LB", "Confidence Interval UB", "Error Bound", "run");
         
 
         Stopwatch stopwatch;
@@ -457,6 +457,8 @@ public class Experiments {
             csvWriter.addValue(index.getLeafTileCount());
             csvWriter.addValue(queryResults.getTileCount());
             csvWriter.addValue(queryResults.getFullyContainedTileCount());
+            csvWriter.addValue(queryResults.getFullyContainedTileWithoutStatsCount());
+            csvWriter.addValue(queryResults.getSamplingTileCount());
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));

@@ -154,8 +154,6 @@ public class ApproximateValinor {
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        int fullyContainedTilesCount = 0;
-
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
         List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
@@ -165,9 +163,7 @@ public class ApproximateValinor {
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
-            if (isFullyContained) {
-                fullyContainedTilesCount++;
-            }
+            
 
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             for (QueryNode queryNode : queryNodes) {
@@ -263,12 +259,15 @@ public class ApproximateValinor {
         } while (maxErrorBound > errorThreshold);
 
         queryResults.setTileCount(leafTiles.size());
-        queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
+        queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
+        queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedNodesWithoutStats.size());
+        queryResults.setSamplingTileCount(samplingNodes.size());
         queryResults.setIoCount(ioCount);
         queryResults.setConfidenceInterval(confidenceInterval);
         queryResults.setErrorBound(maxErrorBound);
         return queryResults;
     }
+
 
     private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
         LOG.debug("Adjusting sampling rate: currentRate={}, currentError={}, errorThreshold={}", currentRate,

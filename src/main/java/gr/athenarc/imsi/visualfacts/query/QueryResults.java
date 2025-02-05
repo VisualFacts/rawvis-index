@@ -23,6 +23,11 @@ public class QueryResults {
 
     private int fullyContainedTileCount;
 
+    private int fullyContainedTileWithoutStatsCount;
+
+    private int samplingTileCount;
+
+
     private int tileCount;
 
     private int expandedNodeCount;
@@ -62,6 +67,26 @@ public class QueryResults {
 
     public void setFullyContainedTileCount(int fullyContainedTileCount) {
         this.fullyContainedTileCount = fullyContainedTileCount;
+    }
+
+    
+
+    public int getFullyContainedTileWithoutStatsCount() {
+        return fullyContainedTileWithoutStatsCount;
+    }
+
+    public void setFullyContainedTileWithoutStatsCount(int fullyContainedTileWithoutStatsCount) {
+        this.fullyContainedTileWithoutStatsCount = fullyContainedTileWithoutStatsCount;
+    }
+
+    
+
+    public int getSamplingTileCount() {
+        return samplingTileCount;
+    }
+
+    public void setSamplingTileCount(int samplingTileCount) {
+        this.samplingTileCount = samplingTileCount;
     }
 
     public int getTileCount() {
