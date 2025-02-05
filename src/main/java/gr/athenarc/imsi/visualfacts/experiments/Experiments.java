@@ -365,7 +365,7 @@ public class Experiments {
             csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
                     "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
                     "Overlapped tiles",
-                    "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result");
+                    "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result", "Query Result Sum");
         }
 
         Stopwatch stopwatch;
@@ -408,6 +408,7 @@ public class Experiments {
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
             csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
                     entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
+            csvWriter.addValue(queryResults.getStats().get(null).xStats().sum());
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
@@ -426,7 +427,7 @@ public class Experiments {
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
         csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                "Overlapped tiles", "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval", "Error Bound", "run");
+                "Overlapped tiles", "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval LB", "Confidence Interval UB", "Error Bound", "run");
         
 
         Stopwatch stopwatch;
@@ -459,7 +460,8 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(Arrays.toString(queryResults.getConfidenceInterval()));
+            csvWriter.addValue(queryResults.getConfidenceInterval()[0]);
+            csvWriter.addValue(queryResults.getConfidenceInterval()[1]);
             csvWriter.addValue(queryResults.getErrorBound());
             csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
