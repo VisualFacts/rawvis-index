@@ -408,7 +408,7 @@ public class Experiments {
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
             csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
                     entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
-            csvWriter.addValue(queryResults.getStats().get(null).xStats().sum());
+            csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null ? queryResults.getStats().get(null).xStats().sum() : null);
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
