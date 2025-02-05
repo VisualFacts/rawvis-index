@@ -159,6 +159,7 @@ public class ApproximateValinor {
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
         List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
+        List<QueryNode> fullyContainedNodesWithoutStats = new ArrayList<>();
         List<QueryNode> samplingNodes = new ArrayList<>();
 
         for (Tile leafTile : leafTiles) {
@@ -179,14 +180,24 @@ public class ApproximateValinor {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (node.points.size() > THRESHOLD) {
                     leafTile.split();
-                    samplingNodes.addAll(leafTile.getOverlappedLeafTiles(query).stream()
-                            .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer,
-                                    schema).stream())
-                            .collect(Collectors.toList()));
+                    leafTile.getOverlappedLeafTiles(query).stream()
+                            .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
+                            .forEach(qn -> {
+                                // Check for full containment on each returned subtile node
+                                if (qn.isFullyContained()) {
+                                    fullyContainedNodesWithoutStats.add(qn);
+                                } else {
+                                    samplingNodes.add(qn);
+                                }
+                            });
                 } else {
-                    samplingNodes.add(queryNode);
+                    // For nodes that do not require splitting, check full containment:
+                    if (isFullyContained) {
+                        fullyContainedNodesWithoutStats.add(queryNode);
+                    } else {
+                        samplingNodes.add(queryNode);
+                    }
                 }
-
             }
         }
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
@@ -208,6 +219,24 @@ public class ApproximateValinor {
         CsvParser parser = new CsvParser(parserSettings);
 
         int ioCount = 0;
+
+        ////////////
+        /// baseline method that includes reading all points from fully contained tiles
+        KWayMergePointIterator fullyContainedPointIterator = new KWayMergePointIterator(
+                fullyContainedNodesWithoutStats.stream()
+                        .map(queryNode -> new NodePointsIterator(queryNode))
+                        .collect(Collectors.toList()));
+
+        // Read all points from fully contained tiles and adjust their stats
+        ioCount += readFullyContainedFromFile(query, queryResults, measureCol0, parser, fullyContainedPointIterator);
+
+        for (QueryNode queryNode : fullyContainedNodesWithoutStats) {
+            queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
+        }
+        // end of baseline method
+        ////////////
+        
+
         AtomicDouble samplingRate = new AtomicDouble(0.01d); // Start with small sampling rate (1%)
         double[] confidenceInterval;
         double maxErrorBound;
@@ -251,14 +280,18 @@ public class ApproximateValinor {
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
-            exactSum = queryResults.getStats().get(null).xStats().sum(); 
+            exactSum = queryResults.getStats().get(null).xStats().sum();
             // sum from "fully contained" nodes with known stats
         }
-    
-        // We'll accumulate total estimated sum & total variance from partial/sampled nodes:
+
+        if (samplingNodes == null || samplingNodes.isEmpty()) {
+            return new double[] { exactSum, exactSum };
+        }
+
+        // We'll accumulate total estimated sum & total variance from sampled nodes:
         double totalEstimate = 0.0;
         double totalVariance = 0.0;
-    
+
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc().count();
             // if no samples, fallback to deterministic bounds or skip
@@ -267,30 +300,40 @@ public class ApproximateValinor {
                 // Or you can add a big variance chunk if you want to keep it approximate
                 continue;
             }
-    
+
             double mean = qnode.getSampleStatsAcc().mean();
             double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
             double N = qnode.getIntersectionCount();
-    
+
+            // SHORT-CIRCUIT if we sampled 100% of that node
+            if (n == N) {
+                // We have the entire sub-population in this node, so no sampling uncertainty.
+                // sampleStatsAcc.sum() == sum of all values in that node
+                double nodeExactSum = qnode.getSampleStatsAcc().sum();
+                totalEstimate += nodeExactSum;
+                // variance contribution is 0
+                continue;
+            }
+
             // node-level estimate
             double nodeEstimate = N * mean;
             // node-level variance: N^2 * stdev^2 / n
-            double nodeVariance = N*N * (stdev*stdev / n);
-    
+            double nodeVariance = N * N * (stdev * stdev / n);
+
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
         }
-    
+
         // final estimate = exactSum + partialEstimate
         double finalEstimate = exactSum + totalEstimate;
-        
+
         // standard error from partial region
         double stdError = Math.sqrt(totalVariance);
         // no variance from "exactSum" portion (fully contained is known exactly)
-        
+
         // pick a z-score
         double z = getZScoreForConfidence(0.95);
-    
+
         double margin = z * stdError;
         double lower = finalEstimate - margin;
         double upper = finalEstimate + margin;
@@ -317,44 +360,6 @@ public class ApproximateValinor {
 
     }
 
-    // private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes,
-    // QueryResults queryResults) {
-    // double exactSum = 0; // Default to zero if no fully contained stats exist
-
-    // if (queryResults.getStats().containsKey(null)) {
-    // exactSum = queryResults.getStats().get(null).xStats().sum(); // Use fully
-    // contained nodes' sum if available
-    // } else {
-    // LOG.warn("No fully contained tiles with stats found. Using only approximate
-    // information.");
-    // }
-
-    // double minSum = exactSum; // Start with fully contained sum (or 0 if none
-    // exist)
-    // double maxSum = exactSum;
-
-    // for (QueryNode queryNode : samplingNodes) {
-    // if (queryNode.getIntersectionCount() == 0) {
-    // continue;
-    // }
-    // double[] confidenceInterval = queryNode.getConfidenceInterval(0.95);
-    // if (!Double.isNaN(confidenceInterval[0]) &&
-    // !Double.isNaN(confidenceInterval[1])) {
-    // // Use confidence interval from sampling
-    // minSum += confidenceInterval[0];
-    // maxSum += confidenceInterval[1];
-    // } else {
-    // LOG.debug("No samples available to compute confidence interval. QueryNode
-    // context: {}", queryNode.toString());
-    // // Use deterministic bounds for unsampled nodes
-    // minSum += queryNode.getMinSum();
-    // maxSum += queryNode.getMaxSum();
-    // }
-    // }
-
-    // return new double[] { minSum, maxSum };
-    // }
-
     private double calculateMaxErrorBound(double[] confidenceInterval) {
         double minSum = confidenceInterval[0];
         double maxSum = confidenceInterval[1];
@@ -372,14 +377,12 @@ public class ApproximateValinor {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Float measureValue0 = null;
-                Float measureValue1 = 0f;
+                Float measureValue0 = 0f;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
                         if (measureCol0 != null && row[measureCol0] != null) {
                             measureValue0 = Float.parseFloat(row[measureCol0]);
-                            measureValue1 = 0f;
                         }
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
@@ -389,6 +392,35 @@ public class ApproximateValinor {
                         // queryNode.getNode().adjustStats(measureValue0, measureValue1);
                         // }
                         // }
+                    }
+                }
+            } catch (Exception e) {
+                LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
+            }
+        }
+        return ioCount;
+    }
+
+    private int readFullyContainedFromFile(Query query, QueryResults queryResults, Integer measureCol0,
+            CsvParser parser, KWayMergePointIterator pointIterator) {
+        String line;
+        String[] row;
+        int ioCount = 0;
+        while (pointIterator.hasNext()) {
+            ioCount++;
+            Point point = pointIterator.next();
+            try {
+                randomAccessReader.seek(point.getFileOffset());
+                line = randomAccessReader.readLine();
+                Float measureValue0 = 0f;
+                if (line != null) {
+                    row = parser.parseLine(line);
+                    if (row != null) {
+                        if (measureCol0 != null && row[measureCol0] != null) {
+                            measureValue0 = Float.parseFloat(row[measureCol0]);
+                        }
+                        QueryNode queryNode = pointIterator.getCurrentQueryNode();
+                        queryNode.getNode().adjustStats(measureValue0, 0f);
                     }
                 }
             } catch (Exception e) {

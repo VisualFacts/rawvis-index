@@ -69,78 +69,8 @@ public class QueryNode implements Iterable<Point> {
         }
     }
 
-    // Deterministic bounds getters
-    public double getMinSum() {
-        return intersectionCount * node.getStats().xStats().min();
-    }
-
-    public double getMaxSum() {
-        return intersectionCount * node.getStats().xStats().max();
-    }
-
-    // Sampling-based statistics methods
     public void addSampleValue(double value) {
         sampleStatsAcc.add(value);
-    }
-
-    public double[] getConfidenceInterval(double confidenceLevel) {
-        // Number of sampled points
-        long n = sampleStatsAcc.count();
-
-        // Special case: if we have sampled *all* points in the intersection
-        // then the sum is exact with zero uncertainty.
-        if (n == intersectionCount) {
-            double exactSum = sampleStatsAcc.sum();
-            return new double[] { exactSum, exactSum };
-        }
-
-        // Otherwise, proceed with the usual estimation approach
-        if (n < 2) {
-            // Not enough samples to compute a meaningful confidence interval
-            return new double[] { Double.NaN, Double.NaN };
-        }
-
-        // Get z-score for the desired confidence level
-        double z = getZScoreForConfidence(confidenceLevel);
-
-        // Extract the sample mean and sample standard deviation
-        double sampleMean = sampleStatsAcc.mean();
-        double sampleStdDev = sampleStatsAcc.sampleStandardDeviation();
-
-        // Estimate of total (sum) in the population
-        double estimatedTotal = sampleMean * intersectionCount;
-
-        // Standard error of the sum
-        double standardErrorOfSum = intersectionCount * (sampleStdDev / Math.sqrt(n));
-
-        // Margin of error
-        double marginOfError = z * standardErrorOfSum;
-
-        // Confidence interval
-        double lower = estimatedTotal - marginOfError;
-        double upper = estimatedTotal + marginOfError;
-
-        return new double[] { lower, upper };
-    }
-
-    // Helper to retrieve z-score for a confidence level
-    private double getZScoreForConfidence(double confidenceLevel) {
-        // For a two-tailed confidence interval, the "confidenceLevel"
-        // is usually something like 0.90, 0.95, or 0.99.
-        // We map these to z-scores from the standard Normal distribution.
-
-        if (confidenceLevel == 0.90) {
-            return 1.645; // ~90% CI
-        } else if (confidenceLevel == 0.95) {
-            return 1.96; // ~95% CI
-        } else if (confidenceLevel == 0.99) {
-            return 2.575; // ~99% CI
-        }
-
-        // Fallback: either throw or pick a default
-        throw new IllegalArgumentException(
-                "Unsupported confidence level: " + confidenceLevel);
-
     }
 
     public Map<Integer, Short> getGroupByValues() {

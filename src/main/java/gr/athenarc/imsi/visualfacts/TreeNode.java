@@ -35,9 +35,17 @@ public class TreeNode {
         stats.add(value0, value1);
     }
 
+    /**
+     * Checks if the current TreeNode has statistics available.
+     * 
+     * @return {@code true} if the stats object is not null and its count is smaller than the size of the points list, 
+     *         otherwise {@code false}.
+     */
     public boolean hasStats() {
-        return stats != null;
+        // todo: check what happens in case of null value for an object
+        return points != null && stats != null && stats.count() == points.size();
     }
+
 
     public TreeNode addPoint(Point point) {
         if (points == null) {
