@@ -38,7 +38,7 @@ public class QueryNode implements Iterable<Point> {
         this.unknownCatAttrs = unknownCatAttrs;
 
         // Initialize BitSet with the size of points in the node
-        if (node.getSampledTracker() != null) {
+        if (node.getSampledTracker() != null && containmentExaminer == null) {
             this.sampleStatsAcc = new StatsAccumulator();
             this.sampleStatsAcc.addAll(node.getStats().xStats());
             this.sampledTracker = node.getSampledTracker();
