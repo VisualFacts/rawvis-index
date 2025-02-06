@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
 import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.List;
 
@@ -18,6 +19,7 @@ public class TreeNode {
     private Short2ObjectMap<TreeNode> children;
 
     private PairedStatsAccumulator stats;
+    private BitSet sampledTracker;
 
     public TreeNode(short label) {
         this.label = label;
@@ -38,14 +40,14 @@ public class TreeNode {
     /**
      * Checks if the current TreeNode has statistics available.
      * 
-     * @return {@code true} if the stats object is not null and its count is smaller than the size of the points list, 
+     * @return {@code true} if the stats object is not null and its count is smaller
+     *         than the size of the points list,
      *         otherwise {@code false}.
      */
     public boolean hasStats() {
         // todo: check what happens in case of null value for an object
         return points != null && stats != null && stats.count() == points.size();
     }
-
 
     public TreeNode addPoint(Point point) {
         if (points == null) {
@@ -99,6 +101,14 @@ public class TreeNode {
     public void convertToNonleaf() {
         points = null;
         stats = null;
+    }
+
+    public BitSet getSampledTracker() {
+        return sampledTracker;
+    }
+
+    public void setSampledTracker(BitSet sampledTracker) {
+        this.sampledTracker = sampledTracker;
     }
 
 }

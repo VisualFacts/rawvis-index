@@ -26,7 +26,7 @@ public class QueryNode implements Iterable<Point> {
     private BitSet queryPointsBitSet;
 
     // Sampling-based statistics
-    private StatsAccumulator sampleStatsAcc = new StatsAccumulator();
+    private StatsAccumulator sampleStatsAcc;
     private BitSet sampledTracker;
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
@@ -38,7 +38,14 @@ public class QueryNode implements Iterable<Point> {
         this.unknownCatAttrs = unknownCatAttrs;
 
         // Initialize BitSet with the size of points in the node
-        this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+        if (node.getSampledTracker() != null) {
+            this.sampleStatsAcc = new StatsAccumulator();
+            this.sampleStatsAcc.addAll(node.getStats().xStats());
+            this.sampledTracker = node.getSampledTracker();
+        } else {
+            this.sampleStatsAcc = new StatsAccumulator();
+            this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+        }
 
         computeQueryIntersection();
     }

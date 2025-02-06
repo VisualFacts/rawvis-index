@@ -158,7 +158,7 @@ public class ApproximateValinor {
 
         List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
         List<QueryNode> fullyContainedNodesWithoutStats = new ArrayList<>();
-        List<QueryNode> samplingNodes = new ArrayList<>();
+        List<QueryNode> partialNodes = new ArrayList<>();
 
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
@@ -183,7 +183,7 @@ public class ApproximateValinor {
                                 if (qn.isFullyContained()) {
                                     fullyContainedNodesWithoutStats.add(qn);
                                 } else {
-                                    samplingNodes.add(qn);
+                                    partialNodes.add(qn);
                                 }
                             });
                 } else {
@@ -191,7 +191,7 @@ public class ApproximateValinor {
                     if (isFullyContained) {
                         fullyContainedNodesWithoutStats.add(queryNode);
                     } else {
-                        samplingNodes.add(queryNode);
+                        partialNodes.add(queryNode);
                     }
                 }
             }
@@ -216,22 +216,25 @@ public class ApproximateValinor {
 
         int ioCount = 0;
 
-        ////////////
-        /// baseline method that includes reading all points from fully contained tiles
-        KWayMergePointIterator fullyContainedPointIterator = new KWayMergePointIterator(
-                fullyContainedNodesWithoutStats.stream()
-                        .map(queryNode -> new NodePointsIterator(queryNode))
-                        .collect(Collectors.toList()));
+        // ////////////
+        // /// baseline method that includes reading all points from fully contained tiles
+        // KWayMergePointIterator fullyContainedPointIterator = new KWayMergePointIterator(
+        //         fullyContainedNodesWithoutStats.stream()
+        //                 .map(queryNode -> new NodePointsIterator(queryNode))
+        //                 .collect(Collectors.toList()));
 
-        // Read all points from fully contained tiles and adjust their stats
-        ioCount += readFullyContainedFromFile(query, queryResults, measureCol0, parser, fullyContainedPointIterator);
+        // // Read all points from fully contained tiles and adjust their stats
+        // ioCount += readFullyContainedFromFile(query, queryResults, measureCol0, parser, fullyContainedPointIterator);
 
-        for (QueryNode queryNode : fullyContainedNodesWithoutStats) {
-            queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
-        }
-        // end of baseline method
-        ////////////
+        // for (QueryNode queryNode : fullyContainedNodesWithoutStats) {
+        //     queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
+        // }
+        // // end of baseline method
+        // ////////////
         
+        List<QueryNode> samplingNodes = new ArrayList<>();
+        samplingNodes.addAll(partialNodes);
+        samplingNodes.addAll(fullyContainedNodesWithoutStats);
 
         AtomicDouble samplingRate = new AtomicDouble(0.01d); // Start with small sampling rate (1%)
         double[] confidenceInterval;
@@ -257,6 +260,9 @@ public class ApproximateValinor {
             }
 
         } while (maxErrorBound > errorThreshold);
+
+        // Iterate over fully contained query nodes without stats and set their TreeNode's sampled tracker for using in future queries. Their stats have been updated in the readFromFile method
+        fullyContainedNodesWithoutStats.forEach(queryNode -> queryNode.getNode().setSampledTracker(queryNode.getSampledTracker()));
 
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
@@ -387,11 +393,9 @@ public class ApproximateValinor {
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.addSampleValue(measureValue0);
-                        // if (queryNode.isFullyContained()) {
-                        // if (measureValue0 != null) {
-                        // queryNode.getNode().adjustStats(measureValue0, measureValue1);
-                        // }
-                        // }
+                        if (queryNode.isFullyContained()) {
+                                queryNode.getNode().adjustStats(measureValue0, 0f);
+                        }
                     }
                 }
             } catch (Exception e) {
