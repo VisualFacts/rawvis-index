@@ -30,7 +30,7 @@ public class TreeNode {
         return counter;
     }
 
-    public void adjustStats(float value0, float value1) {
+    public void adjustStats(double value0, double value1) {
         if (stats == null) {
             stats = new PairedStatsAccumulator();
         }

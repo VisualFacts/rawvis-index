@@ -113,8 +113,8 @@ public class ApproximateValinor {
                 }
 
                 if (measureCol0 != null) {
-                    Float value0 = Float.parseFloat(row[measureCol0]);
-                    Float value1 = 0f;
+                    Double value0 = Double.parseDouble(row[measureCol0]);
+                    Double value1 = 0d;
                     node.adjustStats(value0, value1);
                 }
                 if (++objectsIndexed % 1000000 == 0) {
@@ -383,18 +383,18 @@ public class ApproximateValinor {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Float measureValue0 = 0f;
+                Double measureValue0 = 0d;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
                         if (measureCol0 != null && row[measureCol0] != null) {
-                            measureValue0 = Float.parseFloat(row[measureCol0]);
+                            measureValue0 = Double.parseDouble(row[measureCol0]);
                         }
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.addSampleValue(measureValue0);
                         if (queryNode.isFullyContained()) {
-                                queryNode.getNode().adjustStats(measureValue0, 0f);
+                                queryNode.getNode().adjustStats(measureValue0, 0d);
                         }
                     }
                 }
@@ -416,12 +416,12 @@ public class ApproximateValinor {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Float measureValue0 = 0f;
+                Double measureValue0 = 0d;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
                         if (measureCol0 != null && row[measureCol0] != null) {
-                            measureValue0 = Float.parseFloat(row[measureCol0]);
+                            measureValue0 = Double.parseDouble(row[measureCol0]);
                         }
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.getNode().adjustStats(measureValue0, 0f);
