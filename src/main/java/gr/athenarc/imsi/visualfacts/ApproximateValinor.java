@@ -307,6 +307,15 @@ public class ApproximateValinor {
 
         // Calculate the new sampling rate.
         double newRate = currentRate * factor;
+        
+        // Compute the delta increase
+        double delta = newRate - currentRate;
+
+        // Set a minimum delta (for example, 0.01) to ensure noticeable progress
+        double minDelta = 0.01;
+        if (delta < minDelta) {
+            newRate = currentRate + minDelta;
+        }
 
         // Ensure the new sampling rate does not exceed 100%.
         if (newRate > 1.0) {
