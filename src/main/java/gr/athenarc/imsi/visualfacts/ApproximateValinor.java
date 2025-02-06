@@ -275,13 +275,54 @@ public class ApproximateValinor {
         return queryResults;
     }
 
-
+    /**
+     * Adjusts the sampling rate based on the current relative error and the target
+     * error threshold.
+     * 
+     * @param currentRate    the current sampling rate (e.g., 0.1 for 10% sampling)
+     * @param currentError   the current relative error from the sample estimates
+     * @param errorThreshold the desired error threshold
+     * @return the new sampling rate, capped at 1.0 (i.e., 100% sampling)
+     */
     private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
-        LOG.debug("Adjusting sampling rate: currentRate={}, currentError={}, errorThreshold={}", currentRate,
-                currentError, errorThreshold);
-        double adjustmentFactor = (currentError - errorThreshold) / errorThreshold; // How far above the limit we are
-        return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
+        // If the current error is already below or equal to the threshold, no
+        // adjustment is needed.
+        if (currentError <= errorThreshold) {
+            return currentRate;
+        }
+
+        // Compute the multiplicative factor based on the error ratio squared.
+        // The intuition: variance (and thus error) decreases approximately as
+        // 1/sqrt(n),
+        // so to reduce error by a factor of (currentError/errorThreshold),
+        // you need roughly (currentError/errorThreshold)^2 times more samples.
+        double factor = Math.pow(currentError / errorThreshold, 2);
+
+        // To avoid an overly large jump in sampling rate, cap the maximum increase.
+        // For example, limit the increase to a maximum factor of 2x.
+        double maxFactor = 2.0;
+        if (factor > maxFactor) {
+            factor = maxFactor;
+        }
+
+        // Calculate the new sampling rate.
+        double newRate = currentRate * factor;
+
+        // Ensure the new sampling rate does not exceed 100%.
+        if (newRate > 1.0) {
+            newRate = 1.0;
+        }
+
+        return newRate;
     }
+
+    
+    // private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
+    //     LOG.debug("Adjusting sampling rate: currentRate={}, currentError={}, errorThreshold={}", currentRate,
+    //             currentError, errorThreshold);
+    //     double adjustmentFactor = (currentError - errorThreshold) / errorThreshold; // How far above the limit we are
+    //     return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
+    // }
 
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
         double exactSum = 0;
