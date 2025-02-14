@@ -249,7 +249,7 @@ public class ApproximateValinor {
             ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
 
             // Calculate the confidence interval for the query
-            confidenceInterval = getQueryConfidenceInterval(samplingNodes, queryResults);
+            confidenceInterval = getQueryConfidenceInterval(samplingNodes, queryResults, samplingRate.get());
             // Recalculate the error bound
             maxErrorBound = calculateMaxErrorBound(confidenceInterval);
 
@@ -333,7 +333,7 @@ public class ApproximateValinor {
     //     return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
     // }
 
-    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults) {
+    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults, double samplingRate) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
             exactSum = queryResults.getStats().get(null).xStats().sum();
@@ -350,15 +350,6 @@ public class ApproximateValinor {
 
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc().count();
-            // if no samples, fallback to deterministic bounds or skip
-            if (n < 2) {
-                // fallback path: use minSum / maxSum or skip
-                // Or you can add a big variance chunk if you want to keep it approximate
-                continue;
-            }
-
-            double mean = qnode.getSampleStatsAcc().mean();
-            double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
             double N = qnode.getIntersectionCount();
 
             // SHORT-CIRCUIT if we sampled 100% of that node
@@ -370,6 +361,17 @@ public class ApproximateValinor {
                 // variance contribution is 0
                 continue;
             }
+           
+            if (n < 2) {
+                // fallback path: use minSum / maxSum or skip
+                // Or you can add a big variance chunk if you want to keep it approximate
+                LOG.error("Sampling Node with less than 2 samples: {}", qnode);
+                continue;
+            }
+
+            double mean = qnode.getSampleStatsAcc().mean();
+            double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
+
 
             // node-level estimate
             double nodeEstimate = N * mean;
@@ -380,12 +382,13 @@ public class ApproximateValinor {
             totalVariance += nodeVariance;
         }
 
+
+
         // final estimate = exactSum + partialEstimate
         double finalEstimate = exactSum + totalEstimate;
 
         // standard error from partial region
         double stdError = Math.sqrt(totalVariance);
-        // no variance from "exactSum" portion (fully contained is known exactly)
 
         // pick a z-score
         double z = getZScoreForConfidence(0.95);
@@ -393,6 +396,10 @@ public class ApproximateValinor {
         double margin = z * stdError;
         double lower = finalEstimate - margin;
         double upper = finalEstimate + margin;
+
+        LOG.debug("samplingRate={}, exactSum={}, totalEstimate={}, totalVariance={}, lb={}, up={}", samplingRate,
+                exactSum, totalEstimate, totalVariance, lower, upper);
+
         return new double[] { lower, upper };
     }
 
