@@ -115,7 +115,7 @@ public class ApproximateValinor {
                 if (measureCol0 != null) {
                     Double value0 = Double.parseDouble(row[measureCol0]);
                     Double value1 = 0d;
-                    node.adjustStats(value0, value1);
+                    // node.adjustStats(value0, value1);
                 }
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
@@ -361,7 +361,6 @@ public class ApproximateValinor {
                 // variance contribution is 0
                 continue;
             }
-           
             if (n < 2) {
                 // fallback path: use minSum / maxSum or skip
                 // Or you can add a big variance chunk if you want to keep it approximate
@@ -422,6 +421,7 @@ public class ApproximateValinor {
                 "Unsupported confidence level: " + confidenceLevel);
 
     }
+
 
     private double calculateMaxErrorBound(double[] confidenceInterval) {
         double minSum = confidenceInterval[0];
