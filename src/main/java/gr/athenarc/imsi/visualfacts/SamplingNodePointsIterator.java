@@ -60,7 +60,8 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
                 int r = random.nextInt(processedCount + 1);
                 if (r < remainingSamplesNeeded) {
                     // Replace an existing point in the reservoir
-                    int toRemove = reservoir.nextSetBit(0); // Get an arbitrary existing sample
+                    // Pick a random existing sample in the reservoir to remove,
+                    int toRemove = getRandomSetBit(reservoir, random);
                     reservoir.clear(toRemove);
                     reservoir.set(index);
                 }
@@ -68,6 +69,23 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         }
 
         return reservoir;
+    }
+
+        /**
+     * Returns the index of a randomly chosen set bit from the given reservoir BitSet.
+     * This ensures uniform selection among the currently set bits.
+     */
+    private int getRandomSetBit(BitSet reservoir, Random random) {
+        int size = reservoir.cardinality();
+        // Pick which set bit we want to remove
+        int target = random.nextInt(size);
+
+        // Iterate through the set bits to find the target-th one
+        int current = reservoir.nextSetBit(0);
+        for (int count = 0; count < target; count++) {
+            current = reservoir.nextSetBit(current + 1);
+        }
+        return current;
     }
 
     @Override

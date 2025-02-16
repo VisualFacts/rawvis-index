@@ -4,13 +4,13 @@ import com.google.common.math.StatsAccumulator;
 
 import java.util.function.Predicate;
 
-public class FilterPredicate implements Predicate<Float> {
+public class FilterPredicate implements Predicate<Double> {
 
     private final FilterOperator operator;
 
-    private final float constant;
+    private final double constant;
 
-    public FilterPredicate(FilterOperator operator, float constant) {
+    public FilterPredicate(FilterOperator operator, double constant) {
         this.operator = operator;
         this.constant = constant;
     }
@@ -19,12 +19,12 @@ public class FilterPredicate implements Predicate<Float> {
         return operator;
     }
 
-    public float getConstant() {
+    public double getConstant() {
         return constant;
     }
 
     @Override
-    public boolean test(Float value) {
+    public boolean test(Double value) {
         if (value == null) {
             return false;
         }

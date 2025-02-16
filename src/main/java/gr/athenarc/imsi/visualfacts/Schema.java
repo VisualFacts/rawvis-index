@@ -2,6 +2,7 @@ package gr.athenarc.imsi.visualfacts;
 
 import com.univocity.parsers.csv.CsvParserSettings;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -20,7 +21,9 @@ public class Schema {
     private Character delimiter = ',';
     private int objectCount;
 
-    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount) {
+    private List<DataValidationFilter> validationFilters;
+
+    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, List<DataValidationFilter> validationFilters) {
         this.csv = csv;
         this.delimiter = delimiter;
         this.xColumn = xColumn;
@@ -29,6 +32,7 @@ public class Schema {
         this.measureCol1 = measureCol1;
         this.bounds = bounds;
         this.objectCount = objectCount;
+        this.validationFilters = validationFilters;
     }
 
     public boolean getHasHeader() {
@@ -92,6 +96,12 @@ public class Schema {
         parserSettings.setIgnoreLeadingWhitespaces(false);
         parserSettings.setIgnoreTrailingWhitespaces(false);
         return parserSettings;
+    }
+
+    
+
+    public List<DataValidationFilter> getValidationFilters() {
+        return validationFilters;
     }
 
     @Override

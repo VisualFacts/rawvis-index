@@ -79,11 +79,17 @@ public class Veti {
 
 
         List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed().collect(Collectors.toList());
-        List<Integer> colIndexes = new ArrayList<>();
+        HashSet<Integer> colIndexes = new HashSet<>();
 
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
         colIndexes.addAll(catColIndexes);
+
+        List<DataValidationFilter> validationFilters = schema.getValidationFilters();
+
+        LOG.debug("Validation filters: " + validationFilters);
+        validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
+
 
         Integer measureCol0 = schema.getMeasureCol0();
         Integer measureCol1 = schema.getMeasureCol1();
@@ -101,12 +107,32 @@ public class Veti {
         CsvParser parser = new CsvParser(parserSettings);
 
         objectsIndexed = 0;
+        int objectsSkipped = 0; // Counter for skipped rows
 
         parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
         String[] row;
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
             try {
+                // Check if row should be skipped based on validation filters
+                final String[] finalRow = row;
+                boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
+                    int colIndex = filter.getFilterColumn();
+                    try {
+                        Double value = Double.parseDouble(finalRow[colIndex]);
+                        return filter.test(value);
+                    } catch (NumberFormatException e) {
+                        LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
+                        return true; // Skip invalid numeric entries
+                    }
+                });
+
+                if (shouldSkip) {
+                    LOG.debug("Skipping row: " + Arrays.toString(row));
+                    objectsSkipped++;
+                    continue;
+                }
+
                 Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
                 TreeNode node = this.grid.addPoint(point, row);
@@ -137,6 +163,8 @@ public class Veti {
         parser.stopParsing();
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
+        LOG.debug("Total Skipped Objects: " + objectsSkipped);
+
         // todo evaluate q0
         QueryResults queryResults = new QueryResults(q0);
         return queryResults;

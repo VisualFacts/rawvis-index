@@ -2,17 +2,16 @@ package gr.athenarc.imsi.visualfacts;
 
 import gr.athenarc.imsi.visualfacts.query.FilterPredicate;
 
-public class Filter {
+public class DataValidationFilter {
     private int filterColumn;
-
     private FilterPredicate filterPredicate;
 
-    public Filter(int filterColumn, FilterPredicate filterPredicate) {
+    public DataValidationFilter(int filterColumn, FilterPredicate filterPredicate) {
         this.filterColumn = filterColumn;
         this.filterPredicate = filterPredicate;
     }
 
-    public boolean test(Double value){
+    public boolean test(Double value) {
         return filterPredicate.test(value);
     }
 
@@ -34,7 +33,7 @@ public class Filter {
 
     @Override
     public String toString() {
-        return "Filter{" +
+        return "DataValidationFilter{" +
                 "filterColumn=" + filterColumn +
                 ", filterPredicate=" + filterPredicate +
                 '}';

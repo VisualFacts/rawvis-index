@@ -28,12 +28,14 @@ import com.univocity.parsers.csv.CsvWriterSettings;
 
 import gr.athenarc.imsi.visualfacts.ApproximateValinor;
 import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.DummyCategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.TreeNode;
 import gr.athenarc.imsi.visualfacts.Veti;
 import gr.athenarc.imsi.visualfacts.config.IndexConfig;
+import gr.athenarc.imsi.visualfacts.experiments.util.DataValidationFilterConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.FilterConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.RangeConverter;
@@ -99,6 +101,9 @@ public class Experiments {
     private Integer groupBy;
     @Parameter(names = "-filters", converter = FilterConverter.class, description = "Q0 Filters")
     private Map<Integer, String> categoricalFilters;
+
+    @Parameter(names = "-valid", description = "Filters for skipping invalid rows before indexing", converter = DataValidationFilterConverter.class)
+    private List<DataValidationFilter> validationFilters = new ArrayList<>();
 
     @Parameter(names = "-sort")
     private String sort;
@@ -222,7 +227,7 @@ public class Experiments {
 
         csv = "NO CSV";
         Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
-                bounds, objCount);
+                bounds, objCount, validationFilters);
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
             categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -274,7 +279,7 @@ public class Experiments {
             schema = getSchemaWithSampling();
         else {
             schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
-                    bounds, objCount);
+                    bounds, objCount, validationFilters);
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
                 categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
@@ -475,7 +480,7 @@ public class Experiments {
 
     private Schema getSchemaWithSampling() {
         Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
-                bounds, objCount);
+                bounds, objCount, validationFilters);
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {

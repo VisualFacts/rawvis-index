@@ -8,6 +8,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -80,16 +81,24 @@ public class ApproximateValinor {
 
         List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed()
                 .collect(Collectors.toList());
-        List<Integer> colIndexes = new ArrayList<>();
+
+        List<DataValidationFilter> validationFilters = schema.getValidationFilters();
+
+        HashSet<Integer> colIndexes = new HashSet<>();
 
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
         colIndexes.addAll(catColIndexes);
+        LOG.debug("Validation filters: " + validationFilters);
+        validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
+
 
         Integer measureCol0 = schema.getMeasureCol0();
         if (measureCol0 != null) {
             colIndexes.add(measureCol0);
         }
+
+        LOG.debug("Columns to be read: " + colIndexes);
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
@@ -98,12 +107,31 @@ public class ApproximateValinor {
         CsvParser parser = new CsvParser(parserSettings);
 
         objectsIndexed = 0;
+        int objectsSkipped = 0; // Counter for skipped rows
 
         parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
         String[] row;
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
             try {
+                // Check if row should be skipped based on validation filters
+                final String[] finalRow = row;
+                boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
+                    int colIndex = filter.getFilterColumn();
+                    try {
+                        Double value = Double.parseDouble(finalRow[colIndex]);
+                        return filter.test(value);
+                    } catch (NumberFormatException e) {
+                        LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
+                        return true; // Skip invalid numeric entries
+                    }
+                });
+
+                if (shouldSkip) {
+                    LOG.debug("Skipping row: " + Arrays.toString(row));
+                    objectsSkipped++;
+                    continue;
+                }
                 Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
                         Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
@@ -119,6 +147,7 @@ public class ApproximateValinor {
                 }
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
+                    LOG.debug("Row: " + Arrays.toString(row));
                     LOG.debug(point);
                 }
             } catch (Exception e) {
@@ -132,6 +161,7 @@ public class ApproximateValinor {
         parser.stopParsing();
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
+        LOG.debug("Total Skipped Objects: " + objectsSkipped);
         // todo evaluate q0
         ApproximateQueryResults queryResults = new ApproximateQueryResults(q0);
         return queryResults;
@@ -333,7 +363,8 @@ public class ApproximateValinor {
     //     return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
     // }
 
-    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults, double samplingRate) {
+    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
+            double samplingRate) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
             exactSum = queryResults.getStats().get(null).xStats().sum();
@@ -357,7 +388,7 @@ public class ApproximateValinor {
                 // We have the entire sub-population in this node, so no sampling uncertainty.
                 // sampleStatsAcc.sum() == sum of all values in that node
                 double nodeExactSum = qnode.getSampleStatsAcc().sum();
-                totalEstimate += nodeExactSum;
+                exactSum += nodeExactSum; // Add to exact part,
                 // variance contribution is 0
                 continue;
             }
@@ -371,28 +402,22 @@ public class ApproximateValinor {
             double mean = qnode.getSampleStatsAcc().mean();
             double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
 
-
-            // node-level estimate
+            // // node-level estimate
             double nodeEstimate = N * mean;
-            // node-level variance: N^2 * stdev^2 / n
-            double nodeVariance = N * N * (stdev * stdev / n);
+            // node-level variance considering the finite population correction for without replacement sampling
+            double nodeVariance = N * N * (stdev * stdev / n) * (1.0 - ((double) n / N));;
 
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
         }
 
-
-
-        // final estimate = exactSum + partialEstimate
         double finalEstimate = exactSum + totalEstimate;
 
         // standard error from partial region
         double stdError = Math.sqrt(totalVariance);
-
-        // pick a z-score
         double z = getZScoreForConfidence(0.95);
-
         double margin = z * stdError;
+
         double lower = finalEstimate - margin;
         double upper = finalEstimate + margin;
 
