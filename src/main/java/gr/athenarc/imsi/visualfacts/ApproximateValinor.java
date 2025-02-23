@@ -143,7 +143,7 @@ public class ApproximateValinor {
                 if (measureCol0 != null) {
                     Double value0 = Double.parseDouble(row[measureCol0]);
                     Double value1 = 0d;
-                    node.adjustStats(value0, value1);
+                    // node.adjustStats(value0, value1);
                 }
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
@@ -477,9 +477,9 @@ public class ApproximateValinor {
 
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         queryNode.addSampleValue(measureValue0);
-                        if (queryNode.isFullyContained()) {
-                            queryNode.getNode().adjustStats(measureValue0, 0d);
-                        }
+                        // if (queryNode.isFullyContained()) {
+                        //     queryNode.getNode().adjustStats(measureValue0, 0d);
+                        // }
                     }
                 }
             } catch (Exception e) {
