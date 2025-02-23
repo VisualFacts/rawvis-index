@@ -292,9 +292,9 @@ public class ApproximateValinor {
         } while (maxErrorBound > errorThreshold);
 
         // Iterate over fully contained query nodes without stats and set their TreeNode's sampled tracker for using in future queries. Their stats have been updated in the readFromFile method
-        fullyContainedNodesWithoutStats.forEach(queryNode -> {
-            queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
-        });
+        // fullyContainedNodesWithoutStats.forEach(queryNode -> {
+        //     queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
+        // });
 
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
