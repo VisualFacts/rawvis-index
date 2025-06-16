@@ -107,7 +107,29 @@ public class Veti {
         long rowOffset = parser.getContext().currentChar() - 1;
         while ((row = parser.parseNext()) != null) {
             try {
-                Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+                // Parse x and y coordinates from the row
+                float x = Float.parseFloat(row[schema.getxColumn()]);
+                float y = Float.parseFloat(row[schema.getyColumn()]);
+                
+                // Prepare measure values
+                float measure0Value = 0f;
+                float measure1Value = 0f;
+                
+                if (measureCol0 != null) {
+                    measure0Value = Float.parseFloat(row[measureCol0]);
+                    if (measureCol1 != null) {
+                        measure1Value = Float.parseFloat(row[measureCol1]);
+                    }
+                }
+                
+                // Collect categorical values
+                List<String> categoricalValues = new ArrayList<>();
+                for (CategoricalColumn categoricalColumn : categoricalColumns) {
+                    categoricalValues.add(row[categoricalColumn.getIndex()]);
+                }
+                
+                // Create the point with all values
+                Point point = new Point(x, y, rowOffset, measure0Value, measure1Value, categoricalValues);
 
                 TreeNode node = this.grid.addPoint(point, row);
                 if (node == null) {
@@ -115,13 +137,11 @@ public class Veti {
                 }
 
                 if (measureCol0 != null) {
-                    Float value0 = Float.parseFloat(row[measureCol0]);
-                    Float value1 = 0f;
-                    if (measureCol1 != null) {
-                        value1 = Float.parseFloat(row[measureCol1]);
-                    }
+                    Float value0 = (float) measure0Value;
+                    Float value1 = (float) measure1Value;
                     node.adjustStats(value0, value1);
                 }
+                
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug(point);
@@ -298,33 +318,51 @@ public class Veti {
                             queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
                         }
 
-                        points.add(new Object[]{point.getY(), point.getX(), point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});                    }
+                        points.add(new Object[]{point.getY(), point.getX(), 1, point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});                    }
                 }
             } catch (Exception e) {
                 LOG.debug(e);
             }
         }
+
         for (QueryNode queryNode : nonRawNodes) {
-            for (Point point : queryNode) {
-                // Create appropriate measure values and categorical values for nonRawNodes
-                Float measureValue0 = null;
-                Float measureValue1 = null;
-                if (queryNode.getNode().hasStats()) {
-                    PairedStatsAccumulator stats = queryNode.getNode().getStats();
-                    // Use mean values from stats as approximation
-                    measureValue0 = (float) stats.xStats().mean();
-                    measureValue1 = (float) stats.yStats().mean();
-                }
-                ImmutableList<String> groupByValuesList = null;
-                if (groupByColumns != null && !groupByColumns.isEmpty()) {
-                    Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
-                    groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
-                            categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()))
-                    ).collect(ImmutableList.toImmutableList());
-                }
-                
-                points.add(new Object[]{point.getY(), point.getX(), point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});
+            List<Point> nodePoints = queryNode.getNode().getPoints();
+            Float measureValue0 = null;
+            Float measureValue1 = null;
+            if (queryNode.getNode().hasStats()) {
+                PairedStatsAccumulator stats = queryNode.getNode().getStats();
+                // Use mean values from stats as approximation
+                measureValue0 = (float) stats.xStats().mean();
+                measureValue1 = (float) stats.yStats().mean();
             }
+            ImmutableList<String> groupByValuesList = null;
+            if (groupByColumns != null && !groupByColumns.isEmpty()) {
+                Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
+                groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
+                        categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()))
+                ).collect(ImmutableList.toImmutableList());
+            }
+            points.add(new Object[]{nodePoints.get(0).getY(), nodePoints.get(0).getX(), nodePoints.size(), null, measureValue0, measureValue1, groupByValuesList});
+
+            // for (Point point : nodePoints) {
+            //     // Create appropriate measure values and categorical values for nonRawNodes
+            //     Float measureValue0 = null;
+            //     Float measureValue1 = null;
+            //     if (queryNode.getNode().hasStats()) {
+            //         PairedStatsAccumulator stats = queryNode.getNode().getStats();
+            //         // Use mean values from stats as approximation
+            //         measureValue0 = (float) stats.xStats().mean();
+            //         measureValue1 = (float) stats.yStats().mean();
+            //     }
+            //     ImmutableList<String> groupByValuesList = null;
+            //     if (groupByColumns != null && !groupByColumns.isEmpty()) {
+            //         Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
+            //         groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
+            //                 categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()))
+            //         ).collect(ImmutableList.toImmutableList());
+            //     }
+            //     points.add(new Object[]{point.getY(), point.getX(), point.getFileOffset(), point.getMeasure0(), point.getMeasure1(), point.getCategoricalValues()});
+            // }
         }
 
         for (QueryNode queryNode : nodesToExpand) {
