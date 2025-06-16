@@ -165,7 +165,7 @@ public class Veti {
         List<NodePointsIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        List<float[]> points = new ArrayList<>();
+        List<Object[]> points = new ArrayList<>();
 
         int fullyContainedTilesCount = 0;
 
@@ -249,7 +249,6 @@ public class Veti {
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
-            points.add(new float[]{point.getY(), point.getX()});
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
@@ -298,22 +297,40 @@ public class Veti {
                         if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
                             queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
                         }
-                    }
+
+                        points.add(new Object[]{point.getY(), point.getX(), point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});                    }
                 }
             } catch (Exception e) {
                 LOG.debug(e);
             }
         }
-        for (QueryNode node : nonRawNodes) {
-            for (Point point : node) {
-                points.add(new float[]{point.getY(), point.getX()});
+        for (QueryNode queryNode : nonRawNodes) {
+            for (Point point : queryNode) {
+                // Create appropriate measure values and categorical values for nonRawNodes
+                Float measureValue0 = null;
+                Float measureValue1 = null;
+                if (queryNode.getNode().hasStats()) {
+                    PairedStatsAccumulator stats = queryNode.getNode().getStats();
+                    // Use mean values from stats as approximation
+                    measureValue0 = (float) stats.xStats().mean();
+                    measureValue1 = (float) stats.yStats().mean();
+                }
+                ImmutableList<String> groupByValuesList = null;
+                if (groupByColumns != null && !groupByColumns.isEmpty()) {
+                    Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
+                    groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
+                            categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()))
+                    ).collect(ImmutableList.toImmutableList());
+                }
+                
+                points.add(new Object[]{point.getY(), point.getX(), point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});
             }
         }
 
         for (QueryNode queryNode : nodesToExpand) {
             queryNode.getNode().convertToNonleaf();
         }
-
+        
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
