@@ -129,7 +129,8 @@ public class Veti {
                 }
                 
                 // Create the point with all values
-                Point point = new Point(x, y, rowOffset, measure0Value, measure1Value, categoricalValues);
+                // Point point = new Point(x, y, rowOffset, measure0Value, measure1Value, categoricalValues);
+                Point point = new Point(x, y, rowOffset);
 
                 TreeNode node = this.grid.addPoint(point, row);
                 if (node == null) {
@@ -274,9 +275,15 @@ public class Veti {
                 line = randomAccessReader.readLine();
                 Float measureValue0 = null;
                 Float measureValue1 = null;
+                if(line == null) {
+                    LOG.warn("Line at offset {} is null, skipping point: {}", point.getFileOffset(), point);
+                    continue;
+                }   
                 if (line != null) {
+                    LOG.info("Reading line at offset {}: {}", point.getFileOffset(), line);
                     row = parser.parseLine(line);
                     if (row != null) {
+                        LOG.info("Processing row: {}", Arrays.toString(row));
                         if (measureCol0 != null && row[measureCol0] != null) {
                             measureValue0 = Float.parseFloat(row[measureCol0]);
                             if (measureCol1 == null) {
@@ -313,12 +320,12 @@ public class Veti {
                                             categoricalColumn.getValue(queryNode.getGroupByValues().get(categoricalColumn.getIndex())) :
                                             finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
                         }
+                        points.add(new Object[]{point.getY(), point.getX(), 1, point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});                   
 
                         if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
                             queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
                         }
-
-                        points.add(new Object[]{point.getY(), point.getX(), 1, point.getFileOffset(), measureValue0, measureValue1, groupByValuesList});                    }
+                    }
                 }
             } catch (Exception e) {
                 LOG.debug(e);
@@ -329,6 +336,14 @@ public class Veti {
             List<Point> nodePoints = queryNode.getNode().getPoints();
             Float measureValue0 = null;
             Float measureValue1 = null;
+            // float sumX = 0;
+            // float sumY = 0;
+            // for (Point point : nodePoints) {
+            //     sumX += point.getX();
+            //     sumY += point.getY();
+            // }
+            // float centroidX = nodePoints.isEmpty() ? 0 : sumX / nodePoints.size();
+            // float centroidY = nodePoints.isEmpty() ? 0 : sumY / nodePoints.size();
             if (queryNode.getNode().hasStats()) {
                 PairedStatsAccumulator stats = queryNode.getNode().getStats();
                 // Use mean values from stats as approximation
@@ -343,7 +358,6 @@ public class Veti {
                 ).collect(ImmutableList.toImmutableList());
             }
             points.add(new Object[]{nodePoints.get(0).getY(), nodePoints.get(0).getX(), nodePoints.size(), null, measureValue0, measureValue1, groupByValuesList});
-
             // for (Point point : nodePoints) {
             //     // Create appropriate measure values and categorical values for nonRawNodes
             //     Float measureValue0 = null;

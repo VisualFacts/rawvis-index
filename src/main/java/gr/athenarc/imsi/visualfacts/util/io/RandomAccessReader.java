@@ -54,7 +54,6 @@ public class RandomAccessReader extends RandomAccessFile {
         return new RandomAccessReader(file, bufferSize);
     }
 
-
     /**
      * Read data from file starting from current currentOffset to populate buffer.
      *
