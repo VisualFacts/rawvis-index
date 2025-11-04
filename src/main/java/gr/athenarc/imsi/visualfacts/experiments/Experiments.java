@@ -36,12 +36,15 @@ import gr.athenarc.imsi.visualfacts.TreeNode;
 import gr.athenarc.imsi.visualfacts.Veti;
 import gr.athenarc.imsi.visualfacts.config.IndexConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DataValidationFilterConverter;
+import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
+import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
 import gr.athenarc.imsi.visualfacts.experiments.util.FilterConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.RangeConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.RectangleConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
+import gr.athenarc.imsi.visualfacts.query.InitQuery;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 
@@ -74,7 +77,8 @@ public class Experiments {
     private String outFile;
     @Parameter(names = "-initMode")
     private String initMode;
-
+    @Parameter(names= "-duckDbMode")
+    private String duckDbMode;
     @Parameter(names = "-bounds", converter = RectangleConverter.class, description = "Grid boundaries")
     private Rectangle bounds;
     @Parameter(names = "-seqCount", description = "Number of queries in the sequence")
@@ -95,8 +99,11 @@ public class Experiments {
     private boolean measureMaxDepth = false;
     @Parameter(names = "-rect", converter = RectangleConverter.class, description = "Rectangle")
     private Rectangle rect = null;
-    @Parameter(names = "-measureCol", description = "The measure column")
-    private Integer measureCol;
+    @Parameter(names = "-measureCol0", description = "The measure column")
+    private Integer measureCol0;
+    @Parameter(names = "-measureCol1", description = "The second measure column")
+    private Integer measureCol1;
+
     @Parameter(names = "-groupBy", description = "Group by col")
     private Integer groupBy;
     @Parameter(names = "-filters", converter = FilterConverter.class, description = "Q0 Filters")
@@ -150,6 +157,10 @@ public class Experiments {
                 break;
             case "timeApproximateQueries":
                 timeApproximateQueries();
+                break;
+            case "timeDuckDBQueries":
+                Preconditions.checkNotNull(duckDbMode, "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
+                timeDuckDBQueries();
                 break;
             case "findBounds":
                 findBounds();
@@ -226,7 +237,7 @@ public class Experiments {
         int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
 
         csv = "NO CSV";
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
                 bounds, objCount, validationFilters);
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
@@ -240,7 +251,7 @@ public class Experiments {
         Stopwatch stopwatch = Stopwatch.createUnstarted();
         stopwatch.start();
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0);
         veti.generateGrid(q0);
         stopwatch.stop();
 
@@ -278,7 +289,7 @@ public class Experiments {
         if (csv != null)
             schema = getSchemaWithSampling();
         else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
                     bounds, objCount, validationFilters);
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
@@ -289,7 +300,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0);
         veti.generateGrid(q0);
 
         if (addHeader) {
@@ -330,7 +341,7 @@ public class Experiments {
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
         veti.setSort(sort);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol0);
         veti.initialize(q0);
         stopwatch.stop();
 
@@ -384,7 +395,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCol);
+        InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCol0, measureCol1);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
@@ -441,7 +452,7 @@ public class Experiments {
 
         ApproximateValinor index = new ApproximateValinor(schema, errorBound);
 
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol);
+        InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0, measureCol1);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
@@ -479,7 +490,7 @@ public class Experiments {
     }
 
     private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol, null,
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
                 bounds, objCount, validationFilters);
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
@@ -504,7 +515,7 @@ public class Experiments {
         return schema;
     }
 
-    private List<Query> generateQuerySequence(Query q0, Schema schema) {
+    private List<Query> generateQuerySequence(InitQuery q0, Schema schema) {
         Preconditions.checkNotNull(seqCount, "No sequence count specified.");
         Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
         Preconditions.checkNotNull(maxShift, "Max query shift must be specified.");
@@ -513,6 +524,94 @@ public class Experiments {
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
                 maxFilters, zoomFactor);
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
+    }
+
+    private void timeDuckDBQueries() throws IOException {
+        Preconditions.checkNotNull(csv, "You must define the csv file.");
+        Preconditions.checkNotNull(outFile, "No out file specified.");
+
+        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
+        boolean addHeader = new File(outFile).length() == 0;
+        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
+        
+        if (addHeader) {
+            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query");
+        }
+
+        try {
+            // Parse x and y column indices
+            int xColIdx = Integer.parseInt(xCol);
+            int yColIdx = Integer.parseInt(yCol);
+
+            // Generate query sequence
+            Schema dummySchema = new Schema(csv, DELIMITER, xColIdx, yColIdx, measureCol0, measureCol1,
+                    bounds, objCount, validationFilters);
+            InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0, measureCol1);
+            List<Query> sequence = generateQuerySequence(q0, dummySchema);
+            
+            // Determine execution mode
+            DuckDBQueryExecutor.ExecutionMode mode = parseExecutionMode(duckDbMode);
+            
+            // Format column indices as zero-padded strings (e.g., "05" instead of "5")
+            String xColStr = String.format("%02d", xColIdx);
+            String yColStr = String.format("%02d", yColIdx);
+            // Create DuckDB executor with the appropriate mode
+            DuckDBQueryExecutor executor = new DuckDBQueryExecutor(csv, mode, "column" + xColStr, "column" + yColStr);
+            
+            // Log initialization timing metrics
+            long tableCreationTimeMs = executor.getTableCreationTimeNanos() / 1_000_000;
+            long indexCreationTimeMs = executor.getIndexCreationTimeNanos() / 1_000_000;
+            LOG.info("DuckDB initialization timings - Mode: {}, Table creation: {}ms, Index creation: {}ms", 
+                     duckDbMode, tableCreationTimeMs, indexCreationTimeMs);
+            
+            LOG.info("Executing DuckDB queries in {} mode", duckDbMode);
+            
+            for (int i = 0; i < sequence.size(); i++) {
+                Query query = sequence.get(i);
+                LOG.debug("Executing query {}", i);
+                try {
+                    QueryResult result = executor.executeQuery(query);
+                    
+                    csvWriter.addValue(csv);
+                    csvWriter.addValue(duckDbMode); 
+                    csvWriter.addValue(i);
+                    csvWriter.addValue(result.getRowCount());
+                    csvWriter.addValue(result.getExecutionTimeSeconds());
+                    csvWriter.addValue(result.getQuery());
+                    csvWriter.writeValuesToRow();
+                } catch (Exception e) {
+                    LOG.warn("Error executing query {}: {}", i, e.getMessage());
+                    csvWriter.addValue(csv);
+                    csvWriter.addValue(duckDbMode);
+                    csvWriter.addValue(i);
+                    csvWriter.addValue(-1);
+                    csvWriter.addValue(-1);
+                    csvWriter.addValue("ERROR: " + e.getMessage());
+                    csvWriter.writeValuesToRow();
+                }
+            }
+            executor.close();
+            csvWriter.close();
+            LOG.info("DuckDB query execution completed");
+            
+        } catch (Exception e) {
+            LOG.error("Fatal error in timeDuckDBQueries", e);
+            csvWriter.close();
+            throw new IOException(e);
+        }
+    }
+
+    private DuckDBQueryExecutor.ExecutionMode parseExecutionMode(String mode) {
+        switch(mode) {
+            case "directCSV":
+                return DuckDBQueryExecutor.ExecutionMode.DIRECT_CSV;
+            case "table":
+                return DuckDBQueryExecutor.ExecutionMode.TABLE;
+            case "spatialIndex":
+                return DuckDBQueryExecutor.ExecutionMode.SPATIAL_INDEX;
+            default:
+                throw new IllegalArgumentException("Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, spatialIndex");
+        }
     }
 
 }
