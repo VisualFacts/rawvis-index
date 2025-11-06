@@ -14,16 +14,16 @@ public class Query {
 
     private List<Integer> groupByCols;
 
-    private Integer measureCol;
+    private List<Integer> measureCols;
 
     public Query() {
     }
 
-    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols, Integer measureCol) {
+    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols, List<Integer> measureCols) {
         this.rect = rect;
         this.categoricalFilters = categoricalFilters;
         this.groupByCols = groupByCols;
-        this.measureCol = measureCol;
+        this.measureCols = measureCols;
     }
 
     public Rectangle getRect() {
@@ -50,12 +50,12 @@ public class Query {
         this.groupByCols = groupByCols;
     }
 
-    public Integer getMeasureCol() {
-        return measureCol;
+    public List<Integer> getMeasureCols() {
+        return measureCols;
     }
 
-    public void setMeasureCol(Integer measureCol) {
-        this.measureCol = measureCol;
+    public void setMeasureCols(List<Integer> measureCols) {
+        this.measureCols = measureCols;
     }
 
     @Override
@@ -64,7 +64,7 @@ public class Query {
                 "rect=" + rect +
                 ", categoricalFilters=" + categoricalFilters +
                 ", groupByCols=" + groupByCols +
-                ", measureCol=" + measureCol +
+                ", measureCols=" + measureCols +
                 '}';
     }
 }

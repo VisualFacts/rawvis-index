@@ -2,7 +2,6 @@ package gr.athenarc.imsi.visualfacts;
 
 import com.univocity.parsers.csv.CsvParserSettings;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -14,8 +13,7 @@ public class Schema {
     private boolean hasHeader = false;
     private final int xColumn;
     private final int yColumn;
-    private final Integer measureCol0;
-    private final Integer measureCol1;
+    private final List<Integer> measureCols;
     private final Rectangle bounds;
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Character delimiter = ',';
@@ -23,13 +21,12 @@ public class Schema {
 
     private List<DataValidationFilter> validationFilters;
 
-    public Schema(String csv, Character delimiter, int xColumn, int yColumn, Integer measureCol0, Integer measureCol1, Rectangle bounds, int objectCount, List<DataValidationFilter> validationFilters) {
+    public Schema(String csv, Character delimiter, int xColumn, int yColumn, List<Integer> measureCols, Rectangle bounds, int objectCount, List<DataValidationFilter> validationFilters) {
         this.csv = csv;
         this.delimiter = delimiter;
         this.xColumn = xColumn;
         this.yColumn = yColumn;
-        this.measureCol0 = measureCol0;
-        this.measureCol1 = measureCol1;
+        this.measureCols = measureCols;
         this.bounds = bounds;
         this.objectCount = objectCount;
         this.validationFilters = validationFilters;
@@ -64,12 +61,8 @@ public class Schema {
         return yColumn;
     }
 
-    public Integer getMeasureCol0() {
-        return measureCol0;
-    }
-
-    public Integer getMeasureCol1() {
-        return measureCol1;
+    public List<Integer> getMeasureCols() {
+        return measureCols;
     }
 
     public List<CategoricalColumn> getCategoricalColumns() {
@@ -111,8 +104,7 @@ public class Schema {
                 ", hasHeader=" + hasHeader +
                 ", xColumn=" + xColumn +
                 ", yColumn=" + yColumn +
-                ", measureCol0=" + measureCol0 +
-                ", measureCol1=" + measureCol1 +
+                ", measureCols=" + measureCols +
                 ", bounds=" + bounds +
                 ", categoricalColumns=" + categoricalColumns +
                 ", delimiter=" + delimiter +

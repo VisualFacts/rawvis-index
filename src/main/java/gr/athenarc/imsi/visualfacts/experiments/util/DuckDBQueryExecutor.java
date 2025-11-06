@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import com.google.common.collect.Range;
 
@@ -104,7 +105,7 @@ public class DuckDBQueryExecutor {
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET memory_limit = '8GB'");
             String createTableQuery = String.format(
-                "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s');",
+                "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', ignore_errors = true);",
                 tableName, csvPath
             );
             LOG.info("Creating table from CSV: {}", createTableQuery);
@@ -127,7 +128,7 @@ public class DuckDBQueryExecutor {
             stmt.execute("SET memory_limit = '8GB'");
             // Create table from CSV with geometry column in a single statement
             String createTableWithGeomQuery = String.format(
-                "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s');",
+                "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', ignore_errors = true);",
                 tableName, xCol, yCol, csvPath
             );
             LOG.info("Creating table from CSV with geometry column: {}", createTableWithGeomQuery);
@@ -175,14 +176,14 @@ public class DuckDBQueryExecutor {
 
         LOG.info("Executing query in {} mode", mode);
         List<Range<Float>> ranges = extractRangesFromQuery(query);
-        String measureColString = "column" + String.format("%02d", query.getMeasureCol());
+        List<String> measureColsString = query.getMeasureCols().stream().map(col ->  "column" + String.format("%02d", col)).collect(Collectors.toList());
         switch(mode) {
             case DIRECT_CSV:
-                return executeQueryDirectCSV(ranges, measureColString, xCol, yCol);
+                return executeQueryDirectCSV(ranges, measureColsString, xCol, yCol);
             case TABLE:
-                return executeQueryWithTable(ranges, measureColString, xCol, yCol);
+                return executeQueryWithTable(ranges, measureColsString, xCol, yCol);
             case SPATIAL_INDEX:
-                return executeQueryWithSpatialIndex(ranges, measureColString, xCol, yCol);
+                return executeQueryWithSpatialIndex(ranges, measureColsString, xCol, yCol);
             default:
                 throw new IllegalArgumentException("Unknown execution mode: " + mode);
         }
@@ -191,9 +192,9 @@ public class DuckDBQueryExecutor {
     /**
      * Version 1: Run query directly on CSV file
      */
-    public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, String aggCol, String xCol, String yCol) throws Exception {
+    public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol) throws Exception {
 
-        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCol, xCol, yCol);
+        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, xCol, yCol);
 
         LOG.debug("Executing direct CSV query: {}", query);
         return executeQueryWithTiming(query);
@@ -202,8 +203,8 @@ public class DuckDBQueryExecutor {
     /**
      * Version 2: Run query on pre-created table
      */
-    public QueryResult executeQueryWithTable(List<Range<Float>> ranges,  String aggCol, String xCol, String yCol) throws Exception {
-        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCol, xCol, yCol);
+    public QueryResult executeQueryWithTable(List<Range<Float>> ranges,  List<String> aggCols, String xCol, String yCol) throws Exception {
+        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, xCol, yCol);
 
         LOG.debug("Executing table query: {}", query);
         return executeQueryWithTiming(query);
@@ -212,8 +213,8 @@ public class DuckDBQueryExecutor {
     /**
      * Version 3: Run query on table with spatial R-tree index
      */
-    public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, String aggCol, String xCol, String yCol) throws Exception {
-        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCol);
+    public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol) throws Exception {
+        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols);
 
         LOG.debug("Executing spatial index query: {}", query);
         return executeQueryWithTiming(query);

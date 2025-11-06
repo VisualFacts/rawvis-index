@@ -44,7 +44,6 @@ import gr.athenarc.imsi.visualfacts.experiments.util.RangeConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.RectangleConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
-import gr.athenarc.imsi.visualfacts.query.InitQuery;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 
@@ -99,10 +98,8 @@ public class Experiments {
     private boolean measureMaxDepth = false;
     @Parameter(names = "-rect", converter = RectangleConverter.class, description = "Rectangle")
     private Rectangle rect = null;
-    @Parameter(names = "-measureCol0", description = "The measure column")
-    private Integer measureCol0;
-    @Parameter(names = "-measureCol1", description = "The second measure column")
-    private Integer measureCol1;
+    @Parameter(names = "-measureCols", description = "The measure columns")
+    private List<Integer> measureCols;
 
     @Parameter(names = "-groupBy", description = "Group by col")
     private Integer groupBy;
@@ -237,7 +234,7 @@ public class Experiments {
         int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
 
         csv = "NO CSV";
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
                 bounds, objCount, validationFilters);
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
         for (int i = 0; i < categoricalCols.size(); i++) {
@@ -251,7 +248,7 @@ public class Experiments {
         Stopwatch stopwatch = Stopwatch.createUnstarted();
         stopwatch.start();
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
         veti.generateGrid(q0);
         stopwatch.stop();
 
@@ -289,7 +286,7 @@ public class Experiments {
         if (csv != null)
             schema = getSchemaWithSampling();
         else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
+            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
                     bounds, objCount, validationFilters);
             List<CategoricalColumn> categoricalColumns = new ArrayList<>();
             for (int i = 0; i < categoricalCols.size(); i++) {
@@ -300,7 +297,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
         veti.generateGrid(q0);
 
         if (addHeader) {
@@ -341,7 +338,7 @@ public class Experiments {
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
         veti.setSort(sort);
 
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCol0);
+        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCols);
         veti.initialize(q0);
         stopwatch.stop();
 
@@ -395,7 +392,7 @@ public class Experiments {
 
         Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
 
-        InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCol0, measureCol1);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCols);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
@@ -452,7 +449,7 @@ public class Experiments {
 
         ApproximateValinor index = new ApproximateValinor(schema, errorBound);
 
-        InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0, measureCol1);
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         for (int i = 0; i < sequence.size(); i++) {
@@ -490,7 +487,7 @@ public class Experiments {
     }
 
     private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCol0, measureCol1,
+        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
                 bounds, objCount, validationFilters);
 
         List<CategoricalColumn> categoricalColumns = new ArrayList<>();
@@ -515,7 +512,7 @@ public class Experiments {
         return schema;
     }
 
-    private List<Query> generateQuerySequence(InitQuery q0, Schema schema) {
+    private List<Query> generateQuerySequence(Query q0, Schema schema) {
         Preconditions.checkNotNull(seqCount, "No sequence count specified.");
         Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
         Preconditions.checkNotNull(maxShift, "Max query shift must be specified.");
@@ -544,9 +541,9 @@ public class Experiments {
             int yColIdx = Integer.parseInt(yCol);
 
             // Generate query sequence
-            Schema dummySchema = new Schema(csv, DELIMITER, xColIdx, yColIdx, measureCol0, measureCol1,
+            Schema dummySchema = new Schema(csv, DELIMITER, xColIdx, yColIdx, measureCols,
                     bounds, objCount, validationFilters);
-            InitQuery q0 = new InitQuery(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCol0, measureCol1);
+            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
             List<Query> sequence = generateQuerySequence(q0, dummySchema);
             
             // Determine execution mode

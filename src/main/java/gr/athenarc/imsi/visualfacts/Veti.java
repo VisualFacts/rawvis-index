@@ -90,9 +90,9 @@ public class Veti {
         LOG.debug("Validation filters: " + validationFilters);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
-
-        Integer measureCol0 = schema.getMeasureCol0();
-        Integer measureCol1 = schema.getMeasureCol1();
+        // TODO: FIX THIS TO BE MULTIVAR
+        Integer measureCol0 = schema.getMeasureCols().get(0);
+        Integer measureCol1 = schema.getMeasureCols().get(1);
         if (measureCol0 != null) {
             colIndexes.add(measureCol0);
             if (measureCol1 != null) {
@@ -256,8 +256,9 @@ public class Veti {
 
         List<Integer> cols = new ArrayList<>();
 
-        Integer measureCol0 = schema.getMeasureCol0();
-        Integer measureCol1 = schema.getMeasureCol1();
+        // TODO: FIX THIS TO BE MULTIVAR
+        Integer measureCol0 = schema.getMeasureCols().get(0);
+        Integer measureCol1 = schema.getMeasureCols().get(1);
         if (measureCol0 != null) {
             cols.add(measureCol0);
             if (measureCol1 != null) {

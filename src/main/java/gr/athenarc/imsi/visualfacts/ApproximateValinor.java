@@ -93,7 +93,8 @@ public class ApproximateValinor {
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
 
-        Integer measureCol0 = schema.getMeasureCol0();
+        // TODO: FIX THIS TO BE MULTIVAR
+        Integer measureCol0 = schema.getMeasureCols().get(0);
         if (measureCol0 != null) {
             colIndexes.add(measureCol0);
         }
@@ -233,7 +234,8 @@ public class ApproximateValinor {
 
         List<Integer> cols = new ArrayList<>();
 
-        Integer measureCol0 = schema.getMeasureCol0();
+        // TODO: FIX THIS TO BE MULTIVAR
+        Integer measureCol0 = schema.getMeasureCols().get(0);
         if (measureCol0 != null) {
             cols.add(measureCol0);
         }

@@ -39,10 +39,35 @@ public class SQLQueryGenerator {
         return query;
     }
 
+    /**
+     * Generate a uni-variate aggregation query for a single aggregation column (backwards compatible).
+     */
     public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, String aggCol, String... cols) {
-        String query = "select ";
-        query += "count(" + aggCol + ") as count, min(" + aggCol + ") as min, max(" + aggCol + ") as max, sum(" + aggCol + ") as sum, avg(" + aggCol + ") as avg, sum(" + aggCol + " * " + aggCol + ") as sum_of_squares  from " + tableName + " where " + generateWhereClause(ranges, cols) + ";";
-        return query;
+        return getSQLUniAggQuery(tableName, ranges, java.util.Arrays.asList(aggCol), cols);
+    }
+
+    /**
+     * Generate a uni-variate aggregation query for multiple aggregation columns.
+     * For each aggregation column we produce count/min/max/sum/avg/sum_of_squares with distinct aliases.
+     */
+    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, String... cols) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("select ");
+        String sep = "";
+        for (String aggCol : aggCols) {
+            // sanitize alias part by replacing non-alphanumeric with underscore
+            String aliasBase = aggCol.replaceAll("[^A-Za-z0-9]", "_");
+            sb.append(sep)
+              .append("count(").append(aggCol).append(") as count_").append(aliasBase).append(", ")
+              .append("min(").append(aggCol).append(") as min_").append(aliasBase).append(", ")
+              .append("max(").append(aggCol).append(") as max_").append(aliasBase).append(", ")
+              .append("sum(").append(aggCol).append(") as sum_").append(aliasBase).append(", ")
+              .append("avg(").append(aggCol).append(") as avg_").append(aliasBase).append(", ")
+              .append("sum(").append(aggCol).append(" * ").append(aggCol).append(") as sum_of_squares_").append(aliasBase);
+            sep = ", ";
+        }
+        sb.append(" from ").append(tableName).append(" where ").append(generateWhereClause(ranges, cols)).append(";");
+        return sb.toString();
     }
 
     /**
@@ -54,27 +79,47 @@ public class SQLQueryGenerator {
      * @param aggCol    the aggregation column
      * @return a spatial range query using geometry and R-tree index
      */
+    /**
+     * DuckDB-specific spatial query for one aggregation column (backwards compatible).
+     */
     public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, String aggCol) {
+        return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, java.util.Arrays.asList(aggCol));
+    }
+
+    /**
+     * DuckDB-specific spatial query for multiple aggregation columns.
+     * Uses ST_Within with ST_MakeEnvelope to leverage the R-tree index on the geometry column.
+     */
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, java.util.List<String> aggCols) {
         if (ranges.size() < 2) {
             throw new IllegalArgumentException("Spatial queries require at least 2 ranges (x and y)");
         }
-        
+
         Range<Float> xRange = ranges.get(0);
         Range<Float> yRange = ranges.get(1);
-        
-        String query = "SELECT count(" + aggCol + ") as count, " +
-                      "min(" + aggCol + ") as min, " +
-                      "max(" + aggCol + ") as max, " +
-                      "sum(" + aggCol + ") as sum, " +
-                      "avg(" + aggCol + ") as avg, " +
-                      "sum(" + aggCol + " * " + aggCol + ") as sum_of_squares " +
-                      "FROM " + tableName + " " +
-                      "WHERE ST_Within(geometry, ST_MakeEnvelope(" + 
-                      xRange.lowerEndpoint() + ", " + 
-                      yRange.lowerEndpoint() + ", " + 
-                      xRange.upperEndpoint() + ", " + 
-                      yRange.upperEndpoint() + "));";
-        return query;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("SELECT ");
+        String sep = "";
+        for (String aggCol : aggCols) {
+            String aliasBase = aggCol.replaceAll("[^A-Za-z0-9]", "_");
+            sb.append(sep)
+              .append("count(").append(aggCol).append(") as count_").append(aliasBase).append(", ")
+              .append("min(").append(aggCol).append(") as min_").append(aliasBase).append(", ")
+              .append("max(").append(aggCol).append(") as max_").append(aliasBase).append(", ")
+              .append("sum(").append(aggCol).append(") as sum_").append(aliasBase).append(", ")
+              .append("avg(").append(aggCol).append(") as avg_").append(aliasBase).append(", ")
+              .append("sum(").append(aggCol).append(" * ").append(aggCol).append(") as sum_of_squares_").append(aliasBase);
+            sep = ", ";
+        }
+        sb.append(" FROM ").append(tableName).append(" ")
+          .append("WHERE ST_Within(geometry, ST_MakeEnvelope(")
+          .append(xRange.lowerEndpoint()).append(", ")
+          .append(yRange.lowerEndpoint()).append(", ")
+          .append(xRange.upperEndpoint()).append(", ")
+          .append(yRange.upperEndpoint()).append("));");
+
+        return sb.toString();
     }
 
     public static String getSQLBiAggQuery(String tableName, List<Range<Float>> ranges, String aggCol1, String aggCol2, String... cols) {

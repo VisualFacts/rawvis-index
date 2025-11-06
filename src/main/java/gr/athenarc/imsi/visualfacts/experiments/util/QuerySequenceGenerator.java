@@ -4,7 +4,6 @@ import com.google.common.collect.Range;
 import gr.athenarc.imsi.visualfacts.CategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
-import gr.athenarc.imsi.visualfacts.query.InitQuery;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import org.apache.commons.math3.distribution.EnumeratedDistribution;
 import org.apache.commons.math3.util.Pair;
@@ -35,18 +34,16 @@ public class QuerySequenceGenerator {
         this.zoomFactor = zoomFactor;
     }
 
-    public List<Query> generateQuerySequence(InitQuery q0, int count, Schema schema) {
-        Query query0 = new Query(q0.getRect(), q0.getCategoricalFilters(), q0.getGroupByCols(), q0.getMeasureCol0());
-        Integer measureCol0 = q0.getMeasureCol0();
-        Integer measureCol1 = q0.getMeasureCol1();
+    public List<Query> generateQuerySequence(Query q0, int count, Schema schema) {
+
         Direction[] directions = Direction.getRandomDirections(count);
         int[] shifts = new Random(0).ints(count, minShift, maxShift + 1).toArray();
         int[] filterCounts = new Random(0).ints(count, minFilters, maxFilters + 1).toArray();
 
         List<Pair<CategoricalColumn, Double>> catColPairs = new ArrayList<>();
         for (CategoricalColumn categoricalColumn : schema.getCategoricalColumns()) {
-            if (query0.getGroupByCols() != null && !query0.getGroupByCols().isEmpty() && !query0.getGroupByCols().contains(categoricalColumn.getIndex())) {
-                catColPairs.add(new Pair<>(categoricalColumn, categoricalColumn.getScore(query0)));
+            if (q0.getGroupByCols() != null && !q0.getGroupByCols().isEmpty() && !q0.getGroupByCols().contains(categoricalColumn.getIndex())) {
+                catColPairs.add(new Pair<>(categoricalColumn, categoricalColumn.getScore(q0)));
             }
         }
         Random opRand = new Random(0);
@@ -60,8 +57,8 @@ public class QuerySequenceGenerator {
 
         Random randomFilterValueGen = new Random(0);
         List<Query> queries = new ArrayList<>();
-        queries.add(query0);
-        Query query = query0;
+        queries.add(q0);
+        Query query = q0;
         for (int i = 0; i < count - 1; i++) {
             UserOpType opType = ops.get(opRand.nextInt(ops.size()));
             Rectangle rect;
@@ -84,11 +81,11 @@ public class QuerySequenceGenerator {
                     filterCount--;
                 }
             }
-            int measureCol = measureCol0;
-            if(measureCol1 != null && i % 2 == 1) {
-                measureCol = measureCol1;
-            }
-            query = new Query(rect, filters, q0.getGroupByCols(), measureCol);
+            // generating the index using Math.random()
+            int index = (int)(Math.random() * q0.getMeasureCols().size());
+            List<Integer> measureCols2 = new ArrayList<>();
+            measureCols2.add(q0.getMeasureCols().get(index));
+            query = new Query(rect, filters, q0.getGroupByCols(), measureCols2);
             queries.add(query);
         }
         return queries;
