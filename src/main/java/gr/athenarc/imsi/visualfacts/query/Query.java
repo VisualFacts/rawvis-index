@@ -1,9 +1,10 @@
 package gr.athenarc.imsi.visualfacts.query;
 
-import gr.athenarc.imsi.visualfacts.Rectangle;
-
 import java.util.List;
 import java.util.Map;
+
+import gr.athenarc.imsi.visualfacts.Rectangle;
+import gr.athenarc.imsi.visualfacts.experiments.util.UserOpType;
 
 public class Query {
 
@@ -16,14 +17,27 @@ public class Query {
 
     private List<Integer> measureCols;
 
+    private UserOpType userOpType; // Added field to store the user operation
+
     public Query() {
     }
 
-    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols, List<Integer> measureCols) {
+    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols,
+            List<Integer> measureCols) {
         this.rect = rect;
         this.categoricalFilters = categoricalFilters;
         this.groupByCols = groupByCols;
         this.measureCols = measureCols;
+        this.userOpType = null; // Default to null for initial or ad hoc queries
+    }
+
+    public Query(Rectangle rect, Map<Integer, String> categoricalFilters, List<Integer> groupByCols,
+            List<Integer> measureCols, UserOpType userOpType) {
+        this.rect = rect;
+        this.categoricalFilters = categoricalFilters;
+        this.groupByCols = groupByCols;
+        this.measureCols = measureCols;
+        this.userOpType = userOpType;
     }
 
     public Rectangle getRect() {
@@ -58,10 +72,19 @@ public class Query {
         this.measureCols = measureCols;
     }
 
+    public UserOpType getUserOpType() {
+        return userOpType;
+    }
+
+    public void setUserOpType(UserOpType userOpType) {
+        this.userOpType = userOpType;
+    }
+
     @Override
     public String toString() {
         return "Query{" +
-                "rect=" + rect +
+                "op=" + userOpType +
+                ", rect=" + rect +
                 ", categoricalFilters=" + categoricalFilters +
                 ", groupByCols=" + groupByCols +
                 ", measureCols=" + measureCols +

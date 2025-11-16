@@ -1,6 +1,7 @@
 package gr.athenarc.imsi.visualfacts;
 
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -8,12 +9,12 @@ import java.util.Map;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import com.google.common.math.StatsAccumulator;
 
 public class QueryNode implements Iterable<Point> {
     private static final Logger LOG = LogManager.getLogger(QueryNode.class);
-
     private Map<Integer, Short> groupByValues;
     private TreeNode node;
     private Tile tile;
@@ -25,28 +26,35 @@ public class QueryNode implements Iterable<Point> {
     // BitSet for tracking which points are inside the query
     private BitSet queryPointsBitSet;
 
-    // Sampling-based statistics
-    private StatsAccumulator sampleStatsAcc;
+    // Sampling-based statistics for multiple measures
+    private Map<Integer, StatsAccumulator> sampleStatsAccumulators; //
     private BitSet sampledTracker;
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
-            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs) {
+            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs, Query query) {
         this.groupByValues = groupByValues;
         this.node = node;
         this.tile = tile;
         this.containmentExaminer = containmentExaminer;
         this.unknownCatAttrs = unknownCatAttrs;
 
-        // Initialize BitSet with the size of points in the node
-        if (node.getSampledTracker() != null && containmentExaminer == null) {
-            this.sampleStatsAcc = new StatsAccumulator();
-            this.sampleStatsAcc.addAll(node.getStats().xStats());
-            this.sampledTracker = node.getSampledTracker();
-        } else {
-            this.sampleStatsAcc = new StatsAccumulator();
-            this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+        // Initialize StatsAccumulators for each measure
+        this.sampleStatsAccumulators = new HashMap<>();
+        for (Integer measure : query.getMeasureCols()) {
+            this.sampleStatsAccumulators.put(measure, new StatsAccumulator());
         }
 
+        // Initialize BitSet with the size of points in the node
+        if (node.getSampledTracker() != null && containmentExaminer == null) {
+            // Add stats for each measure from the node's stats
+            for (Integer measure : query.getMeasureCols()) {
+                StatsAccumulator accumulator = sampleStatsAccumulators.get(measure);
+                accumulator.addAll(node.getStats(measure).snapshot());
+            }
+            this.sampledTracker = node.getSampledTracker();
+        } else {
+            this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+        }
         computeQueryIntersection();
     }
 
@@ -76,10 +84,9 @@ public class QueryNode implements Iterable<Point> {
         }
     }
 
-    public void addSampleValue(double value) {
-        sampleStatsAcc.add(value);
+    public void addSampleValue(int measureCol, double value) {
+        sampleStatsAccumulators.get(measureCol).add(value);
     }
-
     public Map<Integer, Short> getGroupByValues() {
         return groupByValues;
     }
@@ -108,8 +115,8 @@ public class QueryNode implements Iterable<Point> {
         return intersectionCount;
     }
 
-    public StatsAccumulator getSampleStatsAcc() {
-        return sampleStatsAcc;
+    public StatsAccumulator getSampleStatsAcc(int measureCol) {
+        return sampleStatsAccumulators.get(measureCol);
     }
 
     public BitSet getSampledTracker() {
@@ -125,7 +132,7 @@ public class QueryNode implements Iterable<Point> {
     public String toString() {
         return "QueryNode [node=" + node + ", tile=" + tile + ", containmentExaminer=" + containmentExaminer
                 + ", intersectionCount=" + intersectionCount + ", queryPointsBitSet=" + queryPointsBitSet
-                + ", sampleStatsAcc.count=" + sampleStatsAcc.count() + ", sampleStatsAcc.sum=" + sampleStatsAcc.sum()
+                + ", sampleStatsAccumulators=" + sampleStatsAccumulators
                 + ", sampledTracker=" + sampledTracker + "]";
     }
 

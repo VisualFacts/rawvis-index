@@ -2,7 +2,8 @@ package gr.athenarc.imsi.visualfacts;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
-import com.google.common.math.PairedStatsAccumulator;
+import com.google.common.math.Stats;
+import com.google.common.math.StatsAccumulator;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
@@ -64,6 +65,7 @@ public class Veti {
             initializationPolicy.setSort(sort);
         }
 
+        LOG.debug("Generating initial grid with size " + GRID_SIZE + "x" + GRID_SIZE);
 
         grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
         grid.split();
@@ -90,15 +92,7 @@ public class Veti {
         LOG.debug("Validation filters: " + validationFilters);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
-        // TODO: FIX THIS TO BE MULTIVAR
-        Integer measureCol0 = schema.getMeasureCols().get(0);
-        Integer measureCol1 = schema.getMeasureCols().get(1);
-        if (measureCol0 != null) {
-            colIndexes.add(measureCol0);
-            if (measureCol1 != null) {
-                colIndexes.add(measureCol1);
-            }
-        }
+        colIndexes.addAll(schema.getMeasureCols());
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
         parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
@@ -139,15 +133,11 @@ public class Veti {
                 if (node == null) {
                     continue;
                 }
-
-                if (measureCol0 != null) {
-                    Float value0 = Float.parseFloat(row[measureCol0]);
-                    Float value1 = 0f;
-                    if (measureCol1 != null) {
-                        value1 = Float.parseFloat(row[measureCol1]);
-                    }
-                    node.adjustStats(value0, value1);
+                for (Integer measureCol : schema.getMeasureCols()) {
+                    Float value = Float.parseFloat(row[measureCol]);
+                    node.adjustStats((short) (int) measureCol, value);
                 }
+                
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug(point);
@@ -182,7 +172,6 @@ public class Veti {
 
         List<CategoricalColumn> groupByColumns = null;
         if (query.getGroupByCols() != null) {
-            LOG.debug("query cat cols: " + query.getGroupByCols());
             groupByColumns = query.getGroupByCols().stream().map(index -> schema.getCategoricalColumn(index)).collect(Collectors.toList());
         }
 
@@ -215,7 +204,7 @@ public class Veti {
             int count = 0;
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
-                if ((!isFullyContained || !node.hasStats()) && node.getPoints() != null) {
+                if ((!isFullyContained || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(measureCol))) && node.getPoints() != null) {
                     count += node.getPoints().size();
                 }
             }
@@ -232,7 +221,6 @@ public class Veti {
                 //add unknown attrs for that node to cat attrs to read. These do not include only query attrs but also missing attrs in incomplete leaves
                 catAttrsToRead.addAll(queryNode.getUnknownCatAttrs());
 
-                PairedStatsAccumulator nodeStats = node.getStats();
                 Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
 
                 boolean hasUnknownAttrs = queryNode.getUnknownCatAttrs() != null && !queryNode.getUnknownCatAttrs().isEmpty();
@@ -242,11 +230,14 @@ public class Veti {
                 }
 
                 //todo unknownCatAttrs may not be empty but including only attrs missing from the node but not present in the query
-                if (isFullyContained && nodeStats != null && !hasUnknownAttrs) {
-                    queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null :
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(node::hasStats) && !hasUnknownAttrs) {
+                    ImmutableList<String> groupByValuesList = groupByColumns == null || groupByColumns.isEmpty() ? null :
                             groupByColumns.stream().map(categoricalColumn -> {
                                 return categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()));
-                            }).collect(ImmutableList.toImmutableList()), nodeStats.snapshot());
+                            }).collect(ImmutableList.toImmutableList());
+                            query.getMeasureCols().forEach(measureCol -> {
+                                queryResults.adjustStats(groupByValuesList, measureCol, queryNode.getNode().getStats(measureCol).snapshot());
+                            });
                     nonRawNodes.add(queryNode);
                 } else {
                     rawIterators.add(new NodePointsIterator(queryNode));
@@ -256,15 +247,7 @@ public class Veti {
 
         List<Integer> cols = new ArrayList<>();
 
-        // TODO: FIX THIS TO BE MULTIVAR
-        Integer measureCol0 = schema.getMeasureCols().get(0);
-        Integer measureCol1 = schema.getMeasureCols().get(1);
-        if (measureCol0 != null) {
-            cols.add(measureCol0);
-            if (measureCol1 != null) {
-                cols.add(measureCol1);
-            }
-        }
+        cols.addAll(schema.getMeasureCols());
         cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
 
         CsvParserSettings parserSettings = schema.createCsvParserSettings();
@@ -283,41 +266,37 @@ public class Veti {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Float measureValue0 = null;
-                Float measureValue1 = null;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
-                        if (measureCol0 != null && row[measureCol0] != null) {
-                            measureValue0 = Float.parseFloat(row[measureCol0]);
-                            if (measureCol1 == null) {
-                                measureValue1 = 0f;
-                            } else if (row[measureCol1] != null) {
-                                measureValue1 = Float.parseFloat(row[measureCol1]);
-                            }
-                        }
-
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         TreeNode node = queryNode.getNode();
 
+                        // Parse measure values once and store them in a temporary map
+                        Map<Integer, Float> measureValues = new HashMap<>();
+                        for (Integer measureCol : schema.getMeasureCols()) {
+                            measureValues.put(measureCol, Float.parseFloat(row[measureCol]));
+                        }
                         if (queryNode.isFullyContained()) {
-                            //we expand the node with unknown attrs
-                            if (!initMode.equals("valinor") && queryNode.getUnknownCatAttrs() != null && !queryNode.getUnknownCatAttrs().isEmpty()) {
+                            // we expand the node with unknown attrs
+                            if (!initMode.equals("valinor") && queryNode.getUnknownCatAttrs() != null
+                                    && !queryNode.getUnknownCatAttrs().isEmpty()) {
                                 for (CategoricalColumn unknownAttr : queryNode.getUnknownCatAttrs()) {
                                     node = node.getOrAddChild(unknownAttr.getValueKey(row[unknownAttr.getIndex()]));
                                 }
                                 node.addPoint(point);
-                                if (measureValue0 != null && measureValue1 != null) {
-                                    node.adjustStats(measureValue0, measureValue1);
+                                for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
+                                    node.adjustStats(entry.getKey().shortValue(), entry.getValue());
                                 }
-                            } else if (queryNode.getUnknownCatAttrs() == null || queryNode.getUnknownCatAttrs().isEmpty()) {
-                                if (measureValue0 != null && measureValue1 != null) {
-                                    queryNode.getNode().adjustStats(measureValue0, measureValue1);
+                            } else if (queryNode.getUnknownCatAttrs() == null
+                                    || queryNode.getUnknownCatAttrs().isEmpty()) {
+                                for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
+                                    node.adjustStats(entry.getKey().shortValue(), entry.getValue());
                                 }
                             }
                         }
                         ImmutableList<String> groupByValuesList = null;
-                        if (query.getGroupByCols() != null) {
+                        if (query.getGroupByCols() != null & !query.getGroupByCols().isEmpty()) {
                             String[] finalRow = row;
                             groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
                                     queryNode.getGroupByValues().containsKey(categoricalColumn.getIndex()) ?
@@ -325,8 +304,10 @@ public class Veti {
                                             finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
                         }
 
-                        if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs()) && measureValue0 != null && measureValue1 != null) {
-                            queryResults.adjustStats(groupByColumns == null || groupByColumns.isEmpty() ? null : groupByValuesList, measureValue0, measureValue1);
+                        if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs())) {
+                            for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
+                                queryResults.adjustStats(groupByValuesList, entry.getKey(), entry.getValue());
+                            }
                         }
                     }
                 }
@@ -349,12 +330,20 @@ public class Veti {
         queryResults.setIoCount(ioCount);
         queryResults.setExpandedNodeCount(nodesToExpand.size());
         queryResults.setPoints(points);
-
-        PairedStatsAccumulator pairedStatsAccumulator = new PairedStatsAccumulator();
-        queryResults.getStats().entrySet().stream().forEach(e -> {
-            pairedStatsAccumulator.addAll(e.getValue());
+        
+        Map<Integer, StatsAccumulator> rectStatsAccumulators = new HashMap<>();
+        // Aggregate stats for each measure across all groups
+        queryResults.getStats().forEach((groupByValues, measureStats) -> {
+            measureStats.forEach((measureCol, stats) -> {
+                rectStatsAccumulators
+                        .computeIfAbsent(measureCol, m -> new StatsAccumulator())
+                        .addAll(stats);
+            });
         });
-        queryResults.setRectStats(pairedStatsAccumulator);
+        // Store the aggregated stats in QueryResults
+        Map<Integer, Stats> rectStats = rectStatsAccumulators.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().snapshot()));
+        queryResults.setRectStats(rectStats);
         return queryResults;
     }
 

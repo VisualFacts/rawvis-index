@@ -1,35 +1,43 @@
 package gr.athenarc.imsi.visualfacts.query;
 
-import java.util.Arrays;
+import java.util.Map;
 
 public class ApproximateQueryResults extends QueryResults {
-    private double errorBound;
-    private double[] confidenceInterval;
+    // Confidence intervals for each measure (key: measure column index)
+    private Map<Integer, double[]> confidenceIntervals;
+
+    // Error bounds for each measure (key: measure column index)
+    private Map<Integer, Double> errorBounds;
 
     public ApproximateQueryResults(Query query) {
         super(query);
     }
 
-    public void setErrorBound(double errorBound) {
-        this.errorBound = errorBound;
+    public Map<Integer, double[]> getConfidenceIntervals() {
+        return confidenceIntervals;
     }
 
-    public double getErrorBound() {
-        return errorBound;
+    public void setConfidenceIntervals(Map<Integer, double[]> confidenceIntervals) {
+        this.confidenceIntervals = confidenceIntervals;
     }
 
-    public double[] getConfidenceInterval() {
-        return confidenceInterval;
+    public Map<Integer, Double> getErrorBounds() {
+        return errorBounds;
+    }
+
+    public void setErrorBounds(Map<Integer, Double> errorBounds) {
+        this.errorBounds = errorBounds;
     }
 
     @Override
     public String toString() {
-        return "ApproximateQueryResults [errorBound=" + errorBound + ", confidenceInterval="
-                + Arrays.toString(confidenceInterval) + "]";
+        return "QueryResults{" +
+                "query=" + getQuery() +
+                ", confidenceIntervals=" + confidenceIntervals +
+                ", errorBounds=" + errorBounds +
+                ", stats=" + getStats() +
+                ", rectStats=" + getRectStats() +
+                ", ioCount=" + getIoCount() +
+                '}';
     }
-
-    public void setConfidenceInterval(double[] confidenceInterval) {
-        this.confidenceInterval = confidenceInterval;
-    }
-
 }

@@ -1,8 +1,8 @@
 package gr.athenarc.imsi.visualfacts.query;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.math.PairedStats;
-import com.google.common.math.PairedStatsAccumulator;
+import com.google.common.math.Stats;
+import com.google.common.math.StatsAccumulator;
 
 import java.util.HashMap;
 import java.util.List;
@@ -13,11 +13,9 @@ public class QueryResults {
 
     private Query query;
 
-    private Map<ImmutableList<String>, PairedStatsAccumulator> stats;
+    private Map<ImmutableList<String>, Map<Integer, StatsAccumulator>> stats;
 
-    //private Map<String, PairedStatsAccumulator> stats;
-
-    private PairedStatsAccumulator rectStats;
+    private Map<Integer, Stats> rectStats; // Univariate stats for each query measure
 
     private List<float[]> points;
 
@@ -48,19 +46,25 @@ public class QueryResults {
         this.query = query;
     }
 
-    public Map<ImmutableList<String>, PairedStats> getStats() {
-        return stats.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
-                e -> e.getValue().snapshot()));
+    public Map<ImmutableList<String>, Map<Integer, Stats>> getStats() {
+        return stats.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey,
+                e -> e.getValue().entrySet().stream().collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> entry.getValue().snapshot()))));
     }
 
-    public void adjustStats(ImmutableList<String> groupByValues, float measureValue0, float measureValue1) {
-        stats.computeIfAbsent(groupByValues, (v) -> new PairedStatsAccumulator()).add(measureValue0, measureValue1);
+    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, float measureValue) {
+        stats.computeIfAbsent(groupByValues, v -> new HashMap<>())
+                .computeIfAbsent(measure, m -> new StatsAccumulator())
+                .add(measureValue);
     }
 
-    public void adjustStats(ImmutableList<String> groupByValues, PairedStats stats) {
-        this.stats.computeIfAbsent(groupByValues, (v) -> new PairedStatsAccumulator()).addAll(stats);
+    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, Stats stats) {
+        this.stats.computeIfAbsent(groupByValues, v -> new HashMap<>())
+                .computeIfAbsent(measure, m -> new StatsAccumulator())
+                .addAll(stats);
     }
-
 
     public int getFullyContainedTileCount() {
         return fullyContainedTileCount;
@@ -132,14 +136,13 @@ public class QueryResults {
         this.points = points;
     }
 
-    public PairedStatsAccumulator getRectStats() {
+    public Map<Integer, Stats> getRectStats() {
         return rectStats;
     }
 
-    public void setRectStats(PairedStatsAccumulator rectStats) {
+    public void setRectStats(Map<Integer, Stats> rectStats) {
         this.rectStats = rectStats;
     }
-
 
     @Override
     public String toString() {

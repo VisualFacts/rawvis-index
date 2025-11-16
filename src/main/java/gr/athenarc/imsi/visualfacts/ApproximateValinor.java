@@ -7,17 +7,16 @@ import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Range;
-import com.google.common.math.PairedStatsAccumulator;
-import com.google.common.math.StatsAccumulator;
 import com.google.common.util.concurrent.AtomicDouble;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
@@ -66,7 +65,7 @@ public class ApproximateValinor {
                     (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, null, null);
             initializationPolicy.setSort(sort);
         }
-
+        LOG.debug("Generating initial grid with size " + GRID_SIZE + "x" + GRID_SIZE);
         grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
         grid.split();
         if (initializationPolicy != null) {
@@ -92,12 +91,7 @@ public class ApproximateValinor {
         LOG.debug("Validation filters: " + validationFilters);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
-
-        // TODO: FIX THIS TO BE MULTIVAR
-        Integer measureCol0 = schema.getMeasureCols().get(0);
-        if (measureCol0 != null) {
-            colIndexes.add(measureCol0);
-        }
+        colIndexes.addAll(schema.getMeasureCols());
 
         LOG.debug("Columns to be read: " + colIndexes);
 
@@ -141,11 +135,11 @@ public class ApproximateValinor {
                     continue;
                 }
 
-                if (measureCol0 != null) {
-                    Double value0 = Double.parseDouble(row[measureCol0]);
-                    Double value1 = 0d;
-                    node.adjustStats(value0, value1);
+                for (Integer measureCol : schema.getMeasureCols()) {
+                    Float value = Float.parseFloat(row[measureCol]);
+                    node.adjustStats((short) (int) measureCol, value);
                 }
+
                 if (++objectsIndexed % 1000000 == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
                     LOG.debug("Row: " + Arrays.toString(row));
@@ -194,7 +188,6 @@ public class ApproximateValinor {
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
-            
 
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             for (QueryNode queryNode : queryNodes) {
@@ -203,7 +196,7 @@ public class ApproximateValinor {
                     continue;
                 }
 
-                if (isFullyContained && node.hasStats()) {
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(node::hasStats)) {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (node.points.size() > THRESHOLD) {
                     leafTile.split();
@@ -228,17 +221,16 @@ public class ApproximateValinor {
             }
         }
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
-            queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
+            query.getMeasureCols().forEach(measureCol -> {
+                queryResults.adjustStats(null, measureCol,
+                        queryNode.getNode().getStats(measureCol).snapshot());
+            });
             nonRawNodes.add(queryNode);
         }
 
         List<Integer> cols = new ArrayList<>();
 
-        // TODO: FIX THIS TO BE MULTIVAR
-        Integer measureCol0 = schema.getMeasureCols().get(0);
-        if (measureCol0 != null) {
-            cols.add(measureCol0);
-        }
+        cols.addAll(schema.getMeasureCols());
 
         CsvParserSettings parserSettings = schema
                 .createCsvParserSettings();
@@ -249,28 +241,31 @@ public class ApproximateValinor {
         int ioCount = 0;
 
         // ////////////
-        // /// baseline method that includes reading all points from fully contained tiles
-        // KWayMergePointIterator fullyContainedPointIterator = new KWayMergePointIterator(
-        //         fullyContainedNodesWithoutStats.stream()
-        //                 .map(queryNode -> new NodePointsIterator(queryNode))
-        //                 .collect(Collectors.toList()));
+        // /// baseline method that includes reading all points from fully contained
+        // tiles
+        // KWayMergePointIterator fullyContainedPointIterator = new
+        // KWayMergePointIterator(
+        // fullyContainedNodesWithoutStats.stream()
+        // .map(queryNode -> new NodePointsIterator(queryNode))
+        // .collect(Collectors.toList()));
 
         // // Read all points from fully contained tiles and adjust their stats
-        // ioCount += readFullyContainedFromFile(query, queryResults, measureCol0, parser, fullyContainedPointIterator);
+        // ioCount += readFullyContainedFromFile(query, queryResults, measureCol0,
+        // parser, fullyContainedPointIterator);
 
         // for (QueryNode queryNode : fullyContainedNodesWithoutStats) {
-        //     queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
+        // queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
         // }
         // // end of baseline method
         // ////////////
-        
+
         List<QueryNode> samplingNodes = new ArrayList<>();
         samplingNodes.addAll(partialNodes);
         samplingNodes.addAll(fullyContainedNodesWithoutStats);
 
         AtomicDouble samplingRate = new AtomicDouble(0.01d); // Start with small sampling rate (1%)
-        double[] confidenceInterval;
-        double maxErrorBound;
+        Map<Integer, double[]> confidenceIntervals = new HashMap<>();
+        Map<Integer, Double> errorBounds = new HashMap<>();
         do {
             // Create Sampling Iterators for all tiles needing sampling
             KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingNodes.stream()
@@ -278,22 +273,34 @@ public class ApproximateValinor {
                     .collect(Collectors.toList()));
 
             // Read the sampled points from the file in sorted order
-            ioCount += readFromFile(query, queryResults, measureCol0, parser, pointIterator);
+            ioCount += readFromFile(query, queryResults, parser, pointIterator);
 
-            // Calculate the confidence interval for the query
-            confidenceInterval = getQueryConfidenceInterval(samplingNodes, queryResults, samplingRate.get());
-            // Recalculate the error bound
-            maxErrorBound = calculateMaxErrorBound(confidenceInterval);
+            // Calculate the confidence intervals for all measures
+            for (Integer measureCol : query.getMeasureCols()) {
+                confidenceIntervals.put(measureCol,
+                        getQueryConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+            }
+            // Calculate the error bounds for all measures
+            for (Map.Entry<Integer, double[]> entry : confidenceIntervals.entrySet()) {
+                Integer measureCol = entry.getKey();
+                double[] confidenceInterval = entry.getValue();
+                errorBounds.put(measureCol, calculateMaxErrorBound(confidenceInterval));
+            }
+
+            // Find the maximum error bound across all measures
+            double maxErrorBound = errorBounds.values().stream().max(Double::compare).orElse(0.0);
 
             // If error bound is still too high, increase sampling rate
             if (maxErrorBound > errorThreshold) {
                 samplingRate.set(adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
-                LOG.info("Increasing sampling rate to: {}", samplingRate.get());
+                // LOG.info("Increasing sampling rate to: {}", samplingRate.get());
             }
 
-        } while (maxErrorBound > errorThreshold);
+        } while (errorBounds.values().stream().anyMatch(error -> error > errorThreshold));
 
-        // Iterate over fully contained query nodes without stats and set their TreeNode's sampled tracker for using in future queries. Their stats have been updated in the readFromFile method
+        // Iterate over fully contained query nodes without stats and set their
+        // TreeNode's sampled tracker for using in future queries. Their stats have been
+        // updated in the readFromFile method
         fullyContainedNodesWithoutStats.forEach(queryNode -> {
             queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
         });
@@ -304,8 +311,10 @@ public class ApproximateValinor {
         queryResults.setSamplingTileCount(samplingNodes.size());
         queryResults.setSamplingRate(samplingRate.get());
         queryResults.setIoCount(ioCount);
-        queryResults.setConfidenceInterval(confidenceInterval);
-        queryResults.setErrorBound(maxErrorBound);
+
+        queryResults.setConfidenceIntervals(confidenceIntervals);
+        queryResults.setErrorBounds(errorBounds);
+
         return queryResults;
     }
 
@@ -341,7 +350,7 @@ public class ApproximateValinor {
 
         // Calculate the new sampling rate.
         double newRate = currentRate * factor;
-        
+
         // Compute the delta increase
         double delta = newRate - currentRate;
 
@@ -359,19 +368,22 @@ public class ApproximateValinor {
         return newRate;
     }
 
-    
-    // private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
-    //     LOG.debug("Adjusting sampling rate: currentRate={}, currentError={}, errorThreshold={}", currentRate,
-    //             currentError, errorThreshold);
-    //     double adjustmentFactor = (currentError - errorThreshold) / errorThreshold; // How far above the limit we are
-    //     return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase sampling but cap at 100%
+    // private double adjustSamplingRate(double currentRate, double currentError,
+    // double errorThreshold) {
+    // LOG.debug("Adjusting sampling rate: currentRate={}, currentError={},
+    // errorThreshold={}", currentRate,
+    // currentError, errorThreshold);
+    // double adjustmentFactor = (currentError - errorThreshold) / errorThreshold;
+    // // How far above the limit we are
+    // return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase
+    // sampling but cap at 100%
     // }
 
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
-            double samplingRate) {
+            double samplingRate, int measureCol) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
-            exactSum = queryResults.getStats().get(null).xStats().sum();
+            exactSum = queryResults.getStats().get(null).get(measureCol).sum();
             // sum from "fully contained" nodes with known stats
         }
 
@@ -384,14 +396,14 @@ public class ApproximateValinor {
         double totalVariance = 0.0;
 
         for (QueryNode qnode : samplingNodes) {
-            int n = (int) qnode.getSampleStatsAcc().count();
+            int n = (int) qnode.getSampleStatsAcc(measureCol).count();
             double N = qnode.getIntersectionCount();
 
             // SHORT-CIRCUIT if we sampled 100% of that node
             if (n == N) {
                 // We have the entire sub-population in this node, so no sampling uncertainty.
                 // sampleStatsAcc.sum() == sum of all values in that node
-                double nodeExactSum = qnode.getSampleStatsAcc().sum();
+                double nodeExactSum = qnode.getSampleStatsAcc(measureCol).sum();
                 exactSum += nodeExactSum; // Add to exact part,
                 // variance contribution is 0
                 continue;
@@ -403,13 +415,15 @@ public class ApproximateValinor {
                 continue;
             }
 
-            double mean = qnode.getSampleStatsAcc().mean();
-            double stdev = qnode.getSampleStatsAcc().sampleStandardDeviation();
+            double mean = qnode.getSampleStatsAcc(measureCol).mean();
+            double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
 
             // // node-level estimate
             double nodeEstimate = N * mean;
-            // node-level variance considering the finite population correction for without replacement sampling
-            double nodeVariance = N * N * (stdev * stdev / n) * (1.0 - ((double) n / N));;
+            // node-level variance considering the finite population correction for without
+            // replacement sampling
+            double nodeVariance = N * N * (stdev * stdev / n) * (1.0 - ((double) n / N));
+            ;
 
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
@@ -425,8 +439,12 @@ public class ApproximateValinor {
         double lower = finalEstimate - margin;
         double upper = finalEstimate + margin;
 
-        LOG.debug("samplingRate={}, exactSum={}, totalEstimate={}, totalVariance={}, lb={}, up={}", samplingRate,
-                exactSum, totalEstimate, totalVariance, lower, upper);
+        /*
+         * LOG.
+         * debug("samplingRate={}, exactSum={}, totalEstimate={}, totalVariance={}, lb={}, up={}"
+         * , samplingRate,
+         * exactSum, totalEstimate, totalVariance, lower, upper);
+         */
 
         return new double[] { lower, upper };
     }
@@ -451,15 +469,14 @@ public class ApproximateValinor {
 
     }
 
-
     private double calculateMaxErrorBound(double[] confidenceInterval) {
         double minSum = confidenceInterval[0];
         double maxSum = confidenceInterval[1];
         return (maxSum - minSum) / (maxSum + minSum);
     }
 
-    private int readFromFile(Query query, QueryResults queryResults, Integer measureCol0,
-            CsvParser parser, KWayMergePointIterator pointIterator) {
+    private int readFromFile(Query query, QueryResults queryResults, CsvParser parser,
+            KWayMergePointIterator pointIterator) {
         String line;
         String[] row;
         int ioCount = 0;
@@ -469,18 +486,19 @@ public class ApproximateValinor {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Double measureValue0 = 0d;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
-                        if (measureCol0 != null && row[measureCol0] != null) {
-                            measureValue0 = Double.parseDouble(row[measureCol0]);
-                        }
-
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        queryNode.addSampleValue(measureValue0);
-                        if (queryNode.isFullyContained()) {
-                            queryNode.getNode().adjustStats(measureValue0, 0d);
+                        // Process all measures in the schema
+                        for (Integer measureCol : schema.getMeasureCols()) {
+                            if (row[measureCol] != null) {
+                                double measureValue = Double.parseDouble(row[measureCol]);
+                                queryNode.addSampleValue(measureCol, measureValue);
+                                if (queryNode.isFullyContained()) {
+                                    queryNode.getNode().adjustStats(measureCol.shortValue(), measureValue);
+                                }
+                            }
                         }
                     }
                 }
@@ -491,7 +509,7 @@ public class ApproximateValinor {
         return ioCount;
     }
 
-    private int readFullyContainedFromFile(Query query, QueryResults queryResults, Integer measureCol0,
+    private int readFullyContainedFromFile(Query query, QueryResults queryResults,
             CsvParser parser, KWayMergePointIterator pointIterator) {
         String line;
         String[] row;
@@ -502,15 +520,19 @@ public class ApproximateValinor {
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
-                Double measureValue0 = 0d;
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
-                        if (measureCol0 != null && row[measureCol0] != null) {
-                            measureValue0 = Double.parseDouble(row[measureCol0]);
-                        }
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        queryNode.getNode().adjustStats(measureValue0, 0f);
+                        // Process all measures in the schema
+                        for (Integer measureCol : schema.getMeasureCols()) {
+                            if (row[measureCol] != null) {
+                                double measureValue = Double.parseDouble(row[measureCol]);
+                                queryNode.getNode().adjustStats(measureCol.shortValue(), measureValue);
+
+                            }
+                        }
+
                     }
                 }
             } catch (Exception e) {

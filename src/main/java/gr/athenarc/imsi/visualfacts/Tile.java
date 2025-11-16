@@ -131,7 +131,7 @@ public abstract class Tile {
                     }
                 }
             }
-            list.add(new QueryNode(node, this, containmentExaminer, groupByValues, getUnknownAttrs(level)));
+            list.add(new QueryNode(node, this, containmentExaminer, groupByValues, getUnknownAttrs(level), query));
             return list;
         }
 

@@ -188,7 +188,13 @@ public class Experiments {
         for (int i = 0; i < 10; i++) {
             nodeCount++;
             TreeNode child = root.getOrAddChild((short) i);
-            child.adjustStats(1f, 0f);
+            if (measureCols != null) {
+                for (Integer measureCol : measureCols) {
+                    child.adjustStats(measureCol.shortValue(), 0f); // Initialize each measure with 0f
+                }
+            } else {
+                child.adjustStats((short) 0, 0f); // Fallback for single measure
+            }
         }
         int nodeSize = (int) sizeOf.deepSizeOf(root) / nodeCount;
         LOG.debug("average categorical node size: " + nodeSize);
@@ -419,9 +425,11 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getStats().entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
-                    entry -> entry.getValue().xStats(), (oldValue, newValue) -> oldValue)));
-            csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null ? queryResults.getStats().get(null).xStats().sum() : null);
+            csvWriter.addValue(queryResults.getStats());
+            csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null
+                    ? queryResults.getStats().get(null).entrySet().stream()
+                            .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
+                    : null);
             csvWriter.writeValuesToRow();
         }
         csvWriter.close();
@@ -440,7 +448,7 @@ public class Experiments {
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
         csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats", "Sampling Tiles", "Sampling Rate", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval LB", "Confidence Interval UB", "Error Bound", "run");
+                "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats", "Sampling Tiles", "Sampling Rate", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval", "Error Bound", "run");
         
 
         Stopwatch stopwatch;
@@ -476,9 +484,12 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getConfidenceInterval() != null ? queryResults.getConfidenceInterval()[0] : null);
-            csvWriter.addValue(queryResults.getConfidenceInterval() != null ? queryResults.getConfidenceInterval()[1] : null);
-            csvWriter.addValue(queryResults.getErrorBound());
+            csvWriter.addValue(queryResults.getConfidenceIntervals().entrySet().stream()
+                            .collect(Collectors.toMap(
+                                    Map.Entry::getKey,
+                                    e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
+                            .toString());
+            csvWriter.addValue(queryResults.getErrorBounds());
             csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
             csvWriter.flush();

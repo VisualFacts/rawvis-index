@@ -1,6 +1,5 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.math.PairedStatsAccumulator;
 import com.google.common.math.StatsAccumulator;
 import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
 import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
@@ -17,8 +16,7 @@ public class TreeNode {
     private final short label;
     protected List<Point> points;
     private Short2ObjectMap<TreeNode> children;
-
-    private PairedStatsAccumulator stats;
+    private Short2ObjectMap<StatsAccumulator> statsMap;
     private BitSet sampledTracker;
 
     public TreeNode(short label) {
@@ -30,23 +28,28 @@ public class TreeNode {
         return counter;
     }
 
-    public void adjustStats(double value0, double value1) {
-        if (stats == null) {
-            stats = new PairedStatsAccumulator();
+    public void adjustStats(short measure, double value) {
+        if (statsMap == null) {
+            statsMap = new Short2ObjectOpenHashMap<>();
         }
-        stats.add(value0, value1);
+        StatsAccumulator stats = statsMap.computeIfAbsent(measure, k -> new StatsAccumulator());
+        stats.add(value);
     }
 
     /**
-     * Checks if the current TreeNode has statistics available.
-     * 
-     * @return {@code true} if the stats object is not null and its count is smaller
-     *         than the size of the points list,
-     *         otherwise {@code false}.
+     * Checks if the current TreeNode has statistics available for a specific measure.
+     *
+     * @param measure the measure to check statistics for
+     * @return {@code true} if the stats object for the given measure is not null and its count is equal
+     *         to the size of the points list, otherwise {@code false}.
      */
-    public boolean hasStats() {
+    public boolean hasStats(int measure) {
+        if (points == null || statsMap == null) {
+            return false;
+        }
+        StatsAccumulator stats = statsMap.get((short)measure);
         // todo: check what happens in case of null value for an object
-        return points != null && stats != null && stats.count() == points.size();
+        return stats != null && stats.count() == points.size();
     }
 
     public TreeNode addPoint(Point point) {
@@ -61,8 +64,8 @@ public class TreeNode {
         return points;
     }
 
-    public PairedStatsAccumulator getStats() {
-        return stats;
+    public StatsAccumulator getStats(int measure) {
+        return statsMap != null ? statsMap.get((short)measure) : null;
     }
 
     public TreeNode getChild(short label) {
@@ -94,13 +97,13 @@ public class TreeNode {
         return "TreeNode{" +
                 "label=" + label +
                 ", children=" + children +
-                ", stats=" + stats +
+                ", statsMap=" + statsMap +
                 '}';
     }
 
     public void convertToNonleaf() {
         points = null;
-        stats = null;
+        statsMap = null;
     }
 
     public BitSet getSampledTracker() {

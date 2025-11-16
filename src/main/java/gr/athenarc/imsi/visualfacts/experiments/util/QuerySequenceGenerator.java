@@ -81,11 +81,11 @@ public class QuerySequenceGenerator {
                     filterCount--;
                 }
             }
-            // generating the index using Math.random()
-            int index = (int)(Math.random() * q0.getMeasureCols().size());
-            List<Integer> measureCols2 = new ArrayList<>();
-            measureCols2.add(q0.getMeasureCols().get(index));
-            query = new Query(rect, filters, q0.getGroupByCols(), measureCols2);
+            // // generating the index using Math.random()
+            // int index = (int)(Math.random() * q0.getMeasureCols().size());
+            // List<Integer> measureCols2 = new ArrayList<>();
+            // measureCols2.add(q0.getMeasureCols().get(index));
+            query = new Query(rect, filters, q0.getGroupByCols(), schema.getMeasureCols(), opType); // Set the operation type
             queries.add(query);
         }
         return queries;
