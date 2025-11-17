@@ -543,7 +543,7 @@ public class Experiments {
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
         
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query");
+            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound");
         }
 
         try {
@@ -586,12 +586,14 @@ public class Experiments {
                     csvWriter.addValue(result.getRowCount());
                     csvWriter.addValue(result.getExecutionTimeSeconds());
                     csvWriter.addValue(result.getQuery());
+                    csvWriter.addValue(0);
                     csvWriter.writeValuesToRow();
                 } catch (Exception e) {
                     LOG.warn("Error executing query {}: {}", i, e.getMessage());
                     csvWriter.addValue(csv);
                     csvWriter.addValue(duckDbMode);
                     csvWriter.addValue(i);
+                    csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
                     csvWriter.addValue("ERROR: " + e.getMessage());
