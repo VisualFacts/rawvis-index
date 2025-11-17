@@ -18,9 +18,6 @@ import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Range;
 import com.google.common.util.concurrent.AtomicDouble;
-import com.univocity.parsers.csv.CsvParser;
-import com.univocity.parsers.csv.CsvParserSettings;
-
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
@@ -30,6 +27,9 @@ import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 
 public class ApproximateValinor {
 
@@ -95,65 +95,71 @@ public class ApproximateValinor {
 
         LOG.debug("Columns to be read: " + colIndexes);
 
-        CsvParserSettings parserSettings = schema.createCsvParserSettings();
-        parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
-        parserSettings.setColumnReorderingEnabled(false);
-        parserSettings.setHeaderExtractionEnabled(schema.getHasHeader());
-        CsvParser parser = new CsvParser(parserSettings);
+        int[] selectedColumns = colIndexes.stream().mapToInt(Integer::intValue).toArray();
+        CsvReaderConfig readerConfig = new CsvReaderConfig(
+                new File(schema.getCsv()),
+                Charset.forName("US-ASCII"),
+                selectedColumns,
+                schema.getHasHeader(),
+                DELIMITER);
+        CsvRowReader rowReader = new UnivocityCsvRowReader();
 
         objectsIndexed = 0;
         int objectsSkipped = 0; // Counter for skipped rows
 
-        parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
-        String[] row;
-        long rowOffset = parser.getContext().currentChar() - 1;
-        while ((row = parser.parseNext()) != null) {
-            try {
-                // Check if row should be skipped based on validation filters
-                final String[] finalRow = row;
-                boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
-                    int colIndex = filter.getFilterColumn();
-                    try {
-                        Double value = Double.parseDouble(finalRow[colIndex]);
-                        return filter.test(value);
-                    } catch (NumberFormatException e) {
-                        LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
-                        return true; // Skip invalid numeric entries
+        try {
+            rowReader.open(readerConfig);
+            String[] row;
+            while ((row = rowReader.nextRow()) != null) {
+                long rowOffset = rowReader.currentOffset();
+                try {
+                    final String[] finalRow = row;
+                    boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
+                        int colIndex = filter.getFilterColumn();
+                        try {
+                            Double value = Double.parseDouble(finalRow[colIndex]);
+                            return filter.test(value);
+                        } catch (NumberFormatException e) {
+                            LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
+                            return true; // Skip invalid numeric entries
+                        }
+                    });
+
+                    if (shouldSkip) {
+                        LOG.debug("Skipping row: " + Arrays.toString(row));
+                        objectsSkipped++;
+                        continue;
                     }
-                });
+                    Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
+                            Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
-                if (shouldSkip) {
-                    LOG.debug("Skipping row: " + Arrays.toString(row));
-                    objectsSkipped++;
-                    continue;
-                }
-                Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
-                        Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+                    TreeNode node = this.grid.addPoint(point, row);
+                    if (node == null) {
+                        continue;
+                    }
 
-                TreeNode node = this.grid.addPoint(point, row);
-                if (node == null) {
-                    continue;
-                }
+                    for (Integer measureCol : schema.getMeasureCols()) {
+                        Float value = Float.parseFloat(row[measureCol]);
+                        node.adjustStats((short) (int) measureCol, value);
+                    }
 
-                for (Integer measureCol : schema.getMeasureCols()) {
-                    Float value = Float.parseFloat(row[measureCol]);
-                    node.adjustStats((short) (int) measureCol, value);
+                    if (++objectsIndexed % 1000000 == 0) {
+                        LOG.debug("Indexing object " + objectsIndexed);
+                        LOG.debug("Row: " + Arrays.toString(row));
+                        LOG.debug(point);
+                    }
+                } catch (Exception e) {
+                    LOG.error("Problem parsing row number " + objectsIndexed + ": " + Arrays.toString(row), e);
                 }
-
-                if (++objectsIndexed % 1000000 == 0) {
-                    LOG.debug("Indexing object " + objectsIndexed);
-                    LOG.debug("Row: " + Arrays.toString(row));
-                    LOG.debug(point);
-                }
-            } catch (Exception e) {
-                LOG.error("Problem parsing row number " + objectsIndexed + ": " + Arrays.toString(row), e);
-                continue;
-            } finally {
-                rowOffset = parser.getContext().currentChar() - 1;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to read CSV", e);
+        } finally {
+            try {
+                rowReader.close();
+            } catch (IOException ignore) {
             }
         }
-
-        parser.stopParsing();
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         LOG.debug("Total Skipped Objects: " + objectsSkipped);
@@ -232,11 +238,15 @@ public class ApproximateValinor {
 
         cols.addAll(schema.getMeasureCols());
 
-        CsvParserSettings parserSettings = schema
-                .createCsvParserSettings();
-        parserSettings.selectIndexes(cols.toArray(new Integer[cols.size()]));
-        parserSettings.setColumnReorderingEnabled(false);
-        CsvParser parser = new CsvParser(parserSettings);
+        int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
+        CsvRowReader lineParser = new UnivocityCsvRowReader();
+        CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("US-ASCII"),
+                parseColumns, false, DELIMITER);
+        try {
+            lineParser.open(lineConfig);
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to configure CSV line parser", e);
+        }
 
         int ioCount = 0;
 
@@ -273,7 +283,7 @@ public class ApproximateValinor {
                     .collect(Collectors.toList()));
 
             // Read the sampled points from the file in sorted order
-            ioCount += readFromFile(query, queryResults, parser, pointIterator);
+            ioCount += readFromFile(query, queryResults, lineParser, pointIterator);
 
             // Calculate the confidence intervals for all measures
             for (Integer measureCol : query.getMeasureCols()) {
@@ -314,6 +324,11 @@ public class ApproximateValinor {
 
         queryResults.setConfidenceIntervals(confidenceIntervals);
         queryResults.setErrorBounds(errorBounds);
+
+        try {
+            lineParser.close();
+        } catch (IOException ignore) {
+        }
 
         return queryResults;
     }
@@ -475,7 +490,7 @@ public class ApproximateValinor {
         return (maxSum - minSum) / (maxSum + minSum);
     }
 
-    private int readFromFile(Query query, QueryResults queryResults, CsvParser parser,
+    private int readFromFile(Query query, QueryResults queryResults, CsvRowReader parser,
             KWayMergePointIterator pointIterator) {
         String line;
         String[] row;
@@ -510,7 +525,7 @@ public class ApproximateValinor {
     }
 
     private int readFullyContainedFromFile(Query query, QueryResults queryResults,
-            CsvParser parser, KWayMergePointIterator pointIterator) {
+            CsvRowReader parser, KWayMergePointIterator pointIterator) {
         String line;
         String[] row;
         int ioCount = 0;

@@ -4,8 +4,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import com.google.common.math.Stats;
 import com.google.common.math.StatsAccumulator;
-import com.univocity.parsers.csv.CsvParser;
-import com.univocity.parsers.csv.CsvParserSettings;
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
@@ -13,6 +11,9 @@ import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -94,63 +95,71 @@ public class Veti {
 
         colIndexes.addAll(schema.getMeasureCols());
 
-        CsvParserSettings parserSettings = schema.createCsvParserSettings();
-        parserSettings.selectIndexes(colIndexes.toArray(new Integer[colIndexes.size()]));
-        parserSettings.setColumnReorderingEnabled(false);
-        parserSettings.setHeaderExtractionEnabled(schema.getHasHeader());
-        CsvParser parser = new CsvParser(parserSettings);
+        CsvRowReader rowReader = new UnivocityCsvRowReader();
+        int[] selectedColumns = colIndexes.stream().mapToInt(Integer::intValue).toArray();
+        CsvReaderConfig readerConfig = new CsvReaderConfig(
+                new File(schema.getCsv()),
+                Charset.forName("US-ASCII"),
+                selectedColumns,
+                schema.getHasHeader(),
+                DELIMITER);
 
         objectsIndexed = 0;
         int objectsSkipped = 0; // Counter for skipped rows
 
-        parser.beginParsing(new File(schema.getCsv()), Charset.forName("US-ASCII"));
-        String[] row;
-        long rowOffset = parser.getContext().currentChar() - 1;
-        while ((row = parser.parseNext()) != null) {
-            try {
-                // Check if row should be skipped based on validation filters
-                final String[] finalRow = row;
-                boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
-                    int colIndex = filter.getFilterColumn();
-                    try {
-                        Double value = Double.parseDouble(finalRow[colIndex]);
-                        return filter.test(value);
-                    } catch (NumberFormatException e) {
-                        LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
-                        return true; // Skip invalid numeric entries
+        try {
+            rowReader.open(readerConfig);
+            String[] row;
+            while ((row = rowReader.nextRow()) != null) {
+                long rowOffset = rowReader.currentOffset();
+                try {
+                    // Check if row should be skipped based on validation filters
+                    final String[] finalRow = row;
+                    boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
+                        int colIndex = filter.getFilterColumn();
+                        try {
+                            Double value = Double.parseDouble(finalRow[colIndex]);
+                            return filter.test(value);
+                        } catch (NumberFormatException e) {
+                            LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
+                            return true; // Skip invalid numeric entries
+                        }
+                    });
+
+                    if (shouldSkip) {
+                        LOG.debug("Skipping row: " + Arrays.toString(row));
+                        objectsSkipped++;
+                        continue;
                     }
-                });
 
-                if (shouldSkip) {
-                    LOG.debug("Skipping row: " + Arrays.toString(row));
-                    objectsSkipped++;
-                    continue;
-                }
+                    Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
+                            Float.parseFloat(row[schema.getyColumn()]), rowOffset);
 
-                Point point = new Point(Float.parseFloat(row[schema.getxColumn()]), Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+                    TreeNode node = this.grid.addPoint(point, row);
+                    if (node == null) {
+                        continue;
+                    }
+                    for (Integer measureCol : schema.getMeasureCols()) {
+                        Float value = Float.parseFloat(row[measureCol]);
+                        node.adjustStats((short) (int) measureCol, value);
+                    }
 
-                TreeNode node = this.grid.addPoint(point, row);
-                if (node == null) {
-                    continue;
+                    if (++objectsIndexed % 1000000 == 0) {
+                        LOG.debug("Indexing object " + objectsIndexed);
+                        LOG.debug(point);
+                    }
+                } catch (Exception e) {
+                    LOG.error("Problem parsing row number " + objectsIndexed + ": " + Arrays.toString(row), e);
                 }
-                for (Integer measureCol : schema.getMeasureCols()) {
-                    Float value = Float.parseFloat(row[measureCol]);
-                    node.adjustStats((short) (int) measureCol, value);
-                }
-                
-                if (++objectsIndexed % 1000000 == 0) {
-                    LOG.debug("Indexing object " + objectsIndexed);
-                    LOG.debug(point);
-                }
-            } catch (Exception e) {
-                LOG.error("Problem parsing row number " + objectsIndexed + ": " + Arrays.toString(row), e);
-                continue;
-            } finally {
-                rowOffset = parser.getContext().currentChar() - 1;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to read CSV file", e);
+        } finally {
+            try {
+                rowReader.close();
+            } catch (IOException ignore) {
             }
         }
-
-        parser.stopParsing();
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         LOG.debug("Total Skipped Objects: " + objectsSkipped);
@@ -250,10 +259,15 @@ public class Veti {
         cols.addAll(schema.getMeasureCols());
         cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
 
-        CsvParserSettings parserSettings = schema.createCsvParserSettings();
-        parserSettings.selectIndexes(cols.toArray(new Integer[cols.size()]));
-        parserSettings.setColumnReorderingEnabled(false);
-        CsvParser parser = new CsvParser(parserSettings);
+        int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
+        CsvRowReader lineParser = new UnivocityCsvRowReader();
+        CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("US-ASCII"),
+                parseColumns, false, DELIMITER);
+        try {
+            lineParser.open(lineConfig);
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to configure CSV line parser", e);
+        }
 
         KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
         int ioCount = 0;
@@ -267,7 +281,7 @@ public class Veti {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
                 if (line != null) {
-                    row = parser.parseLine(line);
+                    row = lineParser.parseLine(line);
                     if (row != null) {
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         TreeNode node = queryNode.getNode();
@@ -314,6 +328,10 @@ public class Veti {
             } catch (Exception e) {
                 LOG.debug(e);
             }
+        }
+        try {
+            lineParser.close();
+        } catch (IOException ignore) {
         }
         for (QueryNode node : nonRawNodes) {
             for (Point point : node) {
