@@ -586,7 +586,7 @@ public class Experiments {
                     csvWriter.addValue(duckDbMode); 
                     csvWriter.addValue(i);
                     csvWriter.addValue(result.getRowCount());
-                    csvWriter.addValue(result.getExecutionTimeSeconds());
+                    csvWriter.addValue(i == 0 ? result.getExecutionTimeSeconds() + tableCreationTimeMs / 1000.0 : result.getExecutionTimeSeconds());
                     csvWriter.addValue(result.getQuery());
                     csvWriter.addValue(0);
                     csvWriter.addValue(result.getStatsMap());
