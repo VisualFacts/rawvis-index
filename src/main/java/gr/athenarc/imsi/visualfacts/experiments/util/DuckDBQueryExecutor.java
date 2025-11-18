@@ -108,6 +108,7 @@ public class DuckDBQueryExecutor {
     private boolean initialized = false;
     private long tableCreationTimeNanos = 0;
     private long indexCreationTimeNanos = 0;
+    private Integer datasetColumnCount = null; // Cache the dataset column count
 
     public DuckDBQueryExecutor(String csvPath) throws Exception {
         this.csvPath = csvPath;
@@ -243,7 +244,22 @@ public class DuckDBQueryExecutor {
 
         LOG.info("Executing query in {} mode", mode);
         List<Range<Float>> ranges = extractRangesFromQuery(query);
-        List<String> measureColsString = query.getMeasureCols().stream().map(col ->  "column" + String.format("%02d", col)).collect(Collectors.toList());
+        
+        // Determine column naming format based on actual dataset column count
+        int columnCount = getDatasetColumnCount();
+        boolean useTwoDigitFormat = columnCount > 10;
+        
+        List<String> measureColsString = query.getMeasureCols().stream().map(col -> {
+            if (useTwoDigitFormat) {
+                return "column" + String.format("%02d", col);
+            } else {
+                return "column" + col;
+            }
+        }).collect(Collectors.toList());
+        
+        LOG.debug("Using {} digit format for column names (dataset has {} columns)", 
+            useTwoDigitFormat ? "two" : "single", columnCount);
+        
         switch(mode) {
             case DIRECT_CSV:
                 return executeQueryDirectCSV(ranges, measureColsString, xCol, yCol);
@@ -376,13 +392,15 @@ public class DuckDBQueryExecutor {
     }
 
     private Integer extractMeasureIndex(String columnName) {
-        // Extract measure index from column names like: count_column01, min_column02, etc.
+        // Extract measure index from column names like: count_column0, min_column1, ..., count_column09, count_column10, etc.
         String[] parts = columnName.split("_");
         if (parts.length >= 2) {
             String columnPart = parts[parts.length - 1]; // Get last part after split
             if (columnPart.startsWith("column")) {
                 try {
-                    return Integer.parseInt(columnPart.substring(6)); // Extract number after "column"
+                    // Extract everything after "column"
+                    String numberPart = columnPart.substring(6);
+                    return Integer.parseInt(numberPart);
                 } catch (NumberFormatException e) {
                     LOG.debug("Could not parse measure index from column: {}", columnName);
                 }
@@ -393,6 +411,71 @@ public class DuckDBQueryExecutor {
 
     private double mean(double sum, long count) {
         return count > 0 ? sum / count : 0.0;
+    }
+
+    /**
+     * Get the column count of the dataset.
+     * For TABLE and SPATIAL_INDEX modes, queries the actual table.
+     * For DIRECT_CSV mode, infers from the CSV by reading the first row.
+     * Result is cached for efficiency.
+     */
+    private int getDatasetColumnCount() throws Exception {
+        if (datasetColumnCount != null) {
+            return datasetColumnCount;
+        }
+
+        try {
+            if (mode == ExecutionMode.DIRECT_CSV) {
+                // For direct CSV, we need to count columns from the CSV file
+                datasetColumnCount = getCSVColumnCount();
+            } else {
+                // For TABLE and SPATIAL_INDEX modes, query the table schema
+                datasetColumnCount = getTableColumnCount();
+            }
+            LOG.debug("Dataset has {} columns", datasetColumnCount);
+            return datasetColumnCount;
+        } catch (Exception e) {
+            LOG.warn("Failed to determine column count, defaulting to 10", e);
+            datasetColumnCount = 10;
+            return datasetColumnCount;
+        }
+    }
+
+    /**
+     * Get the number of columns in the table using DuckDB's information schema.
+     */
+    private int getTableColumnCount() throws Exception {
+        String query = String.format(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = '%s';",
+            tableName
+        );
+        
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        }
+        return 10; // default
+    }
+
+    /**
+     * Get the number of columns in the CSV file by reading the header.
+     */
+    private int getCSVColumnCount() throws Exception {
+        String query = String.format(
+            "SELECT COUNT(*) FROM (SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0) AS t;",
+            csvPath
+        );
+        
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            // This approach gets column count by checking metadata
+            if (rs.next()) {
+                return rs.getMetaData().getColumnCount();
+            }
+        }
+        return 10; // default
     }
 
 
