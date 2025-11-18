@@ -5,9 +5,12 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 
 import gr.athenarc.imsi.visualfacts.Rectangle;
@@ -23,6 +26,70 @@ import org.apache.logging.log4j.Logger;
  * 3. Query on table with spatial R-tree index
  */
 public class DuckDBQueryExecutor {
+
+    /**
+     * Wrapper class for DuckDB aggregation statistics that mimics Guava's Stats interface.
+     * This class holds summary statistics computed directly from SQL aggregation functions.
+     */
+    public static class StatsDuckDB {
+        private final long count;
+        private final double min;
+        private final double max;
+        private final double sum;
+        private final double mean;
+        private final double sumOfSquares;
+
+        public StatsDuckDB(long count, double min, double max, double sum, double mean, double sumOfSquares) {
+            this.count = count;
+            this.min = min;
+            this.max = max;
+            this.sum = sum;
+            this.mean = mean;
+            this.sumOfSquares = sumOfSquares;
+        }
+
+        public long count() {
+            return count;
+        }
+
+        public double min() {
+            return min;
+        }
+
+        public double max() {
+            return max;
+        }
+
+        public double sum() {
+            return sum;
+        }
+
+        public double mean() {
+            return mean;
+        }
+
+        public double sumOfSquares() {
+            return sumOfSquares;
+        }
+
+        public double populationStandardDeviation() {
+            if (count <= 0) return 0.0;
+            double variance = (sumOfSquares / count) - (mean * mean);
+            return Math.sqrt(Math.max(0, variance));
+        }
+
+        public double sampleStandardDeviation() {
+            if (count <= 1) return 0.0;
+            double variance = (sumOfSquares - (sum * sum / count)) / (count - 1);
+            return Math.sqrt(Math.max(0, variance));
+        }
+
+        @Override
+        public String toString() {
+            return String.format("StatsDuckDB{count=%d, min=%.4f, max=%.4f, mean=%.4f, populationStandardDeviation=%.4f}",
+                    count, min, max, mean, populationStandardDeviation());
+        }
+    }
 
     private static final Logger LOG = LogManager.getLogger(DuckDBQueryExecutor.class);
 
@@ -229,15 +296,74 @@ public class DuckDBQueryExecutor {
         try (Statement stmt = connection.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
             
+            Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> finalStatsMap = new HashMap<>();
+            
             while (rs.next()) {
                 result.incrementRowCount();
+                
+                // Parse results and collect stats
+                // Group key is empty list (since single query returns single group)
+                ImmutableList<String> groupKey = ImmutableList.of();
+                
+                Map<Integer, StatsDuckDB> measureStats = finalStatsMap.computeIfAbsent(
+                    groupKey, k -> new HashMap<>()
+                );
+                
+                // Process each aggregation column's statistics
+                // Assuming column names follow pattern: count_*, min_*, max_*, sum_*, avg_*, sum_of_squares_*
+                Map<Integer, Double[]> statsData = new HashMap<>(); // [count, min, max, sum, avg, sum_sq]
+                
+                for (int colIdx = 1; colIdx <= rs.getMetaData().getColumnCount(); colIdx++) {
+                    String colName = rs.getMetaData().getColumnName(colIdx);
+                    
+                    // Extract measure index from column name
+                    Integer measureIdx = extractMeasureIndex(colName);
+                    if (measureIdx == null) continue;
+                    
+                    Double[] data = statsData.computeIfAbsent(measureIdx, k -> new Double[6]);
+                    double value = rs.getDouble(colIdx);
+                    
+                    if (colName.startsWith("count_")) {
+                        data[0] = value;
+                    } else if (colName.startsWith("min_")) {
+                        data[1] = value;
+                    } else if (colName.startsWith("max_")) {
+                        data[2] = value;
+                    } else if (colName.startsWith("sum_") && !colName.startsWith("sum_of_squares_")) {
+                        data[3] = value;
+                    } else if (colName.startsWith("avg_")) {
+                        data[4] = value;
+                    } else if (colName.startsWith("sum_of_squares_")) {
+                        data[5] = value;
+                    }
+                }
+                
+                // Build StatsDuckDB objects from collected data
+                for (Map.Entry<Integer, Double[]> entry : statsData.entrySet()) {
+                    Integer measureIdx = entry.getKey();
+                    Double[] data = entry.getValue();
+                    
+                    if (data[0] != null && data[3] != null && data[5] != null) {
+                        long count = data[0].longValue();
+                        double sum = data[3];
+                        double sumOfSquares = data[5];
+                        double mean = mean(sum, count);
+                        double min = data[1] != null ? data[1] : Double.NaN;
+                        double max = data[2] != null ? data[2] : Double.NaN;
+                        
+                        StatsDuckDB stats = new StatsDuckDB(count, min, max, sum, mean, sumOfSquares);
+                        measureStats.put(measureIdx, stats);
+                    }
+                }
             }
+            
+            result.setStatsMap(finalStatsMap);
             
             long endTime = System.nanoTime();
             result.setExecutionTimeNanos(endTime - startTime);
             
-            LOG.debug("Query executed successfully. Rows: {}, Time: {} ns", 
-                result.getRowCount(), result.getExecutionTimeNanos());
+            LOG.debug("Query executed successfully. Rows: {}, Time: {} ns, Stats groups: {}", 
+                result.getRowCount(), result.getExecutionTimeNanos(), finalStatsMap.size());
         } catch (Exception e) {
             long endTime = System.nanoTime();
             result.setExecutionTimeNanos(endTime - startTime);
@@ -248,6 +374,27 @@ public class DuckDBQueryExecutor {
         
         return result;
     }
+
+    private Integer extractMeasureIndex(String columnName) {
+        // Extract measure index from column names like: count_column01, min_column02, etc.
+        String[] parts = columnName.split("_");
+        if (parts.length >= 2) {
+            String columnPart = parts[parts.length - 1]; // Get last part after split
+            if (columnPart.startsWith("column")) {
+                try {
+                    return Integer.parseInt(columnPart.substring(6)); // Extract number after "column"
+                } catch (NumberFormatException e) {
+                    LOG.debug("Could not parse measure index from column: {}", columnName);
+                }
+            }
+        }
+        return null;
+    }
+
+    private double mean(double sum, long count) {
+        return count > 0 ? sum / count : 0.0;
+    }
+
 
     public long getTableCreationTimeNanos() {
         return tableCreationTimeNanos;
@@ -306,13 +453,14 @@ public class DuckDBQueryExecutor {
     }
 
     /**
-     * Inner class to hold query results
+     * Inner class to hold query results with statistical aggregations
      */
     public static class QueryResult {
         private String query;
         private long rowCount;
         private long executionTimeNanos;
         private String error;
+        private Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> statsMap = new HashMap<>();
 
         public String getQuery() {
             return query;
@@ -356,6 +504,18 @@ public class DuckDBQueryExecutor {
 
         public boolean hasError() {
             return error != null;
+        }
+
+        public Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> getStatsMap() {
+            return statsMap;
+        }
+
+        public void setStatsMap(Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> statsMap) {
+            this.statsMap = statsMap;
+        }
+
+        public void addStats(ImmutableList<String> groupByKey, Integer measureIndex, StatsDuckDB stats) {
+            this.statsMap.computeIfAbsent(groupByKey, k -> new HashMap<>()).put(measureIndex, stats);
         }
     }
 }

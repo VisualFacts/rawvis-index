@@ -543,7 +543,7 @@ public class Experiments {
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
         
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound");
+            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound", "Query Result", "Query Result Sum");
         }
 
         try {
@@ -587,12 +587,19 @@ public class Experiments {
                     csvWriter.addValue(result.getExecutionTimeSeconds());
                     csvWriter.addValue(result.getQuery());
                     csvWriter.addValue(0);
+                    csvWriter.addValue(result.getStatsMap());
+                    csvWriter.addValue(result.getStatsMap() != null && result.getStatsMap().get(null) != null
+                    ? result.getStatsMap().get(null).entrySet().stream()
+                            .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
+                    : null);
                     csvWriter.writeValuesToRow();
                 } catch (Exception e) {
                     LOG.warn("Error executing query {}: {}", i, e.getMessage());
                     csvWriter.addValue(csv);
                     csvWriter.addValue(duckDbMode);
                     csvWriter.addValue(i);
+                    csvWriter.addValue(-1);
+                    csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
