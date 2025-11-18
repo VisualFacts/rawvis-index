@@ -62,7 +62,8 @@ public class Veti {
             throw new IllegalStateException("The index is already initialized");
 
         if (q0 != null) {
-            initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0, (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
+            initializationPolicy = InitializationPolicy.getInitializationPolicy(initMode, q0,
+                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, catNodeBudget, binCount);
             initializationPolicy.setSort(sort);
         }
 
@@ -80,8 +81,8 @@ public class Veti {
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
 
-
-        List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed().collect(Collectors.toList());
+        List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed()
+                .collect(Collectors.toList());
         HashSet<Integer> colIndexes = new HashSet<>();
 
         colIndexes.add(schema.getxColumn());
@@ -181,7 +182,8 @@ public class Veti {
 
         List<CategoricalColumn> groupByColumns = null;
         if (query.getGroupByCols() != null) {
-            groupByColumns = query.getGroupByCols().stream().map(index -> schema.getCategoricalColumn(index)).collect(Collectors.toList());
+            groupByColumns = query.getGroupByCols().stream().map(index -> schema.getCategoricalColumn(index))
+                    .collect(Collectors.toList());
         }
 
         QueryResults queryResults = new QueryResults(query);
@@ -200,7 +202,6 @@ public class Veti {
 
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
-
         Set<CategoricalColumn> catAttrsToRead = new HashSet<>();
         for (Tile leafTile : leafTiles) {
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
@@ -213,7 +214,9 @@ public class Veti {
             int count = 0;
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
-                if ((!isFullyContained || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(measureCol))) && node.getPoints() != null) {
+                if ((!isFullyContained
+                        || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(measureCol)))
+                        && node.getPoints() != null) {
                     count += node.getPoints().size();
                 }
             }
@@ -221,32 +224,37 @@ public class Veti {
             if (count > THRESHOLD) {
                 leafTile.split();
                 queryNodes = leafTile.getOverlappedLeafTiles(query).stream()
-                        .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream()).collect(Collectors.toList());
+                        .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
+                        .collect(Collectors.toList());
             }
 
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
 
-                //add unknown attrs for that node to cat attrs to read. These do not include only query attrs but also missing attrs in incomplete leaves
+                // add unknown attrs for that node to cat attrs to read. These do not include
+                // only query attrs but also missing attrs in incomplete leaves
                 catAttrsToRead.addAll(queryNode.getUnknownCatAttrs());
 
                 Map<Integer, Short> groupByValues = queryNode.getGroupByValues();
 
-                boolean hasUnknownAttrs = queryNode.getUnknownCatAttrs() != null && !queryNode.getUnknownCatAttrs().isEmpty();
+                boolean hasUnknownAttrs = queryNode.getUnknownCatAttrs() != null
+                        && !queryNode.getUnknownCatAttrs().isEmpty();
 
                 if (isFullyContained && hasUnknownAttrs && !initMode.equals("valinor")) {
                     nodesToExpand.add(queryNode);
                 }
 
-                //todo unknownCatAttrs may not be empty but including only attrs missing from the node but not present in the query
+                // todo unknownCatAttrs may not be empty but including only attrs missing from
+                // the node but not present in the query
                 if (isFullyContained && query.getMeasureCols().stream().allMatch(node::hasStats) && !hasUnknownAttrs) {
-                    ImmutableList<String> groupByValuesList = groupByColumns == null || groupByColumns.isEmpty() ? null :
-                            groupByColumns.stream().map(categoricalColumn -> {
+                    ImmutableList<String> groupByValuesList = groupByColumns == null || groupByColumns.isEmpty() ? null
+                            : groupByColumns.stream().map(categoricalColumn -> {
                                 return categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()));
                             }).collect(ImmutableList.toImmutableList());
-                            query.getMeasureCols().forEach(measureCol -> {
-                                queryResults.adjustStats(groupByValuesList, measureCol, queryNode.getNode().getStats(measureCol).snapshot());
-                            });
+                    query.getMeasureCols().forEach(measureCol -> {
+                        queryResults.adjustStats(groupByValuesList, measureCol,
+                                queryNode.getNode().getStats(measureCol).snapshot());
+                    });
                     nonRawNodes.add(queryNode);
                 } else {
                     rawIterators.add(new NodePointsIterator(queryNode));
@@ -276,7 +284,7 @@ public class Veti {
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
-            points.add(new float[]{point.getY(), point.getX()});
+            points.add(new float[] { point.getY(), point.getX() });
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 line = randomAccessReader.readLine();
@@ -312,10 +320,12 @@ public class Veti {
                         ImmutableList<String> groupByValuesList = null;
                         if (query.getGroupByCols() != null & !query.getGroupByCols().isEmpty()) {
                             String[] finalRow = row;
-                            groupByValuesList = groupByColumns.stream().map(categoricalColumn ->
-                                    queryNode.getGroupByValues().containsKey(categoricalColumn.getIndex()) ?
-                                            categoricalColumn.getValue(queryNode.getGroupByValues().get(categoricalColumn.getIndex())) :
-                                            finalRow[categoricalColumn.getIndex()]).collect(ImmutableList.toImmutableList());
+                            groupByValuesList = groupByColumns.stream().map(categoricalColumn -> queryNode
+                                    .getGroupByValues().containsKey(categoricalColumn.getIndex())
+                                            ? categoricalColumn.getValue(
+                                                    queryNode.getGroupByValues().get(categoricalColumn.getIndex()))
+                                            : finalRow[categoricalColumn.getIndex()])
+                                    .collect(ImmutableList.toImmutableList());
                         }
 
                         if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs())) {
@@ -326,7 +336,7 @@ public class Veti {
                     }
                 }
             } catch (Exception e) {
-                LOG.debug(e);
+                LOG.debug("An unexpected exception occurred: ", e);
             }
         }
         try {
@@ -335,7 +345,7 @@ public class Veti {
         }
         for (QueryNode node : nonRawNodes) {
             for (Point point : node) {
-                points.add(new float[]{point.getY(), point.getX()});
+                points.add(new float[] { point.getY(), point.getX() });
             }
         }
 
@@ -348,7 +358,7 @@ public class Veti {
         queryResults.setIoCount(ioCount);
         queryResults.setExpandedNodeCount(nodesToExpand.size());
         queryResults.setPoints(points);
-        
+
         Map<Integer, StatsAccumulator> rectStatsAccumulators = new HashMap<>();
         // Aggregate stats for each measure across all groups
         queryResults.getStats().forEach((groupByValues, measureStats) -> {
@@ -398,7 +408,6 @@ public class Veti {
     public int getLeafTileCount() {
         return this.grid.getLeafTileCount();
     }
-
 
     public int getMaxDepth() {
         return grid.getMaxDepth();
