@@ -484,11 +484,13 @@ public class Experiments {
             csvWriter.addValue(queryResults.getExpandedNodeCount());
             csvWriter.addValue(queryResults.getIoCount());
             csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getConfidenceIntervals().entrySet().stream()
-                            .collect(Collectors.toMap(
-                                    Map.Entry::getKey,
-                                    e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
-                            .toString());
+            csvWriter.addValue(queryResults.getConfidenceIntervals() != null
+                            ? queryResults.getConfidenceIntervals().entrySet().stream()
+                                    .collect(Collectors.toMap(
+                                            Map.Entry::getKey,
+                                            e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
+                                    .toString()
+                            : "null");
             csvWriter.addValue(queryResults.getErrorBounds());
             csvWriter.addValue(run);
             csvWriter.writeValuesToRow();
