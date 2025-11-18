@@ -318,7 +318,7 @@ public class Veti {
                             }
                         }
                         ImmutableList<String> groupByValuesList = null;
-                        if (query.getGroupByCols() != null & !query.getGroupByCols().isEmpty()) {
+                        if (query.getGroupByCols() != null && !query.getGroupByCols().isEmpty()) {
                             String[] finalRow = row;
                             groupByValuesList = groupByColumns.stream().map(categoricalColumn -> queryNode
                                     .getGroupByValues().containsKey(categoricalColumn.getIndex())
