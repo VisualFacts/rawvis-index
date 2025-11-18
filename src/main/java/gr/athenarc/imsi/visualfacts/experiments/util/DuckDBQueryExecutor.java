@@ -257,16 +257,20 @@ public class DuckDBQueryExecutor {
             }
         }).collect(Collectors.toList());
         
+        // Format xCol and yCol with the same naming convention
+        String formattedXCol = formatColumnName(xCol, useTwoDigitFormat);
+        String formattedYCol = formatColumnName(yCol, useTwoDigitFormat);
+        
         LOG.debug("Using {} digit format for column names (dataset has {} columns)", 
             useTwoDigitFormat ? "two" : "single", columnCount);
         
         switch(mode) {
             case DIRECT_CSV:
-                return executeQueryDirectCSV(ranges, measureColsString, xCol, yCol);
+                return executeQueryDirectCSV(ranges, measureColsString, formattedXCol, formattedYCol);
             case TABLE:
-                return executeQueryWithTable(ranges, measureColsString, xCol, yCol);
+                return executeQueryWithTable(ranges, measureColsString, formattedXCol, formattedYCol);
             case SPATIAL_INDEX:
-                return executeQueryWithSpatialIndex(ranges, measureColsString, xCol, yCol);
+                return executeQueryWithSpatialIndex(ranges, measureColsString, formattedXCol, formattedYCol);
             default:
                 throw new IllegalArgumentException("Unknown execution mode: " + mode);
         }
@@ -411,6 +415,30 @@ public class DuckDBQueryExecutor {
 
     private double mean(double sum, long count) {
         return count > 0 ? sum / count : 0.0;
+    }
+
+    /**
+     * Format a column name (or column index) with the appropriate naming convention.
+     * Converts strings like "0", "1", "column0" to "column0" or "column00" format.
+     */
+    private String formatColumnName(String colName, boolean useTwoDigitFormat) {
+        // Extract the numeric part if it's just a number or already formatted
+        String numberPart = colName;
+        if (colName.startsWith("column")) {
+            numberPart = colName.substring(6);
+        }
+        
+        try {
+            int colIndex = Integer.parseInt(numberPart);
+            if (useTwoDigitFormat) {
+                return "column" + String.format("%02d", colIndex);
+            } else {
+                return "column" + colIndex;
+            }
+        } catch (NumberFormatException e) {
+            LOG.debug("Could not parse column index from: {}, using as-is", colName);
+            return colName; // Return original if parsing fails
+        }
     }
 
     /**
