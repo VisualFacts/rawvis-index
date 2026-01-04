@@ -41,7 +41,7 @@ public class ScenarioRunnerTest {
         IndexConfig.GRID_SIZE = Integer.getInteger("grid.size", 50); // e.g. smaller grid for tests with smaller datasets, important for approximate queries
 
         csvPath = Paths.get(ScenarioRunnerTest.class.getClassLoader()
-                .getResource("data/data_10_cols_1M.csv").toURI());
+                .getResource("data/data_10_cols_1K.csv").toURI());
         schema = new Schema(csvPath.toString(), ',',
                 0, 1, Arrays.asList(2, 3, 4, 5, 6, 7, 8, 9),
                 new Rectangle(Range.closed(0f, 1000f), Range.closed(0f, 1000f)),

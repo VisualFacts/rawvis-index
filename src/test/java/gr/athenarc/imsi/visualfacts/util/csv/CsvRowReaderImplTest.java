@@ -17,7 +17,7 @@ class CsvRowReaderImplTest {
 
     @Test
     void customReaderMatchesUnivocity() throws IOException {
-        Path csvPath = Paths.get("src/test/resources/data/data_10_cols_1K.csv");
+        Path csvPath = Paths.get("src/test/resources/data/data_10_cols_10M.csv");
 
         CsvReaderConfig config = new CsvReaderConfig(
                 csvPath.toFile(),
@@ -43,7 +43,7 @@ class CsvRowReaderImplTest {
                 uniOffset = uni.currentOffset();
                 assertArrayEquals(uniRow, customRow, "Row mismatch at index " + rowCount);
                 assertEquals(uniOffset, customOffset, "Offset mismatch at index " + rowCount);
-                if (rowCount < 5) {
+                if (rowCount % 1000000 == 0) {
                     LOG.info("Row " + rowCount + ": " + Arrays.toString(customRow) +
                             " offset=" + customOffset + " (uni offset=" + uniOffset + ")");
                 }
