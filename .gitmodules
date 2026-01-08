@@ -1,0 +1,6 @@
+[submodule "native/third_party/fast_float"]
+	path = native/third_party/fast_float
+	url = https://github.com/fastfloat/fast_float.git
+[submodule "native/third_party/zsv"]
+	path = native/third_party/zsv
+	url = https://github.com/liquidaty/zsv.git
