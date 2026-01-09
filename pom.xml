@@ -157,6 +157,7 @@
                 <version>3.2.5</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
+                    <argLine>-Djava.library.path=${project.basedir}/native/build</argLine>
                 </configuration>
             </plugin>
             <plugin>
@@ -207,6 +208,53 @@
 
                 </executions>
             </plugin>
+            <!-- Build native JNI code -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+
+                    <!-- Configure -->
+                    <execution>
+                        <id>cmake-configure</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <workingDirectory>${project.basedir}/native</workingDirectory>
+                            <executable>cmake</executable>
+                            <arguments>
+                                <argument>-S</argument>
+                                <argument>.</argument>
+                                <argument>-B</argument>
+                                <argument>build</argument>
+                                <argument>-DCMAKE_BUILD_TYPE=Release</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- Build -->
+                    <execution>
+                        <id>cmake-build</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <workingDirectory>${project.basedir}/native</workingDirectory>
+                            <executable>cmake</executable>
+                            <arguments>
+                                <argument>--build</argument>
+                                <argument>build</argument>
+                                <argument>-j</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+
+                </executions>
+            </plugin>
+
         </plugins>
         <pluginManagement>
             <plugins>

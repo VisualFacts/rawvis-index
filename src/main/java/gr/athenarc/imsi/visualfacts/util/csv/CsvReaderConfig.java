@@ -11,15 +11,15 @@ public final class CsvReaderConfig {
     private final File file;
     private final Charset charset;
     private final int[] selectedColumns;
-    private final boolean headerExtraction;
+    private final boolean skipHeader;
     private final char delimiter;
 
     public CsvReaderConfig(File file, Charset charset, int[] selectedColumns,
-                           boolean headerExtraction, char delimiter) {
+                           boolean skipHeader, char delimiter) {
         this.file = file;
         this.charset = charset;
         this.selectedColumns = selectedColumns == null ? null : Arrays.copyOf(selectedColumns, selectedColumns.length);
-        this.headerExtraction = headerExtraction;
+        this.skipHeader = skipHeader;
         this.delimiter = delimiter;
     }
 
@@ -33,13 +33,13 @@ public final class CsvReaderConfig {
 
     public int[] getSelectedColumns() {
         return selectedColumns == null ? null : Arrays.copyOf(selectedColumns, selectedColumns.length);
-    }
-
-    public boolean isHeaderExtraction() {
-        return headerExtraction;
-    }
+    }    
 
     public char getDelimiter() {
         return delimiter;
+    }
+
+    public boolean isSkipHeader() {
+        return skipHeader;
     }
 }

@@ -8,7 +8,7 @@ import com.univocity.parsers.csv.CsvParserSettings;
 /**
  * CsvRowReader backed by Univocity CsvParser.
  */
-public class UnivocityCsvRowReader implements CsvRowReader {
+public class UnivocityCsvFloatRowReader implements CsvFloatRowReader {
     private CsvParser parser;
     private long lastOffset;
 
@@ -25,7 +25,7 @@ public class UnivocityCsvRowReader implements CsvRowReader {
             }
             settings.selectIndexes(boxed);
         }
-        settings.setColumnReorderingEnabled(false);
+        settings.setColumnReorderingEnabled(true);
 
         parser = new CsvParser(settings);
         if (config.getFile() != null) {
@@ -35,17 +35,24 @@ public class UnivocityCsvRowReader implements CsvRowReader {
     }
 
     @Override
-    public String[] nextRow() {
+    public float[] nextRow() {
         if (parser == null) {
             return null;
         }
         lastOffset = parser.getContext().currentChar() - 1;
-        return parser.parseNext();
-    }
-
-    @Override
-    public String[] parseLine(String line) {
-        return parser == null ? null : parser.parseLine(line);
+        String[] row = parser.parseNext();
+        if (row == null) {
+            return null;
+        }
+        float[] floatRow = new float[row.length];
+        for (int i = 0; i < row.length; i++) {
+            if (row[i] == null || row[i].isEmpty()) {
+                floatRow[i] = Float.NaN;
+            } else {
+                floatRow[i] = Float.parseFloat(row[i]);
+            }
+        }
+        return floatRow;
     }
 
     @Override
