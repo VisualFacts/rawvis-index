@@ -97,4 +97,51 @@ public class Rectangle implements Serializable {
     public int hashCode() {
         return Objects.hash(xRange, yRange);
     }
+
+    /**
+     * Deserializes a Rectangle from a string format created by toString().
+     * Format: xRange,yRange (e.g., "(1.0..2.0),[3.0..4.0)")
+     */
+    public static Rectangle fromString(String str) {
+        String[] parts = str.split(",", 2);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid rectangle format: " + str);
+        }
+        
+        Range<Float> xRange = parseRange(parts[0]);
+        Range<Float> yRange = parseRange(parts[1]);
+        
+        return new Rectangle(xRange, yRange);
+    }
+
+    /**
+     * Helper method to parse Range from string format.
+     * Handles formats like "(1.0..2.0)", "[1.0..2.0]", "(1.0..2.0]", "[1.0..2.0)"
+     */
+    private static Range<Float> parseRange(String rangeStr) {
+        rangeStr = rangeStr.trim();
+        
+        boolean leftOpen = rangeStr.startsWith("(");
+        boolean rightOpen = rangeStr.endsWith(")");
+        
+        // Remove brackets
+        String content = rangeStr.substring(1, rangeStr.length() - 1);
+        String[] values = content.split("\\.\\.");
+        if (values.length != 2) {
+            throw new IllegalArgumentException("Invalid range format: " + rangeStr);
+        }
+        
+        Float lower = Float.parseFloat(values[0]);
+        Float upper = Float.parseFloat(values[1]);
+        
+        if (leftOpen && rightOpen) {
+            return Range.open(lower, upper);
+        } else if (leftOpen && !rightOpen) {
+            return Range.openClosed(lower, upper);
+        } else if (!leftOpen && rightOpen) {
+            return Range.closedOpen(lower, upper);
+        } else {
+            return Range.closed(lower, upper);
+        }
+    }
 }

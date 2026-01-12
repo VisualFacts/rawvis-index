@@ -2,7 +2,9 @@ package gr.athenarc.imsi.visualfacts.experiments;
 
 import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -127,6 +129,9 @@ public class Experiments {
     @Parameter(names = "-run")
     private Integer run;
 
+    @Parameter(names = "-queries", description = "Path to file containing saved query sequence (one query per line)")
+    private String queriesFile;
+
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
 
@@ -158,6 +163,9 @@ public class Experiments {
             case "timeDuckDBQueries":
                 Preconditions.checkNotNull(duckDbMode, "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
                 timeDuckDBQueries();
+                break;
+            case "generateAndSaveQuerySequence":
+                generateAndSaveQuerySequence();
                 break;
             case "findBounds":
                 findBounds();
@@ -525,7 +533,12 @@ public class Experiments {
         return schema;
     }
 
-    private List<Query> generateQuerySequence(Query q0, Schema schema) {
+    private List<Query> generateQuerySequence(Query q0, Schema schema) throws IOException {
+        // If queries file is provided, read from it instead of generating new queries
+        if (queriesFile != null && !queriesFile.isEmpty()) {
+            return loadQueriesFromFile(queriesFile);
+        }
+        
         Preconditions.checkNotNull(seqCount, "No sequence count specified.");
         Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
         Preconditions.checkNotNull(maxShift, "Max query shift must be specified.");
@@ -534,6 +547,24 @@ public class Experiments {
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
                 maxFilters, zoomFactor);
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
+    }
+
+    /**
+     * Loads query sequence from a file.
+     * Each line in the file should contain a serialized query.
+     */
+    private List<Query> loadQueriesFromFile(String filePath) throws IOException {
+        List<Query> queries = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    queries.add(Query.fromSerializedString(line));
+                }
+            }
+        }
+        LOG.info("Loaded {} queries from file: {}", queries.size(), filePath);
+        return queries;
     }
 
     private void timeDuckDBQueries() throws IOException {
@@ -631,6 +662,31 @@ public class Experiments {
             default:
                 throw new IllegalArgumentException("Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, spatialIndex");
         }
+    }
+
+    /**
+     * Generates query sequence and saves it to a file.
+     * Each query is serialized as a string representation.
+     * This ensures reproducibility when running from the saved sequence.
+     */
+    private void generateAndSaveQuerySequence() throws IOException {
+        Preconditions.checkNotNull(outFile, "No out file specified.");
+
+        Schema schema = getSchemaWithSampling();
+
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCols);
+        List<Query> sequence = generateQuerySequence(q0, schema);
+
+        // Save queries to file
+        try (FileWriter writer = new FileWriter(outFile)) {
+            for (int i = 0; i < sequence.size(); i++) {
+                Query query = sequence.get(i);
+                writer.write(query.toSerializedString());
+                writer.write("\n");
+            }
+        }
+        
+        LOG.info("Generated and saved {} queries to {}", sequence.size(), outFile);
     }
 
 }
