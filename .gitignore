@@ -10,3 +10,5 @@ native/build/
 # Ignore log files (mostly experiment logs)
 *.log
 experiments/**/*.log
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
