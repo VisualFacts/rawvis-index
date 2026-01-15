@@ -1,11 +1,11 @@
-package gr.athenarc.imsi.visualfacts.util.csv;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Measurement;
@@ -26,15 +26,34 @@ import org.openjdk.jmh.annotations.Warmup;
 @org.openjdk.jmh.annotations.Fork(2)
 public class CsvRowReaderBenchmark {
 
+    private static final Logger LOG = LogManager.getLogger(CsvRowReaderBenchmark.class);
+
     @State(Scope.Thread)
     public static class ReaderState {
-        Path file = Paths.get("/home/stavmars/data/data_10_cols.csv");
-        CsvReaderConfig config = new CsvReaderConfig(
-            file.toFile(),
-            StandardCharsets.UTF_8,
+        Path file;
+        CsvReaderConfig config;
+
+        public ReaderState() {
+            String csvPathStr = System.getProperty("csv.path");
+            if (csvPathStr == null) {
+                try {
+                    file = Paths.get(CsvRowReaderBenchmark.class.getClassLoader()
+                        .getResource("data/data_10_cols_1K.csv").toURI());
+                    LOG.info("Using default benchmark CSV: data/data_10_cols_1K.csv");
+                } catch (Exception e) {
+                    throw new RuntimeException("Default CSV resource not found", e);
+                }
+            } else {
+                file = Paths.get(csvPathStr);
+                LOG.info("Using CSV from system property: {}", csvPathStr);
+            }
+            config = new CsvReaderConfig(
+                file.toFile(),
+                StandardCharsets.UTF_8,
                 new int[] { 1, 2, 4, 9 },
                 false,
-            ',');
+                ',');
+        }
     }
 
     @Benchmark

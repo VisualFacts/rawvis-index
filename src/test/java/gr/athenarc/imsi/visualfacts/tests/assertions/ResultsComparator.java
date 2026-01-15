@@ -6,24 +6,24 @@ import java.util.Map;
 
 import com.google.common.math.Stats;
 
+import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.StatsDuckDB;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 
 public final class ResultsComparator {
     private ResultsComparator() {}
 
-    public static void assertClose(QueryResults expected, QueryResults actual, double relTol) {
-        Map<Integer, Stats> exp = expected.getRectStats();
+    public static void assertClose(Map<Integer, StatsDuckDB> expected, QueryResults actual, double relTol) {
         Map<Integer, Stats> act = actual.getRectStats();
-        assertThat(exp)
-            .as("expected rectStats must be present")
+        assertThat(expected)
+            .as("expected must be present")
             .isNotNull();
         assertThat(act)
             .as("actual rectStats must be present")
             .isNotNull();
 
-        assertThat(act.keySet()).as("measures present").isEqualTo(exp.keySet());
-        for (Integer measure : exp.keySet()) {
-            Stats es = exp.get(measure);
+        assertThat(act.keySet()).as("measures present").isEqualTo(expected.keySet());
+        for (Integer measure : expected.keySet()) {
+            StatsDuckDB es = expected.get(measure);
             Stats as = act.get(measure);
             
             double eSum = es == null ? 0.0 : es.sum();
