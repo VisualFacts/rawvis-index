@@ -573,7 +573,7 @@ public class Experiments {
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
+        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
         
         if (addHeader) {
             csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound", "Query Result", "Query Result Sum");
@@ -620,9 +620,8 @@ public class Experiments {
                     csvWriter.addValue(i == 0 ? result.getExecutionTimeSeconds() + tableCreationTimeMs / 1000.0 : result.getExecutionTimeSeconds());
                     csvWriter.addValue(result.getQuery());
                     csvWriter.addValue(0);
-                    csvWriter.addValue(result.getStatsMap());
-                    csvWriter.addValue(result.getStatsMap() != null && result.getStatsMap().get(null) != null
-                    ? result.getStatsMap().get(null).entrySet().stream()
+                    csvWriter.addValue(result.getMeasureStats());
+                    csvWriter.addValue(result.getMeasureStats() != null? result.getMeasureStats().entrySet().stream()
                             .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
                     : null);
                     csvWriter.writeValuesToRow();

@@ -1,5 +1,6 @@
 package gr.athenarc.imsi.visualfacts.query;
 
+import java.util.Arrays;
 import java.util.Map;
 
 public class ApproximateQueryResults extends QueryResults {
@@ -31,12 +32,17 @@ public class ApproximateQueryResults extends QueryResults {
 
     @Override
     public String toString() {
-        return "QueryResults{" +
+        String ciStr = "{";
+        if (confidenceIntervals != null && !confidenceIntervals.isEmpty()) {
+            ciStr += confidenceIntervals.entrySet().stream()
+                    .map(e -> e.getKey() + ":" + Arrays.toString(e.getValue()))
+                    .reduce((a, b) -> a + ", " + b).orElse("");
+        }
+        ciStr += "}";
+        return "ApproximateQueryResults{" +
                 "query=" + getQuery() +
-                ", confidenceIntervals=" + confidenceIntervals +
+                ", confidenceIntervals=" + ciStr +
                 ", errorBounds=" + errorBounds +
-                ", stats=" + getStats() +
-                ", rectStats=" + getRectStats() +
                 ", ioCount=" + getIoCount() +
                 '}';
     }

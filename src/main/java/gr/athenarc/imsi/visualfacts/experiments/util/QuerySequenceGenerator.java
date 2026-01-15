@@ -47,7 +47,7 @@ public class QuerySequenceGenerator {
             }
         }
         Random opRand = new Random(0);
-        List<UserOpType> ops = Arrays.asList(new UserOpType[]{P, P, ZI, ZO});
+        List<UserOpType> ops = Arrays.asList(new UserOpType[]{P, P, P, ZI, ZO});
 
         EnumeratedDistribution<CategoricalColumn> colDistribution = null;
         if (!catColPairs.isEmpty()) {

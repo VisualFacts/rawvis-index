@@ -10,17 +10,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.query.Query;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 /**
- * Utility class for executing SQL queries in DuckDB with three different strategies:
+ * Utility class for executing SQL queries in DuckDB with three different
+ * strategies:
  * 1. Direct query on CSV file
  * 2. Query on table created from CSV
  * 3. Query on table with spatial R-tree index
@@ -28,8 +29,10 @@ import org.apache.logging.log4j.Logger;
 public class DuckDBQueryExecutor {
 
     /**
-     * Wrapper class for DuckDB aggregation statistics that mimics Guava's Stats interface.
-     * This class holds summary statistics computed directly from SQL aggregation functions.
+     * Wrapper class for DuckDB aggregation statistics that mimics Guava's Stats
+     * interface.
+     * This class holds summary statistics computed directly from SQL aggregation
+     * functions.
      */
     public static class StatsDuckDB {
         private final long count;
@@ -73,21 +76,24 @@ public class DuckDBQueryExecutor {
         }
 
         public double populationStandardDeviation() {
-            if (count <= 0) return 0.0;
+            if (count <= 0)
+                return 0.0;
             double variance = (sumOfSquares / count) - (mean * mean);
             return Math.sqrt(Math.max(0, variance));
         }
 
         public double sampleStandardDeviation() {
-            if (count <= 1) return 0.0;
+            if (count <= 1)
+                return 0.0;
             double variance = (sumOfSquares - (sum * sum / count)) / (count - 1);
             return Math.sqrt(Math.max(0, variance));
         }
 
         @Override
         public String toString() {
-            return String.format("StatsDuckDB{count=%d, min=%.4f, max=%.4f, mean=%.4f, populationStandardDeviation=%.4f}",
-                    count, min, max, mean, populationStandardDeviation());
+            return String.format(
+                    "StatsDuckDB{count=%d, min=%.4f, max=%.4f, sum=%.4f, mean=%.4f, sumOfSquares=%.4f, populationStandardDeviation=%.4f, sampleStandardDeviation=%.4f}",
+                    count, min, max, sum, mean, sumOfSquares, populationStandardDeviation(), sampleStandardDeviation());
         }
     }
 
@@ -145,7 +151,7 @@ public class DuckDBQueryExecutor {
         }
 
         try {
-            switch(mode) {
+            switch (mode) {
                 case DIRECT_CSV:
                     LOG.info("Direct CSV mode: no table/index creation needed");
                     break;
@@ -168,20 +174,21 @@ public class DuckDBQueryExecutor {
         }
     }
 
+
     private void createTableFromCSV() throws Exception {
         long startTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
             stmt.execute("SET memory_limit = '8GB'");
             String createTableQuery = String.format(
-                "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', ignore_errors = true);",
-                tableName, csvPath
-            );
+                    "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', ignore_errors = true);",
+                    tableName, csvPath);
             LOG.info("Creating table from CSV: {}", createTableQuery);
             stmt.execute(createTableQuery);
             LOG.info("Table {} created successfully", tableName);
         }
         long endTime = System.nanoTime();
         tableCreationTimeNanos = endTime - startTime;
+        LOG.info("Table creation time: {} s", tableCreationTimeNanos / 1_000_000_000.0);
     }
 
     private void createTableWithSpatialIndex() throws Exception {
@@ -196,9 +203,8 @@ public class DuckDBQueryExecutor {
             stmt.execute("SET memory_limit = '8GB'");
             // Create table from CSV with geometry column in a single statement
             String createTableWithGeomQuery = String.format(
-                "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', ignore_errors = true);",
-                tableName, xCol, yCol, csvPath
-            );
+                    "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', ignore_errors = true);",
+                    tableName, xCol, yCol, csvPath);
             LOG.info("Creating table from CSV with geometry column: {}", createTableWithGeomQuery);
             stmt.execute(createTableWithGeomQuery);
             LOG.info("Table {} created with geometry column", tableName);
@@ -211,9 +217,8 @@ public class DuckDBQueryExecutor {
             // Create R-tree spatial index on the geometry column
             String indexName = "spatial_index_" + tableName;
             String createIndexQuery = String.format(
-                "CREATE INDEX %s ON %s USING RTREE (geometry);",
-                indexName, tableName
-            );
+                    "CREATE INDEX %s ON %s USING RTREE (geometry);",
+                    indexName, tableName);
             LOG.info("Creating R-tree spatial index on geometry column: {}", createIndexQuery);
             stmt.execute(createIndexQuery);
             LOG.info("Spatial index {} created successfully", indexName);
@@ -221,7 +226,6 @@ public class DuckDBQueryExecutor {
         long indexEndTime = System.nanoTime();
         indexCreationTimeNanos = indexEndTime - indexStartTime;
     }
-
 
     private List<Range<Float>> extractRangesFromQuery(Query query) {
         List<Range<Float>> ranges = new ArrayList<>();
@@ -235,7 +239,8 @@ public class DuckDBQueryExecutor {
 
     /**
      * Execute query based on the configured execution mode.
-     * This method handles mode distinction and delegates to appropriate execution strategy.
+     * This method handles mode distinction and delegates to appropriate execution
+     * strategy.
      */
     public QueryResult executeQuery(Query query) throws Exception {
         if (mode == null) {
@@ -244,11 +249,11 @@ public class DuckDBQueryExecutor {
 
         LOG.info("Executing query in {} mode", mode);
         List<Range<Float>> ranges = extractRangesFromQuery(query);
-        
+
         // Determine column naming format based on actual dataset column count
         int columnCount = getDatasetColumnCount();
         boolean useTwoDigitFormat = columnCount > 10;
-        
+
         List<String> measureColsString = query.getMeasureCols().stream().map(col -> {
             if (useTwoDigitFormat) {
                 return "column" + String.format("%02d", col);
@@ -256,15 +261,12 @@ public class DuckDBQueryExecutor {
                 return "column" + col;
             }
         }).collect(Collectors.toList());
-        
+
         // Format xCol and yCol with the same naming convention
         String formattedXCol = formatColumnName(xCol, useTwoDigitFormat);
         String formattedYCol = formatColumnName(yCol, useTwoDigitFormat);
-        
-        LOG.debug("Using {} digit format for column names (dataset has {} columns)", 
-            useTwoDigitFormat ? "two" : "single", columnCount);
-        
-        switch(mode) {
+
+        switch (mode) {
             case DIRECT_CSV:
                 return executeQueryDirectCSV(ranges, measureColsString, formattedXCol, formattedYCol);
             case TABLE:
@@ -279,70 +281,67 @@ public class DuckDBQueryExecutor {
     /**
      * Version 1: Run query directly on CSV file
      */
-    public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol) throws Exception {
+    public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
+            throws Exception {
 
         String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, xCol, yCol);
 
-        LOG.debug("Executing direct CSV query: {}", query);
+        LOG.trace("Executing direct CSV query: {}", query);
         return executeQueryWithTiming(query);
     }
 
     /**
      * Version 2: Run query on pre-created table
      */
-    public QueryResult executeQueryWithTable(List<Range<Float>> ranges,  List<String> aggCols, String xCol, String yCol) throws Exception {
+    public QueryResult executeQueryWithTable(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
+            throws Exception {
         String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, xCol, yCol);
 
-        LOG.debug("Executing table query: {}", query);
+        LOG.trace("Executing table query: {}", query);
         return executeQueryWithTiming(query);
     }
 
     /**
      * Version 3: Run query on table with spatial R-tree index
      */
-    public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol) throws Exception {
+    public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol,
+            String yCol) throws Exception {
         String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols);
 
-        LOG.debug("Executing spatial index query: {}", query);
+        LOG.trace("Executing spatial index query: {}", query);
         return executeQueryWithTiming(query);
     }
 
     private QueryResult executeQueryWithTiming(String query) throws Exception {
         QueryResult result = new QueryResult();
         result.setQuery(query);
-        
+
         long startTime = System.nanoTime();
-        
+
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
-            
-            Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> finalStatsMap = new HashMap<>();
-            
+                ResultSet rs = stmt.executeQuery(query)) {
+
+            Map<Integer, StatsDuckDB> measureStats = new HashMap<>();
+
             while (rs.next()) {
                 result.incrementRowCount();
-                
-                // Parse results and collect stats
-                // Group key is empty list (since single query returns single group)
-                ImmutableList<String> groupKey = ImmutableList.of();
-                
-                Map<Integer, StatsDuckDB> measureStats = finalStatsMap.computeIfAbsent(
-                    groupKey, k -> new HashMap<>()
-                );
-                
+
                 // Process each aggregation column's statistics
-                // Assuming column names follow pattern: count_*, min_*, max_*, sum_*, avg_*, sum_of_squares_*
+                // Assuming column names follow pattern: count_*, min_*, max_*, sum_*, avg_*,
+                // sum_of_squares_*
                 Map<Integer, Double[]> statsData = new HashMap<>(); // [count, min, max, sum, avg, sum_sq]
-                
+
                 for (int colIdx = 1; colIdx <= rs.getMetaData().getColumnCount(); colIdx++) {
                     String colName = rs.getMetaData().getColumnName(colIdx);
-                    
+
                     // Extract measure index from column name
                     Integer measureIdx = extractMeasureIndex(colName);
-                    if (measureIdx == null) continue;
-                    
+                    if (measureIdx == null)
+                        continue;
+
                     Double[] data = statsData.computeIfAbsent(measureIdx, k -> new Double[6]);
                     double value = rs.getDouble(colIdx);
-                    
+
                     if (colName.startsWith("count_")) {
                         data[0] = value;
                     } else if (colName.startsWith("min_")) {
@@ -357,12 +356,12 @@ public class DuckDBQueryExecutor {
                         data[5] = value;
                     }
                 }
-                
+
                 // Build StatsDuckDB objects from collected data
                 for (Map.Entry<Integer, Double[]> entry : statsData.entrySet()) {
                     Integer measureIdx = entry.getKey();
                     Double[] data = entry.getValue();
-                    
+
                     if (data[0] != null && data[3] != null && data[5] != null) {
                         long count = data[0].longValue();
                         double sum = data[3];
@@ -370,20 +369,21 @@ public class DuckDBQueryExecutor {
                         double mean = mean(sum, count);
                         double min = data[1] != null ? data[1] : Double.NaN;
                         double max = data[2] != null ? data[2] : Double.NaN;
-                        
+
                         StatsDuckDB stats = new StatsDuckDB(count, min, max, sum, mean, sumOfSquares);
                         measureStats.put(measureIdx, stats);
                     }
                 }
             }
-            
-            result.setStatsMap(finalStatsMap);
-            
+
+            result.setMeasureStats(measureStats);
+
             long endTime = System.nanoTime();
             result.setExecutionTimeNanos(endTime - startTime);
-            
-            LOG.debug("Query executed successfully. Rows: {}, Time: {} ns, Stats groups: {}", 
-                result.getRowCount(), result.getExecutionTimeNanos(), finalStatsMap.size());
+
+            LOG.debug("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
+                    result.getRowCount(), result.getExecutionTimeNanos());
+            LOG.trace("DuckDB query results: {}", measureStats);
         } catch (Exception e) {
             long endTime = System.nanoTime();
             result.setExecutionTimeNanos(endTime - startTime);
@@ -391,12 +391,13 @@ public class DuckDBQueryExecutor {
             LOG.error("Query execution failed", e);
             throw e;
         }
-        
+
         return result;
     }
 
     private Integer extractMeasureIndex(String columnName) {
-        // Extract measure index from column names like: count_column0, min_column1, ..., count_column09, count_column10, etc.
+        // Extract measure index from column names like: count_column0, min_column1,
+        // ..., count_column09, count_column10, etc.
         String[] parts = columnName.split("_");
         if (parts.length >= 2) {
             String columnPart = parts[parts.length - 1]; // Get last part after split
@@ -418,7 +419,8 @@ public class DuckDBQueryExecutor {
     }
 
     /**
-     * Format a column name (or column index) with the appropriate naming convention.
+     * Format a column name (or column index) with the appropriate naming
+     * convention.
      * Converts strings like "0", "1", "column0" to "column0" or "column00" format.
      */
     private String formatColumnName(String colName, boolean useTwoDigitFormat) {
@@ -427,7 +429,7 @@ public class DuckDBQueryExecutor {
         if (colName.startsWith("column")) {
             numberPart = colName.substring(6);
         }
-        
+
         try {
             int colIndex = Integer.parseInt(numberPart);
             if (useTwoDigitFormat) {
@@ -474,12 +476,11 @@ public class DuckDBQueryExecutor {
      */
     private int getTableColumnCount() throws Exception {
         String query = String.format(
-            "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = '%s';",
-            tableName
-        );
-        
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = '%s';",
+                tableName);
+
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+                ResultSet rs = stmt.executeQuery(query)) {
             if (rs.next()) {
                 return rs.getInt(1);
             }
@@ -492,12 +493,11 @@ public class DuckDBQueryExecutor {
      */
     private int getCSVColumnCount() throws Exception {
         String query = String.format(
-            "SELECT COUNT(*) FROM (SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0) AS t;",
-            csvPath
-        );
-        
+                "SELECT COUNT(*) FROM (SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0) AS t;",
+                csvPath);
+
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+                ResultSet rs = stmt.executeQuery(query)) {
             // This approach gets column count by checking metadata
             if (rs.next()) {
                 return rs.getMetaData().getColumnCount();
@@ -505,7 +505,6 @@ public class DuckDBQueryExecutor {
         }
         return 10; // default
     }
-
 
     public long getTableCreationTimeNanos() {
         return tableCreationTimeNanos;
@@ -571,7 +570,7 @@ public class DuckDBQueryExecutor {
         private long rowCount;
         private long executionTimeNanos;
         private String error;
-        private Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> statsMap = new HashMap<>();
+        private Map<Integer, StatsDuckDB> measureStats = new HashMap<>();
 
         public String getQuery() {
             return query;
@@ -617,17 +616,19 @@ public class DuckDBQueryExecutor {
             return error != null;
         }
 
-        public Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> getStatsMap() {
-            return statsMap;
+        public Map<Integer, StatsDuckDB> getMeasureStats() {
+            return measureStats;
         }
 
-        public void setStatsMap(Map<ImmutableList<String>, Map<Integer, StatsDuckDB>> statsMap) {
-            this.statsMap = statsMap;
+        public void setMeasureStats(Map<Integer, StatsDuckDB> measureStats) {
+            this.measureStats = measureStats;
         }
 
-        public void addStats(ImmutableList<String> groupByKey, Integer measureIndex, StatsDuckDB stats) {
-            this.statsMap.computeIfAbsent(groupByKey, k -> new HashMap<>()).put(measureIndex, stats);
+        @Override
+        public String toString() {
+            return String.format(
+                    "DuckDBQueryResult{measureStats=%s}", measureStats);
         }
+
     }
 }
-

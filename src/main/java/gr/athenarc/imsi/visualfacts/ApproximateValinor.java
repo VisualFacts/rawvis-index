@@ -30,8 +30,8 @@ import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
-import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 
 public class ApproximateValinor {
@@ -110,7 +110,7 @@ public class ApproximateValinor {
                 selectedColumns,
                 schema.getHasHeader(),
                 DELIMITER);
-        CsvFloatRowReader rowReader = new UnivocityCsvFloatRowReader();
+        CsvFloatRowReader rowReader = new ZsvCsvFloatRowReader();
 
         objectsIndexed = 0;
         int objectsSkipped = 0; // Counter for skipped rows
@@ -150,9 +150,9 @@ public class ApproximateValinor {
                     node.adjustStats((short) (int) measureCol, value);
                 }
 
-                if (++objectsIndexed % 1000000 == 0) {
+                int logInterval = Math.max(1, schema.getObjectCount() / 10);
+                if (++objectsIndexed % logInterval == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
-                    LOG.debug("Row: " + Arrays.toString(row));
                     LOG.debug(point);
                 }
 

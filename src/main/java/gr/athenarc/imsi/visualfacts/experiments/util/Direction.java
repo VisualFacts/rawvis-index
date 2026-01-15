@@ -40,16 +40,6 @@ public enum Direction {
         directionPairs.add(new Pair<>(SE, 0.5d));
         directionPairs.add(new Pair<>(SW, 0.5d));*/
 
-      /*  //NETWORK 10%shift
-        directionPairs.add(new Pair<>(N, 0.5d));
-        directionPairs.add(new Pair<>(E, 0.5d));
-        directionPairs.add(new Pair<>(S, 0.5d));
-        directionPairs.add(new Pair<>(W, 2d));
-        directionPairs.add(new Pair<>(NE, 0.5d));
-        directionPairs.add(new Pair<>(NW, 0.5d));
-        directionPairs.add(new Pair<>(SE, 0.5d));
-        directionPairs.add(new Pair<>(SW, 2d));*/
-
 
 
 

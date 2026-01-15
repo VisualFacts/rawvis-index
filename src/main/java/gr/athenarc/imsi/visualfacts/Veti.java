@@ -1,9 +1,27 @@
 package gr.athenarc.imsi.visualfacts;
 
+import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import com.google.common.math.Stats;
 import com.google.common.math.StatsAccumulator;
+
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
@@ -11,20 +29,12 @@ import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.util.*;
-import java.util.stream.Collectors;
-
-import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
 public class Veti {
 
@@ -96,8 +106,15 @@ public class Veti {
 
         colIndexes.addAll(schema.getMeasureCols());
 
-        CsvRowReader rowReader = new UnivocityCsvRowReader();
+        CsvFloatRowReader rowReader = new ZsvCsvFloatRowReader();
         int[] selectedColumns = colIndexes.stream().mapToInt(Integer::intValue).toArray();
+
+        // Build mapping from original col index to position in selectedColumns
+        Map<Integer, Integer> colIndexToRowPos = new HashMap<>();
+        for (int i = 0; i < selectedColumns.length; i++) {
+            colIndexToRowPos.put(selectedColumns[i], i);
+        }
+
         CsvReaderConfig readerConfig = new CsvReaderConfig(
                 new File(schema.getCsv()),
                 Charset.forName("US-ASCII"),
@@ -110,21 +127,16 @@ public class Veti {
 
         try {
             rowReader.open(readerConfig);
-            String[] row;
+            float[] row;
             while ((row = rowReader.nextRow()) != null) {
                 long rowOffset = rowReader.currentOffset();
                 try {
                     // Check if row should be skipped based on validation filters
-                    final String[] finalRow = row;
+                    final float[] finalRow = row;
                     boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
-                        int colIndex = filter.getFilterColumn();
-                        try {
-                            Double value = Double.parseDouble(finalRow[colIndex]);
-                            return filter.test(value);
-                        } catch (NumberFormatException e) {
-                            LOG.debug("Skipping row due to invalid numeric value: " + Arrays.toString(finalRow));
-                            return true; // Skip invalid numeric entries
-                        }
+                        int origColIndex = filter.getFilterColumn();
+                        Integer rowPos = colIndexToRowPos.get(origColIndex);
+                        return filter.test((double) finalRow[rowPos]);
                     });
 
                     if (shouldSkip) {
@@ -133,19 +145,27 @@ public class Veti {
                         continue;
                     }
 
-                    Point point = new Point(Float.parseFloat(row[schema.getxColumn()]),
-                            Float.parseFloat(row[schema.getyColumn()]), rowOffset);
+                    Integer xPos = colIndexToRowPos.get(schema.getxColumn());
+                    Integer yPos = colIndexToRowPos.get(schema.getyColumn());
+                    Point point = new Point(row[xPos], row[yPos], rowOffset);
 
-                    TreeNode node = this.grid.addPoint(point, row);
+
+
+                    TreeNode node = this.grid.addPoint(point, (String[]) null);
                     if (node == null) {
                         continue;
                     }
+
                     for (Integer measureCol : schema.getMeasureCols()) {
-                        Float value = Float.parseFloat(row[measureCol]);
+                        Integer mPos = colIndexToRowPos.get(measureCol);
+                        if (mPos == null)
+                            continue;
+                        Float value = row[mPos];
                         node.adjustStats((short) (int) measureCol, value);
                     }
 
-                    if (++objectsIndexed % 1000000 == 0) {
+                    int logInterval = Math.max(1, schema.getObjectCount() / 10);
+                    if (++objectsIndexed % logInterval == 0) {
                         LOG.debug("Indexing object " + objectsIndexed);
                         LOG.debug(point);
                     }
@@ -178,6 +198,7 @@ public class Veti {
         if (!isInitialized) {
             return initialize(query);
         }
+
         Rectangle rect = query.getRect();
 
         List<CategoricalColumn> groupByColumns = null;
@@ -339,10 +360,7 @@ public class Veti {
                 LOG.debug("An unexpected exception occurred: ", e);
             }
         }
-        try {
-            lineParser.close();
-        } catch (IOException ignore) {
-        }
+
         for (QueryNode node : nonRawNodes) {
             for (Point point : node) {
                 points.add(new float[] { point.getY(), point.getX() });
