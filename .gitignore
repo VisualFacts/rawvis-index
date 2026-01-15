@@ -6,3 +6,7 @@ src/main/java/gr/ploigia/rawvis/Test.java
 
 # Ignore native build artifacts
 native/build/
+
+# Ignore log files (mostly experiment logs)
+*.log
+experiments/**/*.log
