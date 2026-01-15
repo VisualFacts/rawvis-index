@@ -1,3 +1,5 @@
+package gr.athenarc.imsi.visualfacts.util.csv;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
