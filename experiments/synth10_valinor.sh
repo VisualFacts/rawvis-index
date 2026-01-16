@@ -9,9 +9,9 @@ mkdir -p experiments/results/synth10/pan_zoom_scenario/
 # Define the error bounds
 error_bounds=(0 0.01 0.02 0.05 0.1 0.2)
 
-# Define sets of measure columns (adjust as needed)
-measure_cols_list=("2" "2,3" "2,3,4,5,6,7" "2,3,4,5,6,7,8,9")
-#  measure_cols_list=("2,3,4,5")
+# Define sets of measure columns
+measure_cols_list=("2" "2,3" "2,3,4,5" "2,3,4,5,6,7" "2,3,4,5,6,7,8,9")
+
 
 # Number of times to run each experiment
 num_runs=3
