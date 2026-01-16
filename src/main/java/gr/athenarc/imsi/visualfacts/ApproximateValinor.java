@@ -115,26 +115,49 @@ public class ApproximateValinor implements AutoCloseable {
         objectsIndexed = 0;
         int objectsSkipped = 0; // Counter for skipped rows
 
+        final int xPos = colIndexToRowPos.get(schema.getxColumn());
+        final int yPos = colIndexToRowPos.get(schema.getyColumn());
+        final int logInterval = Math.max(1, schema.getObjectCount() / 10);
+
+        List<Integer> measureCols = schema.getMeasureCols();
+        final int measureCount = measureCols.size();
+        final int[] measurePositions = new int[measureCount];
+        final short[] measureColShorts = new short[measureCount];
+        for (int i = 0; i < measureCount; i++) {
+            Integer mc = measureCols.get(i);
+            Integer pos = colIndexToRowPos.get(mc);
+            measurePositions[i] = (pos != null) ? pos : -1;
+            measureColShorts[i] = mc.shortValue();
+        }
+
+        final int filterCount = validationFilters.size();
+        final int[] filterPositions = new int[filterCount];
+        final DataValidationFilter[] filterArray = new DataValidationFilter[filterCount];
+        for (int i = 0; i < filterCount; i++) {
+            DataValidationFilter f = validationFilters.get(i);
+            filterPositions[i] = colIndexToRowPos.get(f.getFilterColumn());
+            filterArray[i] = f;
+        }
+
         try {
             rowReader.open(readerConfig);
             float[] row;
             while ((row = rowReader.nextRow()) != null) {
                 long rowOffset = rowReader.currentOffset();
 
-                final float[] finalRow = row;
-                boolean shouldSkip = validationFilters.stream().anyMatch(filter -> {
-                    int origColIndex = filter.getFilterColumn();
-                    Integer rowPos = colIndexToRowPos.get(origColIndex);
-                    return filter.test((double) finalRow[rowPos]);
-                });
+                boolean shouldSkip = false;
+                for (int i = 0; i < filterCount; i++) {
+                    if (filterArray[i].test((double) row[filterPositions[i]])) {
+                        shouldSkip = true;
+                        break;
+                    }
+                }
 
                 if (shouldSkip) {
-                    LOG.debug("Skipping row: " + Arrays.toString(row));
                     objectsSkipped++;
                     continue;
                 }
-                Integer xPos = colIndexToRowPos.get(schema.getxColumn());
-                Integer yPos = colIndexToRowPos.get(schema.getyColumn());
+
                 Point point = new Point(row[xPos], row[yPos], rowOffset);
 
                 TreeNode node = this.grid.addPoint(point, (String[]) null);
@@ -142,18 +165,13 @@ public class ApproximateValinor implements AutoCloseable {
                     continue;
                 }
 
-                for (Integer measureCol : schema.getMeasureCols()) {
-                    Integer mPos = colIndexToRowPos.get(measureCol);
-                    if (mPos == null)
-                        continue;
-                    Float value = row[mPos];
-                    node.adjustStats((short) (int) measureCol, value);
+                for (int i = 0; i < measureCount; i++) {
+                    if (measurePositions[i] < 0) continue;
+                    node.adjustStats(measureColShorts[i], row[measurePositions[i]]);
                 }
 
-                int logInterval = Math.max(1, schema.getObjectCount() / 10);
                 if (++objectsIndexed % logInterval == 0) {
                     LOG.debug("Indexing object " + objectsIndexed);
-                    LOG.debug(point);
                 }
 
             }
