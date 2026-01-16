@@ -446,6 +446,8 @@ public class Experiments {
                                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
                         : null);
                 csvWriter.writeValuesToRow();
+                LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
+
             }
         } finally {
             // Close Veti (if you added a close() method)
@@ -534,6 +536,7 @@ public class Experiments {
                 csvWriter.addValue(run);
                 csvWriter.writeValuesToRow();
                 csvWriter.flush();
+                LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
             }
         } finally {
             // Close Veti (if you added a close() method)
