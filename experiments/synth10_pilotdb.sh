@@ -28,7 +28,7 @@ do
   for run in $(seq 1 $num_runs)
   do
     echo "[INFO] PilotDB Experiments - Running measure_cols=$measure_cols, run=$run"
-    /home/bstam/.local/bin/uv run python ./run_pilotdb_queries.py \
+    /home/bstam/.local/bin/uv run python ./scripts/run_pilotdb_queries.py \
       --queries-file ./queries/synth10_new \
       --csv /data-nonraid/maroulis/data/data_10_cols.csv \
       --lon-col 1 --lat-col 0 \
