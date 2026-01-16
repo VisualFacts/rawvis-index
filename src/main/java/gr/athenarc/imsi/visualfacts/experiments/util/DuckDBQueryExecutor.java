@@ -134,7 +134,29 @@ public class DuckDBQueryExecutor {
         try {
             Class.forName("org.duckdb.DuckDBDriver");
             connection = DriverManager.getConnection("jdbc:duckdb::memory:");
+
+            try (Statement stmt = connection.createStatement()) {
+
+                // Memory limit
+                String memoryLimit = System.getenv("DUCKDB_MEMORY_LIMIT");
+                if (memoryLimit == null || memoryLimit.isEmpty()) {
+                    memoryLimit = "8GB"; 
+                }
+                stmt.execute("SET memory_limit = '" + memoryLimit + "'");
+                LOG.info("DuckDB memory_limit set to {}", memoryLimit);
+
+                // Temp directory
+                String tempDir = System.getenv("DUCKDB_TEMP_DIR");
+                if (tempDir != null && !tempDir.isEmpty()) {
+                    stmt.execute("SET temp_directory = '" + tempDir + "'");
+                    LOG.info("DuckDB temp_directory set to {}", tempDir);
+                } else {
+                    LOG.info("DuckDB temp_directory not set; using default");
+                }
+            }
+
             LOG.info("DuckDB connection established");
+
         } catch (Exception e) {
             LOG.error("Failed to initialize DuckDB connection", e);
             throw e;
@@ -178,7 +200,6 @@ public class DuckDBQueryExecutor {
     private void createTableFromCSV() throws Exception {
         long startTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
-            stmt.execute("SET memory_limit = '8GB'");
             String createTableQuery = String.format(
                     "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', ignore_errors = true);",
                     tableName, csvPath);
@@ -200,7 +221,6 @@ public class DuckDBQueryExecutor {
             stmt.execute("LOAD SPATIAL;");
             LOG.info("SPATIAL extension loaded");
 
-            stmt.execute("SET memory_limit = '8GB'");
             // Create table from CSV with geometry column in a single statement
             String createTableWithGeomQuery = String.format(
                     "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', ignore_errors = true);",
