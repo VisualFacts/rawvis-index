@@ -36,7 +36,7 @@ import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 
-public class Veti {
+public class Veti implements AutoCloseable {
 
     private static final Logger LOG = LogManager.getLogger(Veti.class);
 
@@ -453,11 +453,15 @@ public class Veti {
     }
 
     @Override
-    public void finalize() {
-        try {
-            randomAccessReader.close();
-        } catch (IOException e) {
-            LOG.error(e);
+    public void close() {
+        if (randomAccessReader != null) {
+            try {
+                randomAccessReader.close();
+            } catch (IOException e) {
+                LOG.warn("Failed to close randomAccessReader", e);
+            } finally {
+                randomAccessReader = null;
+            }
         }
     }
 }

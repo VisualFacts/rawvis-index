@@ -387,60 +387,85 @@ public class Experiments {
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-        if (addHeader) {
-            csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
-                    "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                    "Overlapped tiles",
-                    "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result", "Query Result Sum");
+
+        CsvWriter csvWriter = null;
+        Veti veti = null;
+
+        try {
+
+            csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
+            if (addHeader) {
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
+                        "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                        "Overlapped tiles",
+                        "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result",
+                        "Query Result Sum");
+            }
+
+            Stopwatch stopwatch;
+            int categoricalNodeBudget = 0;
+            if (categoricalCols != null && categoricalCols.size() > 0) {
+                categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
+            }
+
+            Schema schema = getSchemaWithSampling();
+
+            veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
+
+            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
+                    measureCols);
+            List<Query> sequence = generateQuerySequence(q0, schema);
+
+            for (int i = 0; i < sequence.size(); i++) {
+                Query query = sequence.get(i);
+                LOG.debug("Executing query " + i);
+
+                stopwatch = Stopwatch.createStarted();
+                QueryResults queryResults = veti.executeQuery(query);
+                stopwatch.stop();
+
+                csvWriter.addValue(csv);
+                csvWriter.addValue(0);
+                csvWriter.addValue(initMode);
+                csvWriter.addValue(catBudget);
+                csvWriter.addValue(categoricalNodeBudget);
+                csvWriter.addValue(binCount);
+                csvWriter.addValue(i);
+                csvWriter.addValue(queryResults.getQuery());
+                csvWriter.addValue(veti.getTotalUtil());
+                csvWriter.addValue(TreeNode.getInstanceCount());
+                csvWriter.addValue(veti.getLeafTileCount());
+                csvWriter.addValue(queryResults.getTileCount());
+                csvWriter.addValue(queryResults.getFullyContainedTileCount());
+                csvWriter.addValue(queryResults.getExpandedNodeCount());
+                csvWriter.addValue(queryResults.getIoCount());
+                csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
+                csvWriter.addValue(queryResults.getStats());
+                csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null
+                        ? queryResults.getStats().get(null).entrySet().stream()
+                                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
+                        : null);
+                csvWriter.writeValuesToRow();
+            }
+        } finally {
+            // Close Veti (if you added a close() method)
+            if (veti != null) {
+                try {
+                    veti.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close Veti", e);
+                }
+            }
+
+            // Close CsvWriter (flushes + closes underlying FileWriter)
+            if (csvWriter != null) {
+                try {
+                    csvWriter.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close CsvWriter", e);
+                }
+            }
         }
-
-        Stopwatch stopwatch;
-        int categoricalNodeBudget = 0;
-        if (categoricalCols != null && categoricalCols.size() > 0) {
-            categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-        }
-
-        Schema schema = getSchemaWithSampling();
-
-
-        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCols);
-        List<Query> sequence = generateQuerySequence(q0, schema);
-
-        for (int i = 0; i < sequence.size(); i++) {
-            Query query = sequence.get(i);
-            LOG.debug("Executing query " + i);
-
-            stopwatch = Stopwatch.createStarted();
-            QueryResults queryResults = veti.executeQuery(query);
-            stopwatch.stop();
-
-            csvWriter.addValue(csv);
-            csvWriter.addValue(0);
-            csvWriter.addValue(initMode);
-            csvWriter.addValue(catBudget);
-            csvWriter.addValue(categoricalNodeBudget);
-            csvWriter.addValue(binCount);
-            csvWriter.addValue(i);
-            csvWriter.addValue(queryResults.getQuery());
-            csvWriter.addValue(veti.getTotalUtil());
-            csvWriter.addValue(TreeNode.getInstanceCount());
-            csvWriter.addValue(veti.getLeafTileCount());
-            csvWriter.addValue(queryResults.getTileCount());
-            csvWriter.addValue(queryResults.getFullyContainedTileCount());
-            csvWriter.addValue(queryResults.getExpandedNodeCount());
-            csvWriter.addValue(queryResults.getIoCount());
-            csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getStats());
-            csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null
-                    ? queryResults.getStats().get(null).entrySet().stream()
-                            .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
-                    : null);
-            csvWriter.writeValuesToRow();
-        }
-        csvWriter.close();
     }
 
     private void timeApproximateQueries() throws IOException {
@@ -448,63 +473,87 @@ public class Experiments {
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         // If errorBound is 0, we are using the exact index
-        if (errorBound == 0){
+        if (errorBound == 0) {
             timeQueries();
             return;
         }
 
-        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
-        csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
-                "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats", "Sampling Tiles", "Sampling Rate", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval", "Error Bound", "run");
-        
+        CsvWriter csvWriter = null;
+        ApproximateValinor index = null;
+        try {
+            CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
+            csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
+            csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                    "Leaf tiles",
+                    "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
+                    "Sampling Tiles", "Sampling Rate", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval",
+                    "Error Bound", "run");
 
-        Stopwatch stopwatch;
+            Stopwatch stopwatch;
 
-        Schema schema = getSchemaWithSampling();
+            Schema schema = getSchemaWithSampling();
 
-        ApproximateValinor index = new ApproximateValinor(schema, errorBound);
+            index = new ApproximateValinor(schema, errorBound);
 
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
-        List<Query> sequence = generateQuerySequence(q0, schema);
+            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(),
+                    measureCols);
+            List<Query> sequence = generateQuerySequence(q0, schema);
 
-        for (int i = 0; i < sequence.size(); i++) {
-            Query query = sequence.get(i);
-            LOG.debug("Executing query {}: {}", i, query);
+            for (int i = 0; i < sequence.size(); i++) {
+                Query query = sequence.get(i);
+                LOG.debug("Executing query {}: {}", i, query);
 
-            stopwatch = Stopwatch.createStarted();
-            ApproximateQueryResults queryResults = index.executeQuery(query);
-            stopwatch.stop();
+                stopwatch = Stopwatch.createStarted();
+                ApproximateQueryResults queryResults = index.executeQuery(query);
+                stopwatch.stop();
 
-            csvWriter.addValue(csv);
-            csvWriter.addValue(errorBound);
-            csvWriter.addValue(initMode);
-            csvWriter.addValue(i);
-            csvWriter.addValue(queryResults.getQuery());
-            csvWriter.addValue(index.getTotalUtil());
-            csvWriter.addValue(TreeNode.getInstanceCount());
-            csvWriter.addValue(index.getLeafTileCount());
-            csvWriter.addValue(queryResults.getTileCount());
-            csvWriter.addValue(queryResults.getFullyContainedTileCount());
-            csvWriter.addValue(queryResults.getFullyContainedTileWithoutStatsCount());
-            csvWriter.addValue(queryResults.getSamplingTileCount());
-            csvWriter.addValue(queryResults.getSamplingRate());
-            csvWriter.addValue(queryResults.getExpandedNodeCount());
-            csvWriter.addValue(queryResults.getIoCount());
-            csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-            csvWriter.addValue(queryResults.getConfidenceIntervals() != null
-                            ? queryResults.getConfidenceIntervals().entrySet().stream()
-                                    .collect(Collectors.toMap(
-                                            Map.Entry::getKey,
-                                            e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
-                                    .toString()
-                            : "null");
-            csvWriter.addValue(queryResults.getErrorBounds());
-            csvWriter.addValue(run);
-            csvWriter.writeValuesToRow();
-            csvWriter.flush();
+                csvWriter.addValue(csv);
+                csvWriter.addValue(errorBound);
+                csvWriter.addValue(initMode);
+                csvWriter.addValue(i);
+                csvWriter.addValue(queryResults.getQuery());
+                csvWriter.addValue(index.getTotalUtil());
+                csvWriter.addValue(TreeNode.getInstanceCount());
+                csvWriter.addValue(index.getLeafTileCount());
+                csvWriter.addValue(queryResults.getTileCount());
+                csvWriter.addValue(queryResults.getFullyContainedTileCount());
+                csvWriter.addValue(queryResults.getFullyContainedTileWithoutStatsCount());
+                csvWriter.addValue(queryResults.getSamplingTileCount());
+                csvWriter.addValue(queryResults.getSamplingRate());
+                csvWriter.addValue(queryResults.getExpandedNodeCount());
+                csvWriter.addValue(queryResults.getIoCount());
+                csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
+                csvWriter.addValue(queryResults.getConfidenceIntervals() != null
+                        ? queryResults.getConfidenceIntervals().entrySet().stream()
+                                .collect(Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
+                                .toString()
+                        : "null");
+                csvWriter.addValue(queryResults.getErrorBounds());
+                csvWriter.addValue(run);
+                csvWriter.writeValuesToRow();
+                csvWriter.flush();
+            }
+        } finally {
+            // Close Veti (if you added a close() method)
+            if (index != null) {
+                try {
+                    index.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close ApproximateValinor", e);
+                }
+            }
+
+            // Close CsvWriter (flushes + closes underlying FileWriter)
+            if (csvWriter != null) {
+                try {
+                    csvWriter.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close CsvWriter", e);
+                }
+            }
         }
-        csvWriter.close();
     }
 
     private Schema getSchemaWithSampling() {

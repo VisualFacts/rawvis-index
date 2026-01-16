@@ -34,7 +34,7 @@ import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
 
-public class ApproximateValinor {
+public class ApproximateValinor implements AutoCloseable {
 
     private static final Logger LOG = LogManager.getLogger(ApproximateValinor.class);
 
@@ -605,11 +605,15 @@ public class ApproximateValinor {
     }
 
     @Override
-    public void finalize() {
-        try {
-            randomAccessReader.close();
-        } catch (IOException e) {
-            LOG.error("Error closing RandomAccessReader: " + e.getMessage(), e);
+    public void close() {
+        if (randomAccessReader != null) {
+            try {
+                randomAccessReader.close();
+            } catch (IOException e) {
+                LOG.warn("Failed to close randomAccessReader", e);
+            } finally {
+                randomAccessReader = null;
+            }
         }
     }
 }
