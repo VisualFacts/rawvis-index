@@ -32,7 +32,11 @@ public class TreeNode {
         if (statsMap == null) {
             statsMap = new Short2ObjectOpenHashMap<>();
         }
-        StatsAccumulator stats = statsMap.computeIfAbsent(measure, k -> new StatsAccumulator());
+        StatsAccumulator stats = statsMap.get(measure);
+        if (stats == null) {
+            stats = new StatsAccumulator();
+            statsMap.put(measure, stats);
+        }
         stats.add(value);
     }
 
