@@ -193,15 +193,18 @@ public class Experiments {
         SizeOf sizeOf = SizeOf.newInstance();
         TreeNode root = new TreeNode((short) 0);
         int nodeCount = 1;
+        int measureCount = (measureCols != null) ? measureCols.size() : 1;
         for (int i = 0; i < 10; i++) {
             nodeCount++;
             TreeNode child = root.getOrAddChild((short) i);
             if (measureCols != null) {
+                int idx = 0;
                 for (Integer measureCol : measureCols) {
-                    child.adjustStats(measureCol.shortValue(), 0f); // Initialize each measure with 0f
+                    child.adjustStats(idx, measureCount, 0f); // Initialize each measure with 0f
+                    idx++;
                 }
             } else {
-                child.adjustStats((short) 0, 0f); // Fallback for single measure
+                child.adjustStats(0, 1, 0f); // Fallback for single measure
             }
         }
         int nodeSize = (int) sizeOf.deepSizeOf(root) / nodeCount;

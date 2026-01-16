@@ -20,6 +20,7 @@ public class QueryNode implements Iterable<Point> {
     private Tile tile;
     private ContainmentExaminer containmentExaminer;
     private List<CategoricalColumn> unknownCatAttrs;
+    private Schema schema;
 
     public int intersectionCount = 0;
 
@@ -31,12 +32,13 @@ public class QueryNode implements Iterable<Point> {
     private BitSet sampledTracker;
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
-            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs, Query query) {
+            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs, Query query, Schema schema) {
         this.groupByValues = groupByValues;
         this.node = node;
         this.tile = tile;
         this.containmentExaminer = containmentExaminer;
         this.unknownCatAttrs = unknownCatAttrs;
+        this.schema = schema;
 
         // Initialize StatsAccumulators for each measure
         this.sampleStatsAccumulators = new HashMap<>();
@@ -49,7 +51,7 @@ public class QueryNode implements Iterable<Point> {
             // Add stats for each measure from the node's stats
             for (Integer measure : query.getMeasureCols()) {
                 StatsAccumulator accumulator = sampleStatsAccumulators.get(measure);
-                accumulator.addAll(node.getStats(measure).snapshot());
+                accumulator.addAll(node.getStats(schema.getMeasureIndex(measure)).snapshot());
             }
             this.sampledTracker = node.getSampledTracker();
         } else {

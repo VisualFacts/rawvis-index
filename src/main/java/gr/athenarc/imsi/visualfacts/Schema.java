@@ -14,6 +14,7 @@ public class Schema {
     private final int xColumn;
     private final int yColumn;
     private final List<Integer> measureCols;
+    private final Map<Integer, Integer> measureColToIndex = new HashMap<>();
     private final Rectangle bounds;
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Character delimiter = ',';
@@ -27,6 +28,9 @@ public class Schema {
         this.xColumn = xColumn;
         this.yColumn = yColumn;
         this.measureCols = measureCols;
+        for (int i = 0; i < measureCols.size(); i++) {
+            measureColToIndex.put(measureCols.get(i), i);
+        }
         this.bounds = bounds;
         this.objectCount = objectCount;
         this.validationFilters = validationFilters;
@@ -63,6 +67,14 @@ public class Schema {
 
     public List<Integer> getMeasureCols() {
         return measureCols;
+    }
+
+    public int getMeasureIndex(int colNumber) {
+        return measureColToIndex.get(colNumber);
+    }
+
+    public int getMeasureCount() {
+        return measureCols.size();
     }
 
     public List<CategoricalColumn> getCategoricalColumns() {

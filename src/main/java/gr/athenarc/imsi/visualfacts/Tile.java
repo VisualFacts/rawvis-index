@@ -109,7 +109,7 @@ public abstract class Tile {
                 String filterValue = query.getCategoricalFilters().get(categoricalColumn.getIndex());
                 return filterValue == null ? null : categoricalColumn.getValueKey(filterValue);
             }).collect(Collectors.toList());
-            queryNodes = getQueryNodesRec(query, queryNodes, containmentExaminer, root, pattern, 0, new Short[categoricalColumns.size()]);
+            queryNodes = getQueryNodesRec(query, queryNodes, containmentExaminer, root, pattern, 0, new Short[categoricalColumns.size()], schema);
         }
 
         if (queryNodes.isEmpty()) {
@@ -119,7 +119,7 @@ public abstract class Tile {
     }
 
 
-    private List<QueryNode> getQueryNodesRec(Query query, List<QueryNode> list, ContainmentExaminer containmentExaminer, TreeNode node, List<Short> pattern, int level, Short[] values) {
+    private List<QueryNode> getQueryNodesRec(Query query, List<QueryNode> list, ContainmentExaminer containmentExaminer, TreeNode node, List<Short> pattern, int level, Short[] values, Schema schema) {
         // we are at a leaf node
         if (node.getChildren() == null || node.getChildren().isEmpty()) {
             Map<Integer, Short> groupByValues = new HashMap<>();
@@ -131,7 +131,7 @@ public abstract class Tile {
                     }
                 }
             }
-            list.add(new QueryNode(node, this, containmentExaminer, groupByValues, getUnknownAttrs(level), query));
+            list.add(new QueryNode(node, this, containmentExaminer, groupByValues, getUnknownAttrs(level), query, schema));
             return list;
         }
 
@@ -141,13 +141,13 @@ public abstract class Tile {
         if (label == null) {
             for (TreeNode child : node.getChildren()) {
                 values[level] = child.getLabel();
-                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values);
+                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values, schema);
             }
         } else {
             TreeNode child = node.getChild(label);
             if (child != null) {
                 values[level] = child.getLabel();
-                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values);
+                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values, schema);
             }
         }
         return list;

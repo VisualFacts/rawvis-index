@@ -16,9 +16,9 @@ public class TreeNode {
     private final short label;
     protected List<Point> points;
     private Short2ObjectMap<TreeNode> children;
-    private Short2ObjectMap<StatsAccumulator> statsMap;
+    private StatsAccumulator[] statsArray;
     private BitSet sampledTracker;
-
+    
     public TreeNode(short label) {
         this.label = label;
         counter++;
@@ -28,14 +28,14 @@ public class TreeNode {
         return counter;
     }
 
-    public void adjustStats(short measure, double value) {
-        if (statsMap == null) {
-            statsMap = new Short2ObjectOpenHashMap<>();
+    public void adjustStats(int measureIndex, int measureCount, double value) {
+        if (statsArray == null) {
+            statsArray = new StatsAccumulator[measureCount];
         }
-        StatsAccumulator stats = statsMap.get(measure);
+        StatsAccumulator stats = statsArray[measureIndex];
         if (stats == null) {
             stats = new StatsAccumulator();
-            statsMap.put(measure, stats);
+            statsArray[measureIndex] = stats;
         }
         stats.add(value);
     }
@@ -47,11 +47,14 @@ public class TreeNode {
      * @return {@code true} if the stats object for the given measure is not null and its count is equal
      *         to the size of the points list, otherwise {@code false}.
      */
-    public boolean hasStats(int measure) {
-        if (points == null || statsMap == null) {
+    public boolean hasStats(int measureIndex) {
+        if (points == null || statsArray == null) {
             return false;
         }
-        StatsAccumulator stats = statsMap.get((short)measure);
+        if (measureIndex < 0 || measureIndex >= statsArray.length) {
+            return false;
+        }
+        StatsAccumulator stats = statsArray[measureIndex];
         // todo: check what happens in case of null value for an object
         return stats != null && stats.count() == points.size();
     }
@@ -68,8 +71,11 @@ public class TreeNode {
         return points;
     }
 
-    public StatsAccumulator getStats(int measure) {
-        return statsMap != null ? statsMap.get((short)measure) : null;
+    public StatsAccumulator getStats(int measureIndex) {
+        if (statsArray == null || measureIndex < 0 || measureIndex >= statsArray.length) {
+            return null;
+        }
+        return statsArray[measureIndex];
     }
 
     public TreeNode getChild(short label) {
@@ -101,13 +107,13 @@ public class TreeNode {
         return "TreeNode{" +
                 "label=" + label +
                 ", children=" + children +
-                ", statsMap=" + statsMap +
+                ", statsArray=" + java.util.Arrays.toString(statsArray) +
                 '}';
     }
 
     public void convertToNonleaf() {
         points = null;
-        statsMap = null;
+        statsArray = null;
     }
 
     public BitSet getSampledTracker() {

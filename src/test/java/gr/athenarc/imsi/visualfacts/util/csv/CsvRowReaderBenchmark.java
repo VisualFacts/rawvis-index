@@ -25,7 +25,7 @@ import org.openjdk.jmh.annotations.Warmup;
 @OutputTimeUnit(TimeUnit.SECONDS)
 @Warmup(iterations = 0, time = 1)
 @Measurement(iterations = 3, time = 1)
-@org.openjdk.jmh.annotations.Fork(2)
+@org.openjdk.jmh.annotations.Fork(1)
 public class CsvRowReaderBenchmark {
 
     private static final Logger LOG = LogManager.getLogger(CsvRowReaderBenchmark.class);
@@ -70,14 +70,20 @@ public class CsvRowReaderBenchmark {
 
     private long runReader(CsvFloatRowReader reader, ReaderState state) throws IOException {
         reader.open(state.config);
+        float[] row;
+        double sum = 0;
         long rows = 0;
         try {
-            while (reader.nextRow() != null) {
+            while ((row = reader.nextRow()) != null) {
                 rows++;
+                for (float v : row) {
+                    sum += v;
+                }
             }
         } finally {
             reader.close();
         }
+        LOG.info("Sum of all values for reader {}: {}", reader.getClass().getSimpleName(), sum);
         return rows;
     }
 

@@ -122,12 +122,10 @@ public class ApproximateValinor implements AutoCloseable {
         List<Integer> measureCols = schema.getMeasureCols();
         final int measureCount = measureCols.size();
         final int[] measurePositions = new int[measureCount];
-        final short[] measureColShorts = new short[measureCount];
         for (int i = 0; i < measureCount; i++) {
             Integer mc = measureCols.get(i);
             Integer pos = colIndexToRowPos.get(mc);
             measurePositions[i] = (pos != null) ? pos : -1;
-            measureColShorts[i] = mc.shortValue();
         }
 
         final int filterCount = validationFilters.size();
@@ -167,7 +165,7 @@ public class ApproximateValinor implements AutoCloseable {
 
                 for (int i = 0; i < measureCount; i++) {
                     if (measurePositions[i] < 0) continue;
-                    node.adjustStats(measureColShorts[i], row[measurePositions[i]]);
+                    node.adjustStats(i, measureCount, row[measurePositions[i]]);
                 }
 
                 if (++objectsIndexed % logInterval == 0) {
@@ -225,7 +223,7 @@ public class ApproximateValinor implements AutoCloseable {
                     continue;
                 }
 
-                if (isFullyContained && query.getMeasureCols().stream().allMatch(node::hasStats)) {
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (node.points.size() > THRESHOLD) {
                     leafTile.split();
@@ -252,7 +250,7 @@ public class ApproximateValinor implements AutoCloseable {
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
             query.getMeasureCols().forEach(measureCol -> {
                 queryResults.adjustStats(null, measureCol,
-                        queryNode.getNode().getStats(measureCol).snapshot());
+                        queryNode.getNode().getStats(schema.getMeasureIndex(measureCol)).snapshot());
             });
             nonRawNodes.add(queryNode);
         }
@@ -444,7 +442,7 @@ public class ApproximateValinor implements AutoCloseable {
             if (n < 2) {
                 // fallback path: use minSum / maxSum or skip
                 // Or you can add a big variance chunk if you want to keep it approximate
-                LOG.error("Sampling Node with less than 2 samples: {}", qnode);
+                LOG.error("Sampling Node with less than 2 samples");
                 continue;
             }
 
@@ -524,14 +522,16 @@ public class ApproximateValinor implements AutoCloseable {
                     if (row != null) {
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         // Process all measures in the schema
+                        int idx = 0;
                         for (Integer measureCol : schema.getMeasureCols()) {
                             if (row[measureCol] != null) {
                                 double measureValue = Double.parseDouble(row[measureCol]);
                                 queryNode.addSampleValue(measureCol, measureValue);
                                 if (queryNode.isFullyContained()) {
-                                    queryNode.getNode().adjustStats(measureCol.shortValue(), measureValue);
+                                    queryNode.getNode().adjustStats(idx, schema.getMeasureCount(), measureValue);
                                 }
                             }
+                            idx++;
                         }
                     }
                 }
@@ -558,12 +558,14 @@ public class ApproximateValinor implements AutoCloseable {
                     if (row != null) {
                         QueryNode queryNode = pointIterator.getCurrentQueryNode();
                         // Process all measures in the schema
+                        int idx = 0;
                         for (Integer measureCol : schema.getMeasureCols()) {
                             if (row[measureCol] != null) {
                                 double measureValue = Double.parseDouble(row[measureCol]);
-                                queryNode.getNode().adjustStats(measureCol.shortValue(), measureValue);
+                                queryNode.getNode().adjustStats(idx, schema.getMeasureCount(), measureValue);
 
                             }
+                            idx++;
                         }
 
                     }

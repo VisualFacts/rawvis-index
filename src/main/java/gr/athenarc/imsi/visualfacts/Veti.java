@@ -156,12 +156,16 @@ public class Veti implements AutoCloseable {
                         continue;
                     }
 
+                    int idx = 0;
                     for (Integer measureCol : schema.getMeasureCols()) {
                         Integer mPos = colIndexToRowPos.get(measureCol);
-                        if (mPos == null)
+                        if (mPos == null) {
+                            idx++;
                             continue;
+                        }
                         Float value = row[mPos];
-                        node.adjustStats((short) (int) measureCol, value);
+                        node.adjustStats(idx, schema.getMeasureCount(), value);
+                        idx++;
                     }
 
                     int logInterval = Math.max(1, schema.getObjectCount() / 10);
@@ -236,7 +240,7 @@ public class Veti implements AutoCloseable {
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
                 if ((!isFullyContained
-                        || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(measureCol)))
+                        || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(schema.getMeasureIndex(measureCol))))
                         && node.getPoints() != null) {
                     count += node.getPoints().size();
                 }
@@ -267,14 +271,14 @@ public class Veti implements AutoCloseable {
 
                 // todo unknownCatAttrs may not be empty but including only attrs missing from
                 // the node but not present in the query
-                if (isFullyContained && query.getMeasureCols().stream().allMatch(node::hasStats) && !hasUnknownAttrs) {
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc))) && !hasUnknownAttrs) {
                     ImmutableList<String> groupByValuesList = groupByColumns == null || groupByColumns.isEmpty() ? null
                             : groupByColumns.stream().map(categoricalColumn -> {
                                 return categoricalColumn.getValue(groupByValues.get(categoricalColumn.getIndex()));
                             }).collect(ImmutableList.toImmutableList());
                     query.getMeasureCols().forEach(measureCol -> {
                         queryResults.adjustStats(groupByValuesList, measureCol,
-                                queryNode.getNode().getStats(measureCol).snapshot());
+                                queryNode.getNode().getStats(schema.getMeasureIndex(measureCol)).snapshot());
                     });
                     nonRawNodes.add(queryNode);
                 } else {
@@ -328,13 +332,17 @@ public class Veti implements AutoCloseable {
                                     node = node.getOrAddChild(unknownAttr.getValueKey(row[unknownAttr.getIndex()]));
                                 }
                                 node.addPoint(point);
+                                int idx1 = 0;
                                 for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                                    node.adjustStats(entry.getKey().shortValue(), entry.getValue());
+                                    node.adjustStats(idx1, schema.getMeasureCount(), entry.getValue());
+                                    idx1++;
                                 }
                             } else if (queryNode.getUnknownCatAttrs() == null
                                     || queryNode.getUnknownCatAttrs().isEmpty()) {
+                                int idx2 = 0;
                                 for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                                    node.adjustStats(entry.getKey().shortValue(), entry.getValue());
+                                    node.adjustStats(idx2, schema.getMeasureCount(), entry.getValue());
+                                    idx2++;
                                 }
                             }
                         }
