@@ -1,0 +1,61 @@
+datasets:
+  synth10:
+    csv: /data-nonraid/maroulis/data/data_10_cols.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9]
+    bounds: "0:1000,0:1000"
+    objectCount: 100000000  
+    validationFilters: []
+  synth50:
+    csv: /data-nonraid/maroulis/data/data_50_cols.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49]
+    bounds: "0:1000,0:1000"
+    objectCount: 100000000
+    validationFilters: []
+  taxi:
+    csv: /data-nonraid/maroulis/data/taxi_data/yellow_tripdata_2014_cleaned_10M.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 5
+    yColumn: 6
+    measureCols: [12]
+    bounds: "-74.106216:-73.842545,40.676993:40.839788"
+    objectCount: 165000000
+    validationFilters:
+      - "12<0"
+      - "12>400"
+scenarios:
+  synth10_pan_scenario:
+    dataset: synth10
+    q0:
+      rect: "544:574,323:353"
+      filters: {}
+    minShift: 10
+    maxShift: 20
+    zoomFactor: 1.5
+    seqCount: 100
+  synth50_pan_scenario:
+    dataset: synth50
+    q0:
+      rect: "544:574,323:353"
+      filters: {}
+    minShift: 10
+    maxShift: 20
+    zoomFactor: 1.5
+    seqCount: 100
+  taxi_pan_scenario:
+    dataset: taxi
+    q0:
+      rect: "-73.99831454:-73.97500902,40.7151612032:40.73263959"
+      filters: {}
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 1.0
+    seqCount: 100

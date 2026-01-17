@@ -91,7 +91,6 @@ public class ApproximateValinor implements AutoCloseable {
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
         colIndexes.addAll(catColIndexes);
-        LOG.debug("Validation filters: " + validationFilters);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
         colIndexes.addAll(schema.getMeasureCols());

@@ -1,7 +1,5 @@
 package gr.athenarc.imsi.visualfacts.experiments;
 
-import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -16,34 +14,24 @@ import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.ehcache.sizeof.SizeOf;
-
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Stopwatch;
-import com.google.common.collect.Range;
-import com.univocity.parsers.csv.CsvParser;
-import com.univocity.parsers.csv.CsvParserSettings;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
 
 import gr.athenarc.imsi.visualfacts.ApproximateValinor;
-import gr.athenarc.imsi.visualfacts.CategoricalColumn;
-import gr.athenarc.imsi.visualfacts.DataValidationFilter;
-import gr.athenarc.imsi.visualfacts.DummyCategoricalColumn;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.TreeNode;
 import gr.athenarc.imsi.visualfacts.Veti;
-import gr.athenarc.imsi.visualfacts.config.IndexConfig;
-import gr.athenarc.imsi.visualfacts.experiments.util.DataValidationFilterConverter;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
-import gr.athenarc.imsi.visualfacts.experiments.util.FilterConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
-import gr.athenarc.imsi.visualfacts.experiments.util.RangeConverter;
-import gr.athenarc.imsi.visualfacts.experiments.util.RectangleConverter;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
@@ -53,87 +41,69 @@ public class Experiments {
 
     private static final Logger LOG = LogManager.getLogger(Experiments.class);
 
-    
-    @Parameter(names = "-errorBound", description = "")
+    // ========== Scenario-based configuration ==========
+    @Parameter(names = "-scenario", description = "Name of the scenario to run (defined in YAML config)")
+    private String scenario;
+
+    @Parameter(names = "-configFile", description = "Path to YAML config file (optional, defaults to classpath resource)")
+    private String configFile;
+
+    // ========== Runtime/execution parameters ==========
+    @Parameter(names = "-c", required = true, description = "Command to execute")
+    private String command;
+
+    @Parameter(names = "-errorBound", description = "Error bound for approximate queries")
     public Double errorBound;
 
-    @Parameter(names = "-catBudget", description = "Categorical Node budget in GB")
-    public Double catBudget;
-    @Parameter(names = "-csv", description = "The csv file")
-    public String csv;
-
-    @Parameter(names = "-zoomFactor", description = "Zoom factor for zoom in operation. The inverse applies to zoom out operation.")
-    public Float zoomFactor = 0f;
-    @Parameter(names = "-catCols", variableArity = true, description = "Categorical columns")
-    List<Integer> categoricalCols = new ArrayList<>();
-    @Parameter(names = "-c", required = true)
-    private String command;
-    @Parameter(names = "-xCol", description = "The x column")
-    private String xCol;
-    @Parameter(names = "-yCol", description = "The y column")
-    private String yCol;
-    @Parameter(names = "-cols", description = "Number of columns")
-    private Integer cols = 10;
     @Parameter(names = "-out", description = "The output file")
     private String outFile;
-    @Parameter(names = "-initMode")
+
+    @Parameter(names = "-initMode", description = "Initialization mode")
     private String initMode;
-    @Parameter(names= "-duckDbMode")
+
+    @Parameter(names = "-duckDbMode", description = "DuckDB execution mode: directCSV, table, spatialIndex")
     private String duckDbMode;
-    @Parameter(names = "-bounds", converter = RectangleConverter.class, description = "Grid boundaries")
-    private Rectangle bounds;
-    @Parameter(names = "-seqCount", description = "Number of queries in the sequence")
-    private Integer seqCount;
-    @Parameter(names = "-objCount", description = "Number of objects")
-    private Integer objCount;
-    @Parameter(names = "-minShift", description = "Min shift in the query sequence")
-    private Integer minShift;
-    @Parameter(names = "-maxShift", description = "Max shift in the query sequence")
-    private Integer maxShift;
-    @Parameter(names = "-minFilters", description = "Min filters in the query sequence")
-    private Integer minFilters = 0;
-    @Parameter(names = "-maxFilters", description = "Max filters in the query sequence")
-    private Integer maxFilters = 0;
-    @Parameter(names = "--measureMem", description = "Measure index memory after every query in the sequence")
-    private boolean measureMem = false;
-    @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
-    private boolean measureMaxDepth = false;
-    @Parameter(names = "-rect", converter = RectangleConverter.class, description = "Rectangle")
-    private Rectangle rect = null;
-    @Parameter(names = "-measureCols", description = "The measure columns")
-    private List<Integer> measureCols;
 
-    @Parameter(names = "-groupBy", description = "Group by col")
-    private Integer groupBy;
-    @Parameter(names = "-filters", converter = FilterConverter.class, description = "Q0 Filters")
-    private Map<Integer, String> categoricalFilters;
-
-    @Parameter(names = "-valid", description = "Filters for skipping invalid rows before indexing", converter = DataValidationFilterConverter.class)
-    private List<DataValidationFilter> validationFilters = new ArrayList<>();
-
-    @Parameter(names = "-sort")
-    private String sort;
-
-    @Parameter(names = "-valueRange", converter = RangeConverter.class, description = "Value range")
-    private Range<Float> valueRange;
-
-    @Parameter(names = "-binCount", description = "Number of bins for BINN method")
-    private Integer binCount;
-
-    @Parameter(names = "-gridSize")
+    @Parameter(names = "-gridSize", description = "Grid size for index")
     private Integer gridSize;
 
-    @Parameter(names = "-cardinality")
-    private Integer cardinality;
-
-    @Parameter(names = "-run")
+    @Parameter(names = "-run", description = "Run number for experiments")
     private Integer run;
 
     @Parameter(names = "-queries", description = "Path to file containing saved query sequence (one query per line)")
     private String queriesFile;
 
+    @Parameter(names = "-groupBy", description = "Group by column")
+    private Integer groupBy;
+
+    @Parameter(names = "-sort", description = "Sort mode")
+    private String sort;
+
+    @Parameter(names = "-cardinality", description = "Cardinality for dummy categorical columns")
+    private Integer cardinality;
+
+    @Parameter(names = "-minFilters", description = "Min filters in the query sequence")
+    private Integer minFilters = 0;
+
+    @Parameter(names = "-maxFilters", description = "Max filters in the query sequence")
+    private Integer maxFilters = 0;
+
+    @Parameter(names = "-numMeasures", description = "Number of measure columns to use (uses first N from config). If not specified, uses all.")
+    private Integer numMeasures;
+
+    @Parameter(names = "--measureMem", description = "Measure index memory after every query in the sequence")
+    private boolean measureMem = false;
+
+    @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
+    private boolean measureMaxDepth = false;
+
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
+
+    // ========== Loaded configuration ==========
+    private ExperimentConfig experimentConfig;
+    private ExplorationScenarioConfig scenarioConfig;
+    private Schema schema;
 
     public static void main(String... args) throws IOException, ClassNotFoundException {
         Experiments experiments = new Experiments();
@@ -145,15 +115,62 @@ public class Experiments {
         }
     }
 
+    /**
+     * Loads the experiment configuration.
+     * Populates schema and scenario config from YAML.
+     */
+    private void loadConfiguration() throws IOException {
+        if (scenario != null && !scenario.isEmpty()) {
+            LOG.info("Loading configuration for scenario: {}", scenario);
+            experimentConfig = ExperimentConfigLoader.load(configFile);
+
+            scenarioConfig = experimentConfig.getScenario(scenario);
+            if (scenarioConfig == null) {
+                throw new IllegalArgumentException("Scenario not found in config: " + scenario);
+            }
+
+            schema = experimentConfig.getSchemaForScenario(scenario);
+            
+            // Apply numMeasures limit if specified
+            if (numMeasures != null && numMeasures > 0) {
+                List<Integer> allMeasures = schema.getMeasureCols();
+                if (numMeasures > allMeasures.size()) {
+                    LOG.warn("Requested {} measures but only {} available. Using all.", 
+                            numMeasures, allMeasures.size());
+                } else {
+                    List<Integer> limitedMeasures = allMeasures.subList(0, numMeasures);
+                    schema.setMeasureCols(limitedMeasures);
+                    LOG.info("Limited measures to first {}: {}", numMeasures, limitedMeasures);
+                }
+            }
+            
+            LOG.info("Loaded scenario '{}' with dataset '{}'", scenario, scenarioConfig.getDataset());
+
+        }
+    }
+
+    /**
+     * Validates that a scenario has been loaded.
+     * Call this at the start of any command that requires schema/scenario configuration.
+     */
+    private void requireScenario(String commandName) {
+        if (scenario == null || scenario.isEmpty()) {
+            throw new IllegalArgumentException(
+                    String.format("Command '%s' requires -scenario parameter. " +
+                            "Available scenarios are defined in the YAML config file.", commandName));
+        }
+        if (scenarioConfig == null || schema == null) {
+            throw new IllegalStateException(
+                    String.format("Scenario '%s' was specified but configuration failed to load.", scenario));
+        }
+    }
+
     private void run() throws IOException {
+        // Load configuration first if scenario is specified
+        loadConfiguration();
+
         SyntheticDatasetGenerator generator;
         switch (command) {
-            case "timeInitialization":
-                timeInitialization();
-                break;
-            case "timeAssignmentTime":
-                timeAssignmentTime();
-                break;
             case "timeQueries":
                 timeQueries();
                 break;
@@ -161,17 +178,12 @@ public class Experiments {
                 timeApproximateQueries();
                 break;
             case "timeDuckDBQueries":
-                Preconditions.checkNotNull(duckDbMode, "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
+                Preconditions.checkNotNull(duckDbMode,
+                        "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
                 timeDuckDBQueries();
                 break;
             case "generateAndSaveQuerySequence":
                 generateAndSaveQuerySequence();
-                break;
-            case "findBounds":
-                findBounds();
-                break;
-            case "computeUtils":
-                computeUtils();
                 break;
             case "synth10":
                 generator = new SyntheticDatasetGenerator(100000000, 10, Arrays.asList(2, 3, 4, 5, 6, 7), 10, outFile);
@@ -189,203 +201,8 @@ public class Experiments {
         }
     }
 
-    private int getCategoricalNodeBudget(double sizeInGb) {
-        SizeOf sizeOf = SizeOf.newInstance();
-        TreeNode root = new TreeNode((short) 0);
-        int nodeCount = 1;
-        int measureCount = (measureCols != null) ? measureCols.size() : 1;
-        for (int i = 0; i < 10; i++) {
-            nodeCount++;
-            TreeNode child = root.getOrAddChild((short) i);
-            if (measureCols != null) {
-                int idx = 0;
-                for (Integer measureCol : measureCols) {
-                    child.adjustStats(idx, measureCount, 0f); // Initialize each measure with 0f
-                    idx++;
-                }
-            } else {
-                child.adjustStats(0, 1, 0f); // Fallback for single measure
-            }
-        }
-        int nodeSize = (int) sizeOf.deepSizeOf(root) / nodeCount;
-        LOG.debug("average categorical node size: " + nodeSize);
-        return (int) Math.floor(sizeInGb * (int) Math.pow(10, 9) / nodeSize);
-    }
-
-    public void findBounds() {
-        Integer x = Integer.parseInt(xCol), y = Integer.parseInt(yCol);
-
-        CsvParserSettings readerSettings = new CsvParserSettings();
-        CsvParser parser = new CsvParser(readerSettings);
-
-        float minX = Float.POSITIVE_INFINITY;
-        float maxX = Float.NEGATIVE_INFINITY;
-        float minY = Float.POSITIVE_INFINITY;
-        float maxY = Float.NEGATIVE_INFINITY;
-
-        parser.beginParsing(new File(csv));
-        String[] row;
-        int i = 0;
-        while ((row = parser.parseNext()) != null) {
-            i++;
-            minX = Math.min(minX, Float.parseFloat(row[x]));
-            maxX = Math.max(maxX, Float.parseFloat(row[x]));
-            minY = Math.min(minY, Float.parseFloat(row[y]));
-            maxY = Math.max(maxY, Float.parseFloat(row[y]));
-            if (i % 1000000 == 0) {
-                LOG.debug("Parsing row " + i);
-            }
-        }
-        LOG.debug(new Rectangle(Range.open(minX, maxX), Range.open(minY, maxY)));
-    }
-
-    private void timeAssignmentTime() throws IOException {
-        Preconditions.checkNotNull(outFile, "No out file specified.");
-
-        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
-        boolean addHeader = new File(outFile).length() == 0;
-
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-
-        int leafTiles = 0;
-        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-
-        csv = "NO CSV";
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
-                bounds, objCount, validationFilters);
-        List<CategoricalColumn> categoricalColumns = new ArrayList<>();
-        for (int i = 0; i < categoricalCols.size(); i++) {
-            categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
-        }
-        schema.setCategoricalColumns(categoricalColumns);
-
-        IndexConfig.GRID_SIZE = gridSize;
-        IndexConfig.SUBTILE_RATIO = 0;
-
-        Stopwatch stopwatch = Stopwatch.createUnstarted();
-        stopwatch.start();
-        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
-        veti.generateGrid(q0);
-        stopwatch.stop();
-
-        if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "grid size", "Leaf tiles", "initCatBudget (Gb)",
-                    "initCatBudget (nodes)", "q0", "# of categorical columns", "cardinality", "Total Util",
-                    "Time (sec)");
-        }
-
-        csvWriter.addValue(csv);
-        csvWriter.addValue(initMode);
-        csvWriter.addValue(gridSize);
-        csvWriter.addValue(leafTiles);
-        csvWriter.addValue(catBudget);
-        csvWriter.addValue(categoricalNodeBudget);
-        csvWriter.addValue(q0);
-        csvWriter.addValue(schema.getCategoricalColumns().size());
-        csvWriter.addValue(cardinality);
-        csvWriter.addValue(veti.getTotalUtil());
-        csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS));
-        csvWriter.writeValuesToRow();
-        csvWriter.close();
-    }
-
-    private void computeUtils() throws IOException {
-        Preconditions.checkNotNull(outFile, "No out file specified.");
-
-        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
-        boolean addHeader = new File(outFile).length() == 0;
-
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-
-        Schema schema;
-        if (csv != null)
-            schema = getSchemaWithSampling();
-        else {
-            schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
-                    bounds, objCount, validationFilters);
-            List<CategoricalColumn> categoricalColumns = new ArrayList<>();
-            for (int i = 0; i < categoricalCols.size(); i++) {
-                categoricalColumns.add(new DummyCategoricalColumn(categoricalCols.get(i), cardinality));
-            }
-            schema.setCategoricalColumns(categoricalColumns);
-        }
-
-        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
-        veti.generateGrid(q0);
-
-        if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count",
-                    "q0", "categoricalColumns", "Total Util");
-        }
-
-        csvWriter.addValue(csv);
-        csvWriter.addValue(initMode);
-        csvWriter.addValue(catBudget);
-        csvWriter.addValue(categoricalNodeBudget);
-        csvWriter.addValue(TreeNode.getInstanceCount());
-        csvWriter.addValue(q0);
-        csvWriter.addValue(schema.getCategoricalColumns());
-        csvWriter.addValue(veti.getTotalUtil());
-        csvWriter.writeValuesToRow();
-        csvWriter.close();
-    }
-
-    private void timeInitialization() throws IOException {
-        Preconditions.checkNotNull(csv, "You must define the csv file.");
-        Preconditions.checkNotNull(outFile, "No out file specified.");
-
-        CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
-        boolean addHeader = new File(outFile).length() == 0;
-
-        CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
-
-        long memorySize = 0;
-        SizeOf sizeOf = SizeOf.newInstance();
-        int leafTiles = 0;
-        int categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-        Schema schema = getSchemaWithSampling();
-
-        Stopwatch stopwatch = Stopwatch.createUnstarted();
-        stopwatch.start();
-
-        Veti veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-        veti.setSort(sort);
-
-        Query q0 = new Query(rect, categoricalFilters, Arrays.asList(groupBy), measureCols);
-        veti.initialize(q0);
-        stopwatch.stop();
-
-        leafTiles = veti.getLeafTileCount();
-        try {
-            memorySize = sizeOf.deepSizeOf(veti);
-        } catch (Exception e) {
-        }
-        if (addHeader) {
-            csvWriter.writeHeaders("csv", "initMode", "initCatBudget (Gb)", "initCatBudget (nodes)", "Tree Node Count",
-                    "q0", "categoricalColumns", "Time (sec)", "Total Util", "Leaf tiles", "Memory (Gb)");
-        }
-
-        csvWriter.addValue(csv);
-        csvWriter.addValue(initMode);
-        csvWriter.addValue(catBudget);
-        csvWriter.addValue(categoricalNodeBudget);
-        csvWriter.addValue(TreeNode.getInstanceCount());
-        csvWriter.addValue(q0);
-        csvWriter.addValue(schema.getCategoricalColumns());
-        csvWriter.addValue(stopwatch.elapsed(TimeUnit.SECONDS));
-        csvWriter.addValue(veti.getTotalUtil());
-        csvWriter.addValue(leafTiles);
-        csvWriter.addValue((double) memorySize / 1000000000d);
-        csvWriter.writeValuesToRow();
-        csvWriter.close();
-    }
-
     private void timeQueries() throws IOException {
-        Preconditions.checkNotNull(csv, "You must define the csv file.");
+        requireScenario("timeQueries");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
@@ -398,25 +215,22 @@ public class Experiments {
 
             csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
             if (addHeader) {
-                csvWriter.writeHeaders("csv", "errorBound", "initMode", "initCatBudget (Gb)",
-                        "initCatBudget (nodes)", "binCount", "i", "query", "indexUtil", "Tree Node Count", "Leaf tiles",
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                        "Leaf tiles",
                         "Overlapped tiles",
                         "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result",
                         "Query Result Sum");
             }
 
             Stopwatch stopwatch;
-            int categoricalNodeBudget = 0;
-            if (categoricalCols != null && categoricalCols.size() > 0) {
-                categoricalNodeBudget = getCategoricalNodeBudget(catBudget);
-            }
 
-            Schema schema = getSchemaWithSampling();
+            veti = new Veti(schema, 0, initMode, 0);
 
-            veti = new Veti(schema, categoricalNodeBudget, initMode, binCount);
-
+            // Build initial query from scenario config
+            Rectangle rect = scenarioConfig.getQ0().toRectangle();
+            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
             Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
-                    measureCols);
+                    schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
             for (int i = 0; i < sequence.size(); i++) {
@@ -427,12 +241,9 @@ public class Experiments {
                 QueryResults queryResults = veti.executeQuery(query);
                 stopwatch.stop();
 
-                csvWriter.addValue(csv);
+                csvWriter.addValue(schema.getCsv());
                 csvWriter.addValue(0);
                 csvWriter.addValue(initMode);
-                csvWriter.addValue(catBudget);
-                csvWriter.addValue(categoricalNodeBudget);
-                csvWriter.addValue(binCount);
                 csvWriter.addValue(i);
                 csvWriter.addValue(queryResults.getQuery());
                 csvWriter.addValue(veti.getTotalUtil());
@@ -450,7 +261,6 @@ public class Experiments {
                         : null);
                 csvWriter.writeValuesToRow();
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
-
             }
         } finally {
             // Close Veti (if you added a close() method)
@@ -474,7 +284,7 @@ public class Experiments {
     }
 
     private void timeApproximateQueries() throws IOException {
-        Preconditions.checkNotNull(csv, "You must define the csv file.");
+        requireScenario("timeApproximateQueries");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         // If errorBound is 0, we are using the exact index
@@ -496,12 +306,13 @@ public class Experiments {
 
             Stopwatch stopwatch;
 
-            Schema schema = getSchemaWithSampling();
-
             index = new ApproximateValinor(schema, errorBound);
 
+            // Build initial query from scenario config
+            Rectangle rect = scenarioConfig.getQ0().toRectangle();
+            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
             Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(),
-                    measureCols);
+                    schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
             for (int i = 0; i < sequence.size(); i++) {
@@ -512,7 +323,7 @@ public class Experiments {
                 ApproximateQueryResults queryResults = index.executeQuery(query);
                 stopwatch.stop();
 
-                csvWriter.addValue(csv);
+                csvWriter.addValue(schema.getCsv());
                 csvWriter.addValue(errorBound);
                 csvWriter.addValue(initMode);
                 csvWriter.addValue(i);
@@ -562,42 +373,17 @@ public class Experiments {
         }
     }
 
-    private Schema getSchemaWithSampling() {
-        Schema schema = new Schema(csv, DELIMITER, Integer.parseInt(xCol), Integer.parseInt(yCol), measureCols,
-                bounds, objCount, validationFilters);
-
-        List<CategoricalColumn> categoricalColumns = new ArrayList<>();
-        for (int i = 0; i < categoricalCols.size(); i++) {
-            categoricalColumns.add(new CategoricalColumn(categoricalCols.get(i)));
-        }
-        schema.setCategoricalColumns(categoricalColumns);
-
-        CsvParserSettings parserSettings = schema.createCsvParserSettings();
-        CsvParser parser = new CsvParser(parserSettings);
-
-        int i = 0;
-        parser.beginParsing(new File(schema.getCsv()));
-        String[] row;
-        while ((row = parser.parseNext()) != null && i < 1000000) {
-            for (CategoricalColumn column : categoricalColumns) {
-                column.getValueKey(row[column.getIndex()]);
-            }
-            i++;
-        }
-        parser.stopParsing();
-        return schema;
-    }
-
     private List<Query> generateQuerySequence(Query q0, Schema schema) throws IOException {
         // If queries file is provided, read from it instead of generating new queries
         if (queriesFile != null && !queriesFile.isEmpty()) {
             return loadQueriesFromFile(queriesFile);
         }
-        
-        Preconditions.checkNotNull(seqCount, "No sequence count specified.");
-        Preconditions.checkNotNull(minShift, "Min query shift must be specified.");
-        Preconditions.checkNotNull(maxShift, "Max query shift must be specified.");
 
+        // Get sequence generation parameters from scenario config
+        int seqCount = scenarioConfig.getSeqCount();
+        int minShift = scenarioConfig.getMinShift();
+        int maxShift = scenarioConfig.getMaxShift();
+        float zoomFactor = scenarioConfig.getZoomFactor();
 
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
                 maxFilters, zoomFactor);
@@ -623,66 +409,66 @@ public class Experiments {
     }
 
     private void timeDuckDBQueries() throws IOException {
-        Preconditions.checkNotNull(csv, "You must define the csv file.");
+        requireScenario("timeDuckDBQueries");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
         CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
         boolean addHeader = new File(outFile).length() == 0;
         CsvWriter csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
-        
+
         if (addHeader) {
-            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound", "Query Result", "Query Result Sum");
+            csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound",
+                    "Query Result", "Query Result Sum");
         }
 
         try {
-            // Parse x and y column indices
-            int xColIdx = Integer.parseInt(xCol);
-            int yColIdx = Integer.parseInt(yCol);
+            // Build initial query from scenario config
+            Rectangle rect = scenarioConfig.getQ0().toRectangle();
+            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
+            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(),
+                    schema.getMeasureCols());
+            List<Query> sequence = generateQuerySequence(q0, schema);
 
-            // Generate query sequence
-            Schema dummySchema = new Schema(csv, DELIMITER, xColIdx, yColIdx, measureCols,
-                    bounds, objCount, validationFilters);
-            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(), measureCols);
-            List<Query> sequence = generateQuerySequence(q0, dummySchema);
-            
             // Determine execution mode
             DuckDBQueryExecutor.ExecutionMode mode = parseExecutionMode(duckDbMode);
-            
+
             // Format column indices as zero-padded strings (e.g., "05" instead of "5")
-            String xColStr = String.format("%02d", xColIdx);
-            String yColStr = String.format("%02d", yColIdx);
-            // Create DuckDB executor with the appropriate mode
-            DuckDBQueryExecutor executor = new DuckDBQueryExecutor(csv, mode, "column" + xColStr, "column" + yColStr);
-            
+            String xColStr = String.format("%02d", schema.getxColumn());
+            String yColStr = String.format("%02d", schema.getyColumn());
+            // Create DuckDB executor with the appropriate mode and validation filters
+            DuckDBQueryExecutor executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
+                    "column" + yColStr, schema.getValidationFilters());
+
             // Log initialization timing metrics
             long tableCreationTimeMs = executor.getTableCreationTimeNanos() / 1_000_000;
             long indexCreationTimeMs = executor.getIndexCreationTimeNanos() / 1_000_000;
-            LOG.info("DuckDB initialization timings - Mode: {}, Table creation: {}ms, Index creation: {}ms", 
-                     duckDbMode, tableCreationTimeMs, indexCreationTimeMs);
-            
+            LOG.info("DuckDB initialization timings - Mode: {}, Table creation: {}ms, Index creation: {}ms",
+                    duckDbMode, tableCreationTimeMs, indexCreationTimeMs);
+
             LOG.info("Executing DuckDB queries in {} mode", duckDbMode);
-            
+
             for (int i = 0; i < sequence.size(); i++) {
                 Query query = sequence.get(i);
                 LOG.debug("Executing query {}", i);
                 try {
                     QueryResult result = executor.executeQuery(query);
-                    
-                    csvWriter.addValue(csv);
-                    csvWriter.addValue(duckDbMode); 
+
+                    csvWriter.addValue(schema.getCsv());
+                    csvWriter.addValue(duckDbMode);
                     csvWriter.addValue(i);
                     csvWriter.addValue(result.getRowCount());
-                    csvWriter.addValue(i == 0 ? result.getExecutionTimeSeconds() + tableCreationTimeMs / 1000.0 : result.getExecutionTimeSeconds());
+                    csvWriter.addValue(i == 0 ? result.getExecutionTimeSeconds() + tableCreationTimeMs / 1000.0
+                            : result.getExecutionTimeSeconds());
                     csvWriter.addValue(result.getQuery());
                     csvWriter.addValue(0);
                     csvWriter.addValue(result.getMeasureStats());
-                    csvWriter.addValue(result.getMeasureStats() != null? result.getMeasureStats().entrySet().stream()
+                    csvWriter.addValue(result.getMeasureStats() != null ? result.getMeasureStats().entrySet().stream()
                             .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
-                    : null);
+                            : null);
                     csvWriter.writeValuesToRow();
                 } catch (Exception e) {
                     LOG.warn("Error executing query {}: {}", i, e.getMessage());
-                    csvWriter.addValue(csv);
+                    csvWriter.addValue(schema.getCsv());
                     csvWriter.addValue(duckDbMode);
                     csvWriter.addValue(i);
                     csvWriter.addValue(-1);
@@ -697,7 +483,7 @@ public class Experiments {
             executor.close();
             csvWriter.close();
             LOG.info("DuckDB query execution completed");
-            
+
         } catch (Exception e) {
             LOG.error("Fatal error in timeDuckDBQueries", e);
             csvWriter.close();
@@ -706,7 +492,7 @@ public class Experiments {
     }
 
     private DuckDBQueryExecutor.ExecutionMode parseExecutionMode(String mode) {
-        switch(mode) {
+        switch (mode) {
             case "directCSV":
                 return DuckDBQueryExecutor.ExecutionMode.DIRECT_CSV;
             case "table":
@@ -714,7 +500,8 @@ public class Experiments {
             case "spatialIndex":
                 return DuckDBQueryExecutor.ExecutionMode.SPATIAL_INDEX;
             default:
-                throw new IllegalArgumentException("Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, spatialIndex");
+                throw new IllegalArgumentException(
+                        "Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, spatialIndex");
         }
     }
 
@@ -724,11 +511,14 @@ public class Experiments {
      * This ensures reproducibility when running from the saved sequence.
      */
     private void generateAndSaveQuerySequence() throws IOException {
+        requireScenario("generateAndSaveQuerySequence");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
-        Schema schema = getSchemaWithSampling();
-
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null, measureCols);
+        // Build initial query from scenario config
+        Rectangle rect = scenarioConfig.getQ0().toRectangle();
+        Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
+                schema.getMeasureCols());
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         // Save queries to file
@@ -739,7 +529,7 @@ public class Experiments {
                 writer.write("\n");
             }
         }
-        
+
         LOG.info("Generated and saved {} queries to {}", sequence.size(), outFile);
     }
 

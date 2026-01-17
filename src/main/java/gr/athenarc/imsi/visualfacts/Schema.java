@@ -13,7 +13,7 @@ public class Schema {
     private boolean hasHeader = false;
     private final int xColumn;
     private final int yColumn;
-    private final List<Integer> measureCols;
+    private List<Integer> measureCols;
     private final Map<Integer, Integer> measureColToIndex = new HashMap<>();
     private final Rectangle bounds;
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
@@ -67,6 +67,14 @@ public class Schema {
 
     public List<Integer> getMeasureCols() {
         return measureCols;
+    }
+
+    public void setMeasureCols(List<Integer> measureCols) {
+        this.measureCols = measureCols;
+        this.measureColToIndex.clear();
+        for (int i = 0; i < measureCols.size(); i++) {
+            measureColToIndex.put(measureCols.get(i), i);
+        }
     }
 
     public int getMeasureIndex(int colNumber) {

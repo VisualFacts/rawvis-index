@@ -1,0 +1,22 @@
+datasets:
+  test_synth10_100K:
+    csv: "classpath:data/data_10_cols_100K.csv"
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9]
+    bounds: "0:1000,0:1000"
+    objectCount: 100000
+    validationFilters: []
+
+scenarios:
+  test_pan_scenario:
+    dataset: test_synth10_100K
+    q0:
+      rect: "544:574,323:353"
+      filters: {}
+    minShift: 10
+    maxShift: 20
+    zoomFactor: 0
+    seqCount: 100

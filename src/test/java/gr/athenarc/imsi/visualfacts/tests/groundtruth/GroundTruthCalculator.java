@@ -32,11 +32,17 @@ public final class GroundTruthCalculator {
         List<Map<Integer, StatsDuckDB>> statsList = new ArrayList<>();
         DuckDBQueryExecutor duckdb = null;
         try {
+            // Format column names with proper padding
+            String xCol = "column" + String.format("%02d", schema.getxColumn());
+            String yCol = "column" + String.format("%02d", schema.getyColumn());
+            
             duckdb = new DuckDBQueryExecutor(
                     schema.getCsv(),
                     DuckDBQueryExecutor.ExecutionMode.TABLE,
-                    "column" + schema.getxColumn(),
-                    "column" + schema.getyColumn());
+                    xCol,
+                    yCol,
+                    schema.getValidationFilters());
+            
             for (Query query : queries) {
                 QueryResult qr = duckdb.executeQuery(query);
                 statsList.add(qr.getMeasureStats());

@@ -16,6 +16,7 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 
+import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.query.Query;
 
@@ -115,6 +116,7 @@ public class DuckDBQueryExecutor {
     private long tableCreationTimeNanos = 0;
     private long indexCreationTimeNanos = 0;
     private Integer datasetColumnCount = null; // Cache the dataset column count
+    private List<DataValidationFilter> validationFilters = null; // Optional validation filters
 
     public DuckDBQueryExecutor(String csvPath) throws Exception {
         this.csvPath = csvPath;
@@ -122,10 +124,19 @@ public class DuckDBQueryExecutor {
     }
 
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol) throws Exception {
+        this(csvPath, mode, xCol, yCol, null);
+    }
+
+    public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
+                               List<DataValidationFilter> validationFilters) throws Exception {
         this.csvPath = csvPath;
         this.mode = mode;
         this.xCol = xCol;
         this.yCol = yCol;
+        this.validationFilters = validationFilters;
+        if (validationFilters != null && !validationFilters.isEmpty()) {
+            LOG.info("DuckDB executor initialized with {} validation filters", validationFilters.size());
+        }
         initializeConnection();
         initializeResources();
     }
@@ -304,7 +315,7 @@ public class DuckDBQueryExecutor {
     public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
             throws Exception {
 
-        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, xCol, yCol);
+        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, validationFilters, xCol, yCol);
 
         LOG.trace("Executing direct CSV query: {}", query);
         return executeQueryWithTiming(query);
@@ -315,7 +326,7 @@ public class DuckDBQueryExecutor {
      */
     public QueryResult executeQueryWithTable(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
             throws Exception {
-        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, xCol, yCol);
+        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, xCol, yCol);
 
         LOG.trace("Executing table query: {}", query);
         return executeQueryWithTiming(query);
@@ -326,7 +337,7 @@ public class DuckDBQueryExecutor {
      */
     public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol,
             String yCol) throws Exception {
-        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols);
+        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters);
 
         LOG.trace("Executing spatial index query: {}", query);
         return executeQueryWithTiming(query);
@@ -403,6 +414,7 @@ public class DuckDBQueryExecutor {
 
             LOG.debug("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
                     result.getRowCount(), result.getExecutionTimeNanos());
+            // LOG.debug("Duck db query: {}", query);
             LOG.trace("DuckDB query results: {}", measureStats);
         } catch (Exception e) {
             long endTime = System.nanoTime();

@@ -101,7 +101,6 @@ public class Veti implements AutoCloseable {
 
         List<DataValidationFilter> validationFilters = schema.getValidationFilters();
 
-        LOG.debug("Validation filters: " + validationFilters);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
         colIndexes.addAll(schema.getMeasureCols());

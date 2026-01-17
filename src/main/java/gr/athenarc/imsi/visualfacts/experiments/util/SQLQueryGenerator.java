@@ -2,12 +2,18 @@ package gr.athenarc.imsi.visualfacts.experiments.util;
 
 import java.util.List;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.collect.Range;
 
+import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Filter;
 import gr.athenarc.imsi.visualfacts.query.FilterOperator;
 
 public class SQLQueryGenerator {
+
+    private static final Logger LOG = LogManager.getLogger(SQLQueryGenerator.class);
 
     /**
      * @param tableName
@@ -51,6 +57,15 @@ public class SQLQueryGenerator {
      * For each aggregation column we produce count/min/max/sum/avg/sum_of_squares with distinct aliases.
      */
     public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, String... cols) {
+        return getSQLUniAggQuery(tableName, ranges, aggCols, null, cols);
+    }
+
+    /**
+     * Generate a uni-variate aggregation query for multiple aggregation columns with validation filters.
+     * Validation filters exclude rows that match (e.g., "column12 < 0 OR column12 > 400" excludes outliers).
+     */
+    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, 
+                                           List<DataValidationFilter> validationFilters, String... cols) {
         StringBuilder sb = new StringBuilder();
         sb.append("select ");
         String sep = "";
@@ -66,7 +81,15 @@ public class SQLQueryGenerator {
               .append("sum(").append(aggCol).append(" * ").append(aggCol).append(") as sum_of_squares_").append(aliasBase);
             sep = ", ";
         }
-        sb.append(" from ").append(tableName).append(" where ").append(generateWhereClause(ranges, cols)).append(";");
+        sb.append(" from ").append(tableName).append(" where ").append(generateWhereClause(ranges, cols));
+        
+        // Add validation filter exclusions
+        String validationClause = generateValidationFilterClause(validationFilters);
+        if (!validationClause.isEmpty()) {
+            sb.append(" AND ").append(validationClause);
+        }
+        
+        sb.append(";");
         return sb.toString();
     }
 
@@ -91,6 +114,15 @@ public class SQLQueryGenerator {
      * Uses ST_Within with ST_MakeEnvelope to leverage the R-tree index on the geometry column.
      */
     public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, java.util.List<String> aggCols) {
+        return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, null);
+    }
+
+    /**
+     * DuckDB-specific spatial query for multiple aggregation columns with validation filters.
+     */
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, 
+                                                         java.util.List<String> aggCols,
+                                                         List<DataValidationFilter> validationFilters) {
         if (ranges.size() < 2) {
             throw new IllegalArgumentException("Spatial queries require at least 2 ranges (x and y)");
         }
@@ -117,7 +149,15 @@ public class SQLQueryGenerator {
           .append(xRange.lowerEndpoint()).append(", ")
           .append(yRange.lowerEndpoint()).append(", ")
           .append(xRange.upperEndpoint()).append(", ")
-          .append(yRange.upperEndpoint()).append("));");
+          .append(yRange.upperEndpoint()).append("))");
+
+        // Add validation filter exclusions
+        String validationClause = generateValidationFilterClause(validationFilters);
+        if (!validationClause.isEmpty()) {
+            sb.append(" AND ").append(validationClause);
+        }
+        
+        sb.append(";");
 
         return sb.toString();
     }
@@ -141,6 +181,62 @@ public class SQLQueryGenerator {
             i++;
         }
         return whereClause;
+    }
+
+    /**
+     * Generates a WHERE clause that EXCLUDES rows matching the validation filters.
+     * Validation filters define invalid data (e.g., "column12 < 0" means values < 0 are invalid).
+     * The returned clause ensures only VALID rows are included (NOT matching the filter conditions).
+     * 
+     * @param validationFilters list of filters defining invalid data conditions
+     * @return SQL clause string, or empty string if no filters
+     */
+    private static String generateValidationFilterClause(List<DataValidationFilter> validationFilters) {
+        if (validationFilters == null || validationFilters.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("(");
+        String sep = "";
+        for (DataValidationFilter filter : validationFilters) {
+            // Format column name with two-digit padding to match DuckDB column naming
+            String colName = "column" + String.format("%02d", filter.getFilterColumn());
+            double value = filter.getFilterPredicate().getConstant();
+            
+            // NEGATE the filter: if filter says "< 0" (invalid), we want "NOT (col < 0)" i.e., "col >= 0"
+            String negatedOperator = negateOperator(filter.getFilterPredicate().getOperator());
+            
+            sb.append(sep).append(colName).append(" ").append(negatedOperator).append(" ").append(value);
+            // Validation filters are OR'd (any match = invalid), so negation becomes AND
+            sep = " AND ";
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
+    private static String operatorToSQL(FilterOperator operator) {
+        switch (operator) {
+            case LESS_THAN: return "<";
+            case LESS_THAN_OR_EQUAL: return "<=";
+            case GREATER_THAN: return ">";
+            case GREATER_THAN_OR_EQUAL: return ">=";
+            case EQUAL: return "=";
+            case NOT_EQUAL: return "!=";
+            default: throw new IllegalArgumentException("Unknown operator: " + operator);
+        }
+    }
+
+    private static String negateOperator(FilterOperator operator) {
+        switch (operator) {
+            case LESS_THAN: return ">=";
+            case LESS_THAN_OR_EQUAL: return ">";
+            case GREATER_THAN: return "<=";
+            case GREATER_THAN_OR_EQUAL: return "<";
+            case EQUAL: return "!=";
+            case NOT_EQUAL: return "=";
+            default: throw new IllegalArgumentException("Unknown operator: " + operator);
+        }
     }
 
     public static String getSQLFilterQuery(String tableName, Filter filter, List<Range<Float>> ranges, String... cols) {

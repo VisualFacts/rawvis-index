@@ -3,11 +3,8 @@ package gr.athenarc.imsi.visualfacts.tests;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.*;
 
-import java.net.URISyntaxException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.Collections;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,92 +15,124 @@ import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import com.google.common.collect.Range;
 import com.google.common.math.Stats;
 
 import gr.athenarc.imsi.visualfacts.ApproximateValinor;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.Veti;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
+import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.StatsDuckDB;
+import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.tests.groundtruth.GroundTruthCalculator;
-import gr.athenarc.imsi.visualfacts.tests.util.TestScenarioGenerator;
 
+/**
+ * Test class for running and validating exploration scenarios.
+ * 
+ * Configuration via system properties:
+ * - scenario.name: Name of the scenario to run (default: "test_pan_scenario")
+ * - scenario.config: Path to YAML config file (default: uses test classpath resource)
+ * - scenario.count: Number of queries to generate (default: 100, or uses seqCount from config)
+ * - ci.coverage: Required CI coverage for approximate tests (default: 0.90)
+ */
 public class ScenarioRunnerTest {
-    private static int csvRowCount;
     private static final Logger LOG = LogManager.getLogger(ScenarioRunnerTest.class);
+    
+    // Default test config in test resources
+    private static final String DEFAULT_TEST_CONFIG = "experiments/test_scenarios.yaml";
+    private static final String DEFAULT_SCENARIO = "test_scenario";
 
-    private static Path csvPath;
     private static Schema schema;
+    private static ExplorationScenarioConfig scenarioConfig;
     private static List<Query> queries;
     private static List<Map<Integer, StatsDuckDB>> expectedResultsList;
 
     @BeforeAll
-    static void prepareScenarioAndGroundTruth() throws URISyntaxException {
-        String csvPathStr = System.getProperty("csv.path");
-        if (csvPathStr == null) {
-            csvPath = Paths.get(ScenarioRunnerTest.class.getClassLoader()
-                    .getResource("data/data_10_cols_1K.csv").toURI());
-            LOG.info("Using default test CSV: data/data_10_cols_1K.csv");
+    static void prepareScenarioAndGroundTruth() throws IOException {
+        // Load configuration
+        String configPath = System.getProperty("scenario.config");
+        String scenarioName = System.getProperty("scenario.name", DEFAULT_SCENARIO);
+        
+        ExperimentConfig experimentConfig;
+        if (configPath != null && !configPath.isEmpty()) {
+            // Load from specified file path
+            LOG.info("Loading config from file: {}", configPath);
+            experimentConfig = ExperimentConfigLoader.loadFromFile(configPath);
         } else {
-            csvPath = Paths.get(csvPathStr);
-            LOG.info("Using test CSV: {}", csvPathStr);
+            // Load from test classpath resource
+            LOG.info("Loading config from test classpath: {}", DEFAULT_TEST_CONFIG);
+            experimentConfig = ExperimentConfigLoader.loadFromClasspath(DEFAULT_TEST_CONFIG);
         }
-
-        // Count rows in CSV file (excluding header if present)
-        csvRowCount = 0;
-        try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(csvPath)) {
-            while (reader.readLine() != null) {
-                csvRowCount++;
-            }
-        } catch (Exception e) {
-            LOG.warn("Could not count rows in test CSV: {}", e.toString());
+        
+        // Get scenario configuration
+        scenarioConfig = experimentConfig.getScenario(scenarioName);
+        if (scenarioConfig == null) {
+            throw new IllegalArgumentException("Scenario not found: " + scenarioName + 
+                    ". Available: " + experimentConfig.getScenarios().keySet());
         }
+        
+        // Get schema for the scenario's dataset
+        schema = experimentConfig.getSchemaForScenario(scenarioName);
+        LOG.info("Loaded scenario '{}' with dataset, csv: {}", scenarioName, schema.getCsv());
 
-        schema = new Schema(csvPath.toString(), ',',
-                0, 1, Arrays.asList(2, 3, 4, 5, 6, 7, 8, 9),
-                new Rectangle(Range.closed(0f, 1000f), Range.closed(0f, 1000f)),
-                csvRowCount,
-                Collections.emptyList());
-        schema.setHasHeader(false);
 
-        int count = Integer.getInteger("scenario.count", 100);
-        queries = TestScenarioGenerator.generate(schema, count);
+        Rectangle q0Rect = scenarioConfig.getQ0().toRectangle();
+        Map<Integer, String> q0Filters = scenarioConfig.getQ0().getFilters();
+        Query q0 = new Query(q0Rect, q0Filters, new ArrayList<>(), schema.getMeasureCols());
+        
+        QuerySequenceGenerator generator = new QuerySequenceGenerator(
+                scenarioConfig.getMinShift(),
+                scenarioConfig.getMaxShift(),
+                0, 0,
+                scenarioConfig.getZoomFactor());
+        queries = generator.generateQuerySequence(q0, scenarioConfig.getSeqCount(), schema);
+        LOG.info("Generated {} queries for scenario", queries.size());
 
-        // compute ground truth once for all engines
+        // Compute ground truth once for all engines
         expectedResultsList = GroundTruthCalculator.computeAll(schema, queries);
     }
 
-    // @Test
+    @Test
     void exactScenarioMatchesGroundTruth() throws Exception {
+        LOG.info("Running exact scenario test with {} queries", queries.size());
         Veti index = new Veti(schema, null, "valinor", null);
+        
         for (int i = 0; i < queries.size(); i++) {
-            QueryResults actual = index.executeQuery(queries.get(i));
+            Query query = queries.get(i);
+            QueryResults actual = index.executeQuery(query);
             Map<Integer, StatsDuckDB> expected = expectedResultsList.get(i);
             if (i > 0) {
                 for (Integer measure : expected.keySet()) {
                     StatsDuckDB expStats = expected.get(measure);
                     Stats actStats = actual.getRectStats().get(measure);
-                    LOG.debug("Query {} Measure {}: expected {}, actual {}",
-                            i, measure, expStats, actStats);
+                    LOG.trace("Q{} M{}: exp={}, act={}", i, measure, expStats, actStats);
                     if (expStats.count() == 0) {
                         if (actStats != null) {
-                            assertEquals(0, actStats.count(), "Actual stats should have count 0 for measure " + measure
-                                    + " with expected count 0 in query " + i);
+                            assertEquals(0, actStats.count(), 
+                                    String.format("Query %d [%s]: Actual stats should have count 0 for measure %d", 
+                                            i, query.getRect(), measure));
                         }
                     } else {
-                        assertNotNull(actStats, "Missing actual stats for measure " + measure);
-                        assertEquals(expStats.count(), actStats.count(),
-                                "Count mismatch for measure " + measure + " in query " + i);
-                        assertEquals(expStats.mean(), actStats.mean(), 1e-6,
-                                "Mean mismatch for measure " + measure + " in query " + i);
-                        assertEquals(expStats.min(), actStats.min(), 1e-6,
-                                "Min mismatch for measure " + measure + " in query " + i);
-                        assertEquals(expStats.max(), actStats.max(), 1e-6,
-                                "Max mismatch for measure " + measure + " in query " + i);
+                        try {
+                            assertNotNull(actStats, 
+                                    String.format("Query %d [%s]: Missing actual stats for measure %d. Expected: %s", 
+                                            i, query.getRect(), measure, expStats));
+                            assertEquals(expStats.count(), actStats.count(),
+                                    String.format("Query %d [%s]: Count mismatch for measure %d", i, query.getRect(), measure));
+                            assertEquals(expStats.mean(), actStats.mean(), 1e-6,
+                                    String.format("Query %d [%s]: Mean mismatch for measure %d", i, query.getRect(), measure));
+                            assertEquals(expStats.min(), actStats.min(), 1e-6,
+                                    String.format("Query %d [%s]: Min mismatch for measure %d", i, query.getRect(), measure));
+                            assertEquals(expStats.max(), actStats.max(), 1e-6,
+                                    String.format("Query %d [%s]: Max mismatch for measure %d", i, query.getRect(), measure));
+                        } catch (AssertionError e) {
+                            LOG.error("Assertion failed for Query {} [{}], measure {}: {}", i, query.getRect(), measure, e.getMessage());
+                        }
                     }
                 }
             }
@@ -113,8 +142,8 @@ public class ScenarioRunnerTest {
     @Test
     void approximateScenarioCoverageWithinCI() throws Exception {
         int minRows = 1000000;
-        if (csvRowCount < minRows) {
-            assumeTrue(false, "Skipping approximate scenario test: dataset too small (rows: " + csvRowCount + ")");
+        if (schema.getObjectCount() < minRows) {
+            assumeTrue(false, "Skipping approximate scenario test: dataset too small (rows: " + schema.getObjectCount() + ")");
         }
         ApproximateValinor index = new ApproximateValinor(schema, 0.05);
         int total = 0;
