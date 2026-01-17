@@ -5,6 +5,7 @@ import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import com.google.common.collect.BoundType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -23,21 +24,20 @@ public class Grid extends Tile {
     private float rowSize;
     private float colSize;
 
-    //private RangeMap<Float, Integer> xRangeMap = TreeRangeMap.create();
-    //private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
+    // private RangeMap<Float, Integer> xRangeMap = TreeRangeMap.create();
+    // private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
 
-    public Grid(InitializationPolicy initializationPolicy, Rectangle bounds, List<CategoricalColumn> categoricalColumns, int gridSize) {
+    public Grid(InitializationPolicy initializationPolicy, Rectangle bounds, List<CategoricalColumn> categoricalColumns,
+            int gridSize) {
         super(bounds);
         this.categoricalColumns = categoricalColumns;
         this.gridSize = gridSize;
         this.initializationPolicy = initializationPolicy;
     }
 
-
     public void split() {
         if (this.tiles != null)
             return;
-
 
         this.yRanges = createSubranges(this.bounds.getYRange(), gridSize);
         this.xRanges = createSubranges(this.bounds.getXRange(), gridSize);
@@ -59,7 +59,8 @@ public class Grid extends Tile {
                     Grid subGrid = new Grid(null, rect, categoricalColumns, splitSize);
                     subGrid.split();
                     tiles[i][j] = subGrid;
-                    //LOG.debug("Initial split of tile " + colTileRange + rowTileRange + " : " + splitSize * splitSize);
+                    // LOG.debug("Initial split of tile " + colTileRange + rowTileRange + " : " +
+                    // splitSize * splitSize);
                 } else {
                     tiles[i][j] = new QuadTreeTile(rect);
                 }
@@ -71,7 +72,6 @@ public class Grid extends Tile {
             this.root = null;
         }
     }
-
 
     private Range[] createSubranges(Range<Float> range, int count) {
         Range<Float>[] subranges = new Range[count];
@@ -90,7 +90,7 @@ public class Grid extends Tile {
     }
 
     private Integer getRowIndex(float y) {
-        //return yRangeMap.get(y);
+        // return yRangeMap.get(y);
 
         float yMin = this.bounds.getYRange().lowerEndpoint();
         int i = (int) Math.floor((y - yMin) / rowSize);
@@ -101,7 +101,7 @@ public class Grid extends Tile {
     }
 
     private Integer getColIndex(float x) {
-        //return xRangeMap.get(x);
+        // return xRangeMap.get(x);
 
         float xMin = this.bounds.getXRange().lowerEndpoint();
         int j = (int) Math.floor((x - xMin) / colSize);
@@ -111,11 +111,10 @@ public class Grid extends Tile {
         return j;
     }
 
-
-    //returns the index leaf tiles that contain the specified query. it is assumed for simplicity that the query ranges are open
+    // returns the index leaf tiles that contain the specified query.
     @Override
     public List<Tile> getOverlappedLeafTiles(Query query) {
-        List leafTiles = new ArrayList();
+        List<Tile> leafTiles = new ArrayList<>();
         Range<Float> queryXRange, queryYRange;
         Rectangle rect = query.getRect();
         try {
@@ -129,16 +128,35 @@ public class Grid extends Tile {
             return leafTiles;
         }
 
-        int iMin = getRowIndex(queryYRange.lowerEndpoint());
-        int iMax = getRowIndex(queryYRange.upperEndpoint());
-        if (tiles[iMax][0].getBounds().getYRange().lowerEndpoint().equals(queryYRange.upperEndpoint()) && iMax > 0) {
-            iMax--;
+        float yLower = queryYRange.lowerEndpoint();
+        if (queryYRange.lowerBoundType() == BoundType.OPEN) {
+            yLower = Math.nextUp(yLower);
         }
-        int jMin = getColIndex(queryXRange.lowerEndpoint());
-        int jMax = getColIndex(queryXRange.upperEndpoint());
-        if (tiles[0][jMax].getBounds().getXRange().lowerEndpoint().equals(queryXRange.upperEndpoint()) && jMax > 0) {
-            jMax--;
+        float yUpper = queryYRange.upperEndpoint();
+        if (queryYRange.upperBoundType() == BoundType.OPEN) {
+            yUpper = Math.nextDown(yUpper);
         }
+
+        float xLower = queryXRange.lowerEndpoint();
+        if (queryXRange.lowerBoundType() == BoundType.OPEN) {
+            xLower = Math.nextUp(xLower);
+        }
+        float xUpper = queryXRange.upperEndpoint();
+        if (queryXRange.upperBoundType() == BoundType.OPEN) {
+            xUpper = Math.nextDown(xUpper);
+        }
+
+        // If nudging collapsed the interval (can happen for very small/degenerate open
+        // ranges)
+        if (xLower > xUpper || yLower > yUpper) {
+            return leafTiles;
+        }
+
+        int iMin = getRowIndex(yLower);
+        int iMax = getRowIndex(yUpper);
+        int jMin = getColIndex(xLower);
+        int jMax = getColIndex(xUpper);
+
         for (int i = iMin; i <= iMax; i++) {
             for (int j = jMin; j <= jMax; j++) {
                 leafTiles.addAll(tiles[i][j].getOverlappedLeafTiles(query));
@@ -151,7 +169,8 @@ public class Grid extends Tile {
     public TreeNode addPoint(Point point, String[] row) {
         if (this.bounds.contains(point)) {
             return this.getLeafTile(point).addPoint(point, row);
-        } else return null;
+        } else
+            return null;
     }
 
     @Override
@@ -184,7 +203,6 @@ public class Grid extends Tile {
         }
         return leafTiles;
     }
-
 
     @Override
     public String toString() {
