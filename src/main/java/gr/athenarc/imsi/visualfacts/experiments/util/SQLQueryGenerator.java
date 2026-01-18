@@ -174,7 +174,9 @@ public class SQLQueryGenerator {
         int i = 0;
         for (Range<Float> range : ranges) {
             String col = cols[i];
-            whereClause += col + " > " + range.lowerEndpoint() + " AND " + col + " < " + range.upperEndpoint();
+            // Cast to FLOAT to match Veti's float precision (avoids float vs double discrepancies)
+            whereClause += "CAST(" + col + " AS FLOAT) > CAST(" + range.lowerEndpoint() + " AS FLOAT) AND " +
+                           "CAST(" + col + " AS FLOAT) < CAST(" + range.upperEndpoint() + " AS FLOAT)";
             if (i < ranges.size() - 1) {
                 whereClause += " AND ";
             }
