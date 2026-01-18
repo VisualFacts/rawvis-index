@@ -22,7 +22,7 @@ public class Query {
 
     private UserOpType userOpType; // Added field to store the user operation
 
-    private EnumSet<AggregateType> aggregateTypes = AggregateType.ALL; // Aggregate functions to compute
+    private EnumSet<AggregateType> aggregateTypes = AggregateType.BASIC; // Aggregate functions to compute
 
     public Query() {
     }

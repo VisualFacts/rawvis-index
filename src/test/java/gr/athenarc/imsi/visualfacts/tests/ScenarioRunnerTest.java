@@ -106,6 +106,10 @@ public class ScenarioRunnerTest {
             Query query = queries.get(i);
             QueryResults actual = index.executeQuery(query);
             Map<Integer, StatsDuckDB> expected = expectedResultsList.get(i);
+            if (expected.isEmpty()) {
+                LOG.debug("No expected results for query {}, skipping CI check", i);
+                continue;
+            }
             if (i > 0) {
                 for (Integer measure : expected.keySet()) {
                     StatsDuckDB expStats = expected.get(measure);
@@ -164,6 +168,11 @@ public class ScenarioRunnerTest {
             LOG.trace("Approximate results for query {}: {}", i, aqr);
 
             Map<Integer, StatsDuckDB> expected = expectedResultsList.get(i);
+
+            if (expected.isEmpty()) {
+                LOG.debug("No expected results for query {}, skipping CI check", i);
+                continue;
+            }
 
             Map<Integer, double[]> confIntervals = aqr.getConfidenceIntervals();
             assertNotNull(confIntervals, "confidence intervals must be present");

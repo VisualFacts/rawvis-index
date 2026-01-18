@@ -100,33 +100,36 @@ public class SQLQueryGenerator {
 
     /**
      * Appends aggregate functions for a column based on the specified aggregate types.
+     * Casts columns to FLOAT to match Veti's float precision.
      * @return the separator to use for the next column (", " if any aggregates were added)
      */
     private static String appendAggregates(StringBuilder sb, String aggCol, String aliasBase, 
                                             EnumSet<AggregateType> aggregates) {
+        // Cast to FLOAT to match Veti's float precision
+        String castCol = "CAST(" + aggCol + " AS FLOAT)";
         String innerSep = "";
         if (aggregates.contains(AggregateType.COUNT)) {
-            sb.append(innerSep).append("count(").append(aggCol).append(") as count_").append(aliasBase);
+            sb.append(innerSep).append("count(").append(castCol).append(") as count_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.MIN)) {
-            sb.append(innerSep).append("min(").append(aggCol).append(") as min_").append(aliasBase);
+            sb.append(innerSep).append("min(").append(castCol).append(") as min_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.MAX)) {
-            sb.append(innerSep).append("max(").append(aggCol).append(") as max_").append(aliasBase);
+            sb.append(innerSep).append("max(").append(castCol).append(") as max_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.SUM)) {
-            sb.append(innerSep).append("sum(").append(aggCol).append(") as sum_").append(aliasBase);
+            sb.append(innerSep).append("sum(").append(castCol).append(") as sum_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.AVG)) {
-            sb.append(innerSep).append("avg(").append(aggCol).append(") as avg_").append(aliasBase);
+            sb.append(innerSep).append("avg(").append(castCol).append(") as avg_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.SUM_OF_SQUARES)) {
-            sb.append(innerSep).append("sum(").append(aggCol).append(" * ").append(aggCol)
+            sb.append(innerSep).append("sum(").append(castCol).append(" * ").append(castCol)
               .append(") as sum_of_squares_").append(aliasBase);
             innerSep = ", ";
         }

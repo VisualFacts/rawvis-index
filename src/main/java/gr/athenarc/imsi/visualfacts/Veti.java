@@ -87,6 +87,8 @@ public class Veti implements AutoCloseable {
     }
 
     public QueryResults initialize(Query q0) {
+        LOG.debug("Initializing VETI index with initial query: " + q0);
+        LOG.debug("Schema: " + schema);
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
@@ -139,7 +141,6 @@ public class Veti implements AutoCloseable {
                     });
 
                     if (shouldSkip) {
-                        LOG.debug("Skipping row: " + Arrays.toString(row));
                         objectsSkipped++;
                         continue;
                     }

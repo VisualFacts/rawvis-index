@@ -40,8 +40,8 @@ public class CsvRowReaderBenchmark {
             if (csvPathStr == null) {
                 try {
                     file = Paths.get(CsvRowReaderBenchmark.class.getClassLoader()
-                        .getResource("data/data_10_cols_1K.csv").toURI());
-                    LOG.info("Using default benchmark CSV: data/data_10_cols_1K.csv");
+                        .getResource("data/data_10_cols_100K.csv").toURI());
+                    LOG.info("Using default benchmark CSV: data/data_10_cols_100K.csv");
                 } catch (Exception e) {
                     throw new RuntimeException("Default CSV resource not found", e);
                 }
@@ -52,7 +52,7 @@ public class CsvRowReaderBenchmark {
             config = new CsvReaderConfig(
                 file.toFile(),
                 StandardCharsets.UTF_8,
-                new int[] { 1, 2, 4, 9 },
+                new int[] { 1, 2, 4, 5 },
                 false,
                 ',');
         }

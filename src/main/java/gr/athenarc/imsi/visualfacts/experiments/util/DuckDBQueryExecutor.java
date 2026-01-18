@@ -37,12 +37,12 @@ public class DuckDBQueryExecutor {
      * functions.
      */
     public static class StatsDuckDB {
-        private final long count;
-        private final double min;
-        private final double max;
-        private final double sum;
-        private final double mean;
-        private final double sumOfSquares;
+        private long count;
+        private double min;
+        private double max;
+        private double sum;
+        private double mean;
+        private double sumOfSquares;
 
         public StatsDuckDB(long count, double min, double max, double sum, double mean, double sumOfSquares) {
             this.count = count;
@@ -53,49 +53,65 @@ public class DuckDBQueryExecutor {
             this.sumOfSquares = sumOfSquares;
         }
 
+        public static StatsDuckDB empty() {
+            return new StatsDuckDB(0L, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        }
+
         public long count() {
             return count;
+        }
+
+        public void setCount(long count) {
+            this.count = count;
         }
 
         public double min() {
             return min;
         }
 
+        public void setMin(double min) {
+            this.min = min;
+        }
+
         public double max() {
             return max;
+        }
+
+        public void setMax(double max) {
+            this.max = max;
         }
 
         public double sum() {
             return sum;
         }
 
+        public void setSum(double sum) {
+            this.sum = sum;
+        }
+
         public double mean() {
             return mean;
+        }
+
+        public void setMean(double mean) {
+            this.mean = mean;
         }
 
         public double sumOfSquares() {
             return sumOfSquares;
         }
 
-        public double populationStandardDeviation() {
-            if (count <= 0)
-                return 0.0;
-            double variance = (sumOfSquares / count) - (mean * mean);
-            return Math.sqrt(Math.max(0, variance));
+        public void setSumOfSquares(double sumOfSquares) {
+            this.sumOfSquares = sumOfSquares;
         }
 
-        public double sampleStandardDeviation() {
-            if (count <= 1)
-                return 0.0;
-            double variance = (sumOfSquares - (sum * sum / count)) / (count - 1);
-            return Math.sqrt(Math.max(0, variance));
-        }
+
 
         @Override
         public String toString() {
             return String.format(
-                    "StatsDuckDB{count=%d, min=%.4f, max=%.4f, sum=%.4f, mean=%.4f, sumOfSquares=%.4f, populationStandardDeviation=%.4f, sampleStandardDeviation=%.4f}",
-                    count, min, max, sum, mean, sumOfSquares, populationStandardDeviation(), sampleStandardDeviation());
+                    "StatsDuckDB{count=%d, min=%.4f, max=%.4f, sum=%.4f, mean=%.4f, sumOfSquares=%.4f}",
+                    count, min, max, sum, mean, sumOfSquares);
         }
     }
 
@@ -364,8 +380,6 @@ public class DuckDBQueryExecutor {
                 // Process each aggregation column's statistics
                 // Assuming column names follow pattern: count_*, min_*, max_*, sum_*, avg_*,
                 // sum_of_squares_*
-                Map<Integer, Double[]> statsData = new HashMap<>(); // [count, min, max, sum, avg, sum_sq]
-
                 for (int colIdx = 1; colIdx <= rs.getMetaData().getColumnCount(); colIdx++) {
                     String colName = rs.getMetaData().getColumnName(colIdx);
 
@@ -374,43 +388,24 @@ public class DuckDBQueryExecutor {
                     if (measureIdx == null)
                         continue;
 
-                    Double[] data = statsData.computeIfAbsent(measureIdx, k -> new Double[6]);
+                    StatsDuckDB stats = measureStats.computeIfAbsent(measureIdx, k -> StatsDuckDB.empty());
                     double value = rs.getDouble(colIdx);
 
                     if (colName.startsWith("count_")) {
-                        data[0] = value;
+                        stats.setCount((long) value);
                     } else if (colName.startsWith("min_")) {
-                        data[1] = value;
+                        stats.setMin(value);
                     } else if (colName.startsWith("max_")) {
-                        data[2] = value;
+                        stats.setMax(value);
                     } else if (colName.startsWith("sum_") && !colName.startsWith("sum_of_squares_")) {
-                        data[3] = value;
+                        stats.setSum(value);
                     } else if (colName.startsWith("avg_")) {
-                        data[4] = value;
+                        stats.setMean(value);
                     } else if (colName.startsWith("sum_of_squares_")) {
-                        data[5] = value;
-                    }
-                }
-
-                // Build StatsDuckDB objects from collected data
-                for (Map.Entry<Integer, Double[]> entry : statsData.entrySet()) {
-                    Integer measureIdx = entry.getKey();
-                    Double[] data = entry.getValue();
-
-                    if (data[0] != null && data[3] != null && data[5] != null) {
-                        long count = data[0].longValue();
-                        double sum = data[3];
-                        double sumOfSquares = data[5];
-                        double mean = mean(sum, count);
-                        double min = data[1] != null ? data[1] : Double.NaN;
-                        double max = data[2] != null ? data[2] : Double.NaN;
-
-                        StatsDuckDB stats = new StatsDuckDB(count, min, max, sum, mean, sumOfSquares);
-                        measureStats.put(measureIdx, stats);
+                        stats.setSumOfSquares(value);
                     }
                 }
             }
-
             result.setMeasureStats(measureStats);
 
             long endTime = System.nanoTime();
@@ -418,7 +413,7 @@ public class DuckDBQueryExecutor {
 
             LOG.debug("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
                     result.getRowCount(), result.getExecutionTimeNanos());
-            LOG.debug("Duck db query: {}", query);
+            LOG.trace("Duck db query: {}", query);
             LOG.trace("DuckDB query results: {}", measureStats);
         } catch (Exception e) {
             long endTime = System.nanoTime();

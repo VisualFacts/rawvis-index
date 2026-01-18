@@ -17,14 +17,15 @@ public class ZsvCsvFloatRowReaderTest {
 
     @Test
     void zsvReaderMatchesUnivocity() throws IOException {
-        Path csvPath = Paths.get("src/test/resources/data/data_10_cols_1K.csv");
+        Path csvPath = Paths.get("src/test/resources/data/data_10_cols_100K.csv");
+        // Path csvPath = Paths.get("/data-nonraid/maroulis/data/taxi_data/yellow_tripdata_2014_cleaned_10M.csv");
         // Path csvPath = Paths.get("/home/stavmars/data/sdss_136k.csv");
         // Path csvPath = Paths.get("/home/stavmars/data/test.csv");
 
         CsvReaderConfig config = new CsvReaderConfig(
                 csvPath.toFile(),
                 StandardCharsets.UTF_8,
-                new int[] { 13,14,15,445 },
+                new int[] { 0, 1, 5, 6},
                 false,
                 ',');
 
@@ -45,9 +46,8 @@ public class ZsvCsvFloatRowReaderTest {
                 uniOffset = uni.currentOffset();
                 assertArrayEquals(uniRow, zsvRow, 1e-6f, "Row mismatch at index " + rowCount);
                 assertEquals(uniOffset, zsvOffset, "Offset mismatch at index " + rowCount);
-                // if (rowCount % 10000 == 0) {
-                if (rowCount >= 136420) {
-                    LOG.info("Row " + rowCount + ": " + Arrays.toString(zsvRow) +
+                if (rowCount % 1000 == 0) {
+                    LOG.trace("Row " + rowCount + ": " + Arrays.toString(zsvRow) +
                             " offset=" + zsvOffset + " (uni offset=" + uniOffset + ")");
                 }
                 rowCount++;

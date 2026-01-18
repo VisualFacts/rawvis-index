@@ -235,7 +235,7 @@ public class Experiments {
 
             for (int i = 0; i < sequence.size(); i++) {
                 Query query = sequence.get(i);
-                LOG.debug("Executing query " + i);
+                LOG.debug("Executing query {}: {}", i, query);
 
                 stopwatch = Stopwatch.createStarted();
                 QueryResults queryResults = veti.executeQuery(query);
