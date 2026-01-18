@@ -11,7 +11,7 @@ datasets:
     validationFilters: []
 
 scenarios:
-  test_pan_scenario:
+  test_scenario:
     dataset: test_synth10_100K
     q0:
       rect: "544:574,323:353"

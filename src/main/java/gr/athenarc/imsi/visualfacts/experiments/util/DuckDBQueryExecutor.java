@@ -5,6 +5,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,11 +14,11 @@ import java.util.stream.Collectors;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 
 import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Rectangle;
+import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.Query;
 
 /**
@@ -297,13 +298,16 @@ public class DuckDBQueryExecutor {
         String formattedXCol = formatColumnName(xCol, useTwoDigitFormat);
         String formattedYCol = formatColumnName(yCol, useTwoDigitFormat);
 
+        // Get aggregate types from query (defaults to ALL if not set)
+        EnumSet<AggregateType> aggregateTypes = query.getAggregateTypes();
+
         switch (mode) {
             case DIRECT_CSV:
-                return executeQueryDirectCSV(ranges, measureColsString, formattedXCol, formattedYCol);
+                return executeQueryDirectCSV(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
             case TABLE:
-                return executeQueryWithTable(ranges, measureColsString, formattedXCol, formattedYCol);
+                return executeQueryWithTable(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
             case SPATIAL_INDEX:
-                return executeQueryWithSpatialIndex(ranges, measureColsString, formattedXCol, formattedYCol);
+                return executeQueryWithSpatialIndex(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
             default:
                 throw new IllegalArgumentException("Unknown execution mode: " + mode);
         }
@@ -312,10 +316,10 @@ public class DuckDBQueryExecutor {
     /**
      * Version 1: Run query directly on CSV file
      */
-    public QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
-            throws Exception {
+    private QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol,
+            EnumSet<AggregateType> aggregateTypes) throws Exception {
 
-        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, validationFilters, xCol, yCol);
+        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
 
         LOG.trace("Executing direct CSV query: {}", query);
         return executeQueryWithTiming(query);
@@ -324,9 +328,9 @@ public class DuckDBQueryExecutor {
     /**
      * Version 2: Run query on pre-created table
      */
-    public QueryResult executeQueryWithTable(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol)
-            throws Exception {
-        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, xCol, yCol);
+    private QueryResult executeQueryWithTable(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol,
+            EnumSet<AggregateType> aggregateTypes) throws Exception {
+        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
 
         LOG.trace("Executing table query: {}", query);
         return executeQueryWithTiming(query);
@@ -335,9 +339,9 @@ public class DuckDBQueryExecutor {
     /**
      * Version 3: Run query on table with spatial R-tree index
      */
-    public QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol,
-            String yCol) throws Exception {
-        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters);
+    private QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol,
+            String yCol, EnumSet<AggregateType> aggregateTypes) throws Exception {
+        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes);
 
         LOG.trace("Executing spatial index query: {}", query);
         return executeQueryWithTiming(query);
@@ -414,7 +418,7 @@ public class DuckDBQueryExecutor {
 
             LOG.debug("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
                     result.getRowCount(), result.getExecutionTimeNanos());
-            // LOG.debug("Duck db query: {}", query);
+            LOG.debug("Duck db query: {}", query);
             LOG.trace("DuckDB query results: {}", measureStats);
         } catch (Exception e) {
             long endTime = System.nanoTime();

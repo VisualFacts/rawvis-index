@@ -1,6 +1,7 @@
 package gr.athenarc.imsi.visualfacts.query;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,8 @@ public class Query {
     private List<Integer> measureCols;
 
     private UserOpType userOpType; // Added field to store the user operation
+
+    private EnumSet<AggregateType> aggregateTypes = AggregateType.ALL; // Aggregate functions to compute
 
     public Query() {
     }
@@ -82,6 +85,22 @@ public class Query {
         this.userOpType = userOpType;
     }
 
+    public EnumSet<AggregateType> getAggregateTypes() {
+        return aggregateTypes;
+    }
+
+    public void setAggregateTypes(EnumSet<AggregateType> aggregateTypes) {
+        this.aggregateTypes = aggregateTypes;
+    }
+
+    /**
+     * Fluent setter for aggregate types.
+     */
+    public Query withAggregateTypes(EnumSet<AggregateType> aggregateTypes) {
+        this.aggregateTypes = aggregateTypes;
+        return this;
+    }
+
     @Override
     public String toString() {
         return "Query{" +
@@ -90,6 +109,7 @@ public class Query {
                 ", categoricalFilters=" + categoricalFilters +
                 ", groupByCols=" + groupByCols +
                 ", measureCols=" + measureCols +
+                ", aggregateTypes=" + aggregateTypes +
                 '}';
     }
 

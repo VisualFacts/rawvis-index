@@ -1,5 +1,6 @@
 package gr.athenarc.imsi.visualfacts.experiments.util;
 
+import java.util.EnumSet;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
@@ -9,6 +10,7 @@ import com.google.common.collect.Range;
 
 import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Filter;
+import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.FilterOperator;
 
 public class SQLQueryGenerator {
@@ -57,7 +59,7 @@ public class SQLQueryGenerator {
      * For each aggregation column we produce count/min/max/sum/avg/sum_of_squares with distinct aliases.
      */
     public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, String... cols) {
-        return getSQLUniAggQuery(tableName, ranges, aggCols, null, cols);
+        return getSQLUniAggQuery(tableName, ranges, aggCols, null, AggregateType.ALL, cols);
     }
 
     /**
@@ -66,20 +68,23 @@ public class SQLQueryGenerator {
      */
     public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, 
                                            List<DataValidationFilter> validationFilters, String... cols) {
+        return getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, AggregateType.ALL, cols);
+    }
+
+    /**
+     * Generate a uni-variate aggregation query for multiple aggregation columns with validation filters
+     * and a configurable subset of aggregate functions.
+     */
+    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, 
+                                           List<DataValidationFilter> validationFilters,
+                                           EnumSet<AggregateType> aggregates, String... cols) {
         StringBuilder sb = new StringBuilder();
         sb.append("select ");
         String sep = "";
         for (String aggCol : aggCols) {
-            // sanitize alias part by replacing non-alphanumeric with underscore
             String aliasBase = aggCol.replaceAll("[^A-Za-z0-9]", "_");
-            sb.append(sep)
-              .append("count(").append(aggCol).append(") as count_").append(aliasBase).append(", ")
-              .append("min(").append(aggCol).append(") as min_").append(aliasBase).append(", ")
-              .append("max(").append(aggCol).append(") as max_").append(aliasBase).append(", ")
-              .append("sum(").append(aggCol).append(") as sum_").append(aliasBase).append(", ")
-              .append("avg(").append(aggCol).append(") as avg_").append(aliasBase).append(", ")
-              .append("sum(").append(aggCol).append(" * ").append(aggCol).append(") as sum_of_squares_").append(aliasBase);
-            sep = ", ";
+            sb.append(sep);
+            sep = appendAggregates(sb, aggCol, aliasBase, aggregates);
         }
         sb.append(" from ").append(tableName).append(" where ").append(generateWhereClause(ranges, cols));
         
@@ -94,14 +99,40 @@ public class SQLQueryGenerator {
     }
 
     /**
-     * Generate a DuckDB-specific spatial query using ST_Within and ST_MakeEnvelope for R-tree index usage.
-     * This query uses the geometry column and spatial index for efficient filtering.
-     * 
-     * @param tableName
-     * @param ranges    the x and y ranges (first two ranges should be x and y)
-     * @param aggCol    the aggregation column
-     * @return a spatial range query using geometry and R-tree index
+     * Appends aggregate functions for a column based on the specified aggregate types.
+     * @return the separator to use for the next column (", " if any aggregates were added)
      */
+    private static String appendAggregates(StringBuilder sb, String aggCol, String aliasBase, 
+                                            EnumSet<AggregateType> aggregates) {
+        String innerSep = "";
+        if (aggregates.contains(AggregateType.COUNT)) {
+            sb.append(innerSep).append("count(").append(aggCol).append(") as count_").append(aliasBase);
+            innerSep = ", ";
+        }
+        if (aggregates.contains(AggregateType.MIN)) {
+            sb.append(innerSep).append("min(").append(aggCol).append(") as min_").append(aliasBase);
+            innerSep = ", ";
+        }
+        if (aggregates.contains(AggregateType.MAX)) {
+            sb.append(innerSep).append("max(").append(aggCol).append(") as max_").append(aliasBase);
+            innerSep = ", ";
+        }
+        if (aggregates.contains(AggregateType.SUM)) {
+            sb.append(innerSep).append("sum(").append(aggCol).append(") as sum_").append(aliasBase);
+            innerSep = ", ";
+        }
+        if (aggregates.contains(AggregateType.AVG)) {
+            sb.append(innerSep).append("avg(").append(aggCol).append(") as avg_").append(aliasBase);
+            innerSep = ", ";
+        }
+        if (aggregates.contains(AggregateType.SUM_OF_SQUARES)) {
+            sb.append(innerSep).append("sum(").append(aggCol).append(" * ").append(aggCol)
+              .append(") as sum_of_squares_").append(aliasBase);
+            innerSep = ", ";
+        }
+        return innerSep.isEmpty() ? "" : ", ";
+    }
+
     /**
      * DuckDB-specific spatial query for one aggregation column (backwards compatible).
      */
@@ -114,7 +145,7 @@ public class SQLQueryGenerator {
      * Uses ST_Within with ST_MakeEnvelope to leverage the R-tree index on the geometry column.
      */
     public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, java.util.List<String> aggCols) {
-        return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, null);
+        return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, null, AggregateType.ALL);
     }
 
     /**
@@ -123,6 +154,17 @@ public class SQLQueryGenerator {
     public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, 
                                                          java.util.List<String> aggCols,
                                                          List<DataValidationFilter> validationFilters) {
+        return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters, AggregateType.ALL);
+    }
+
+    /**
+     * DuckDB-specific spatial query for multiple aggregation columns with validation filters
+     * and a configurable subset of aggregate functions.
+     */
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, 
+                                                         java.util.List<String> aggCols,
+                                                         List<DataValidationFilter> validationFilters,
+                                                         EnumSet<AggregateType> aggregates) {
         if (ranges.size() < 2) {
             throw new IllegalArgumentException("Spatial queries require at least 2 ranges (x and y)");
         }
@@ -135,14 +177,8 @@ public class SQLQueryGenerator {
         String sep = "";
         for (String aggCol : aggCols) {
             String aliasBase = aggCol.replaceAll("[^A-Za-z0-9]", "_");
-            sb.append(sep)
-              .append("count(").append(aggCol).append(") as count_").append(aliasBase).append(", ")
-              .append("min(").append(aggCol).append(") as min_").append(aliasBase).append(", ")
-              .append("max(").append(aggCol).append(") as max_").append(aliasBase).append(", ")
-              .append("sum(").append(aggCol).append(") as sum_").append(aliasBase).append(", ")
-              .append("avg(").append(aggCol).append(") as avg_").append(aliasBase).append(", ")
-              .append("sum(").append(aggCol).append(" * ").append(aggCol).append(") as sum_of_squares_").append(aliasBase);
-            sep = ", ";
+            sb.append(sep);
+            sep = appendAggregates(sb, aggCol, aliasBase, aggregates);
         }
         sb.append(" FROM ").append(tableName).append(" ")
           .append("WHERE ST_Within(geometry, ST_MakeEnvelope(")
