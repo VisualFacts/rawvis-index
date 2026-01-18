@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.common.base.Preconditions;
@@ -135,8 +136,9 @@ public class Experiments {
             if (numMeasures != null && numMeasures > 0) {
                 List<Integer> allMeasures = schema.getMeasureCols();
                 if (numMeasures > allMeasures.size()) {
-                    LOG.warn("Requested {} measures but only {} available. Using all.", 
-                            numMeasures, allMeasures.size());
+                    throw new IllegalArgumentException(String.format(
+                            "Requested %d measures but only %d available. Aborting experiment.",
+                            numMeasures, allMeasures.size()));
                 } else {
                     List<Integer> limitedMeasures = allMeasures.subList(0, numMeasures);
                     schema.setMeasureCols(limitedMeasures);
@@ -213,7 +215,7 @@ public class Experiments {
 
         try {
 
-            csvWriter = new CsvWriter(new FileWriter(outFile, true), csvWriterSettings);
+            csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
             if (addHeader) {
                 csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
                         "Leaf tiles",
