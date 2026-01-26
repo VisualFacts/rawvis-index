@@ -33,6 +33,10 @@ public abstract class Tile {
         return bounds;
     }
 
+    public TreeNode getRoot() {
+        return root;
+    }
+
 
     public abstract List getLeafTiles();
 

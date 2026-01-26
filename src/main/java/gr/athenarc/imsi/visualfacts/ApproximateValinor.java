@@ -6,7 +6,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -17,6 +16,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.collect.Range;
+import com.google.common.math.Stats;
+import com.google.common.math.StatsAccumulator;
 import com.google.common.util.concurrent.AtomicDouble;
 
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
@@ -32,7 +33,7 @@ import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
-import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
+import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
 public class ApproximateValinor implements AutoCloseable {
 
@@ -40,7 +41,7 @@ public class ApproximateValinor implements AutoCloseable {
 
     private boolean isInitialized = false;
 
-    private RandomAccessReader randomAccessReader;
+    private MappedFileReader mappedFileReader;
 
     private Grid grid;
 
@@ -53,6 +54,9 @@ public class ApproximateValinor implements AutoCloseable {
     private int objectsIndexed = 0;
 
     private double errorThreshold = 0.05;
+
+    // Global statistics per measure column, computed during initialization
+    private StatsAccumulator[] globalMeasureStats;
 
     public ApproximateValinor(Schema schema, Double errorThreshold) {
         this.schema = schema;
@@ -108,7 +112,7 @@ public class ApproximateValinor implements AutoCloseable {
                 Charset.forName("UTF-8"),
                 selectedColumns,
                 schema.getHasHeader(),
-                DELIMITER);
+                schema.getDelimiter());
         CsvFloatRowReader rowReader = new ZsvCsvFloatRowReader();
 
         objectsIndexed = 0;
@@ -183,6 +187,10 @@ public class ApproximateValinor implements AutoCloseable {
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         LOG.debug("Total Skipped Objects: " + objectsSkipped);
+        
+        // Compute global stats by aggregating from all leaf tile nodes
+        computeGlobalMeasureStats();
+        
         // todo evaluate q0
         ApproximateQueryResults queryResults = new ApproximateQueryResults(q0);
         return queryResults;
@@ -200,8 +208,8 @@ public class ApproximateValinor implements AutoCloseable {
 
         ApproximateQueryResults queryResults = new ApproximateQueryResults(query);
 
-        if (randomAccessReader == null) {
-            randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
+        if (mappedFileReader == null) {
+            mappedFileReader = MappedFileReader.open(new File(schema.getCsv()));
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
@@ -261,7 +269,7 @@ public class ApproximateValinor implements AutoCloseable {
         int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
         CsvRowReader lineParser = new UnivocityCsvRowReader();
         CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("UTF-8"),
-                parseColumns, false, DELIMITER);
+                parseColumns, false, schema.getDelimiter());
         try {
             lineParser.open(lineConfig);
         } catch (IOException e) {
@@ -293,10 +301,12 @@ public class ApproximateValinor implements AutoCloseable {
         samplingNodes.addAll(partialNodes);
         samplingNodes.addAll(fullyContainedNodesWithoutStats);
 
-        AtomicDouble samplingRate = new AtomicDouble(0.01d); // Start with small sampling rate (1%)
+        AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
         Map<Integer, double[]> confidenceIntervals = new HashMap<>();
         Map<Integer, Double> errorBounds = new HashMap<>();
+        int samplingRounds = 0;
         do {
+            samplingRounds++;
             // Create Sampling Iterators for all tiles needing sampling
             KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingNodes.stream()
                     .map(queryNode -> new SamplingNodePointsIterator(queryNode, samplingRate.get()))
@@ -322,11 +332,16 @@ public class ApproximateValinor implements AutoCloseable {
 
             // If error bound is still too high, increase sampling rate
             if (maxErrorBound > errorThreshold) {
+                LOG.debug("Round {}: error={} > threshold={}, increasing rate from {} to {}", 
+                    samplingRounds, maxErrorBound, errorThreshold, samplingRate.get(),
+                    adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
                 samplingRate.set(adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
-                // LOG.info("Increasing sampling rate to: {}", samplingRate.get());
             }
 
         } while (errorBounds.values().stream().anyMatch(error -> error > errorThreshold));
+
+        LOG.debug("Sampling completed in {} round(s), final rate={}, I/Os={}", 
+            samplingRounds, samplingRate.get(), ioCount);
 
         // Iterate over fully contained query nodes without stats and set their
         // TreeNode's sampled tracker for using in future queries. Their stats have been
@@ -396,6 +411,149 @@ public class ApproximateValinor implements AutoCloseable {
         }
 
         return newRate;
+    }
+
+    /**
+     * Computes the initial sampling rate for the given sampling nodes.
+     * CV-based estimation for more efficient sampling.
+     *
+     * @param samplingNodes the list of nodes that require sampling
+     * @return the initial sampling rate (between 0 and 1)
+     */
+    private double computeInitialSamplingRate(List<QueryNode> samplingNodes) {
+        if (samplingNodes == null || samplingNodes.isEmpty()) {
+            return 0.01d;
+        }
+        
+        // Get the maximum CV across all measure columns
+        double maxCV = 0.0;
+        for (int i = 0; i < schema.getMeasureCount(); i++) {
+            double cv = getMeasureCV(i);
+            if (cv > maxCV) {
+                maxCV = cv;
+            }
+        }
+        // If no valid CV found, fall back to conservative default
+        if (maxCV <= 0) {
+            maxCV = 1.0;
+        }
+        
+        // Cochran's formula: n = (z * CV / error)^2
+        double z = 1.96;  // 95% confidence
+        double requiredN = Math.pow(z * maxCV / errorThreshold, 2);
+        
+        // Apply safety margin (50% extra samples)
+        requiredN *= 1.5;
+        
+        // Total population in sampling nodes
+        long totalPopulation = samplingNodes.stream()
+            .mapToLong(QueryNode::getIntersectionCount)
+            .sum();
+        
+        if (totalPopulation == 0) {
+            return 0.01d;
+        }
+        
+        double rate = requiredN / totalPopulation;
+        
+        // Ensure at least MIN_SAMPLES for CLT validity, then clamp to max 100%
+        final int MIN_SAMPLES = 50;
+        double minRateForCLT = (double) MIN_SAMPLES / totalPopulation;
+        rate = Math.max(rate, minRateForCLT);
+        rate = Math.min(1.0, rate);
+        
+        LOG.debug("Initial sampling rate: {} (CV={}, requiredN={}, population={})", 
+            rate, maxCV, requiredN, totalPopulation);
+        
+        return rate;
+    }
+
+    /**
+     * Computes global statistics for each measure column by aggregating
+     * stats from all leaf tile nodes. Called once after initialization.
+     */
+    private void computeGlobalMeasureStats() {
+        int measureCount = schema.getMeasureCount();
+        globalMeasureStats = new StatsAccumulator[measureCount];
+        for (int i = 0; i < measureCount; i++) {
+            globalMeasureStats[i] = new StatsAccumulator();
+        }
+        
+        // Traverse all leaf tiles and aggregate their root node stats
+        for (Object tileObj : grid.getLeafTiles()) {
+            Tile tile = (Tile) tileObj;
+            TreeNode root = tile.getRoot();
+            if (root != null) {
+                aggregateNodeStats(root, measureCount);
+            }
+        }
+        
+        LOG.debug("Global CV computed for {} measures", measureCount);
+        for (int i = 0; i < measureCount; i++) {
+            LOG.debug("Measure {}: count={}, mean={}, CV={}", 
+                schema.getMeasureCols().get(i),
+                globalMeasureStats[i].count(),
+                globalMeasureStats[i].mean(),
+                getMeasureCV(i));
+        }
+    }
+    
+    /**
+     * Recursively aggregates stats from a TreeNode and all its children.
+     */
+    private void aggregateNodeStats(TreeNode node, int measureCount) {
+        // If this is a leaf node (has points), aggregate its stats
+        if (node.getPoints() != null && !node.getPoints().isEmpty()) {
+            for (int i = 0; i < measureCount; i++) {
+                StatsAccumulator nodeStats = node.getStats(i);
+                if (nodeStats != null && nodeStats.count() > 0) {
+                    globalMeasureStats[i].addAll(nodeStats.snapshot());
+                }
+            }
+        }
+        
+        // Recurse into children if any
+        if (node.getChildren() != null) {
+            for (TreeNode child : node.getChildren()) {
+                aggregateNodeStats(child, measureCount);
+            }
+        }
+    }
+
+    /**
+     * Returns the coefficient of variation (CV = std/mean) for a given measure column.
+     * CV is used to estimate the required sample size for a given error bound.
+     *
+     * @param measureIndex the index of the measure (0-based index into measureCols)
+     * @return the coefficient of variation, or 1.0 if not available
+     */
+    public double getMeasureCV(int measureIndex) {
+        if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
+            return 1.0;  // Conservative default
+        }
+        StatsAccumulator stats = globalMeasureStats[measureIndex];
+        if (stats == null || stats.count() < 2) {
+            return 1.0;
+        }
+        double mean = stats.mean();
+        if (mean == 0) {
+            return 1.0;
+        }
+        return stats.sampleStandardDeviation() / Math.abs(mean);
+    }
+
+    /**
+     * Returns the global statistics for a given measure column.
+     *
+     * @param measureIndex the index of the measure (0-based index into measureCols)
+     * @return the Stats snapshot, or null if not available
+     */
+    public Stats getGlobalMeasureStats(int measureIndex) {
+        if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
+            return null;
+        }
+        StatsAccumulator stats = globalMeasureStats[measureIndex];
+        return stats != null ? stats.snapshot() : null;
     }
 
     // private double adjustSamplingRate(double currentRate, double currentError,
@@ -514,8 +672,8 @@ public class ApproximateValinor implements AutoCloseable {
             ioCount++;
             Point point = pointIterator.next();
             try {
-                randomAccessReader.seek(point.getFileOffset());
-                line = randomAccessReader.readLine();
+                mappedFileReader.seek(point.getFileOffset());
+                line = mappedFileReader.readLine();
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
@@ -550,8 +708,8 @@ public class ApproximateValinor implements AutoCloseable {
             ioCount++;
             Point point = pointIterator.next();
             try {
-                randomAccessReader.seek(point.getFileOffset());
-                line = randomAccessReader.readLine();
+                mappedFileReader.seek(point.getFileOffset());
+                line = mappedFileReader.readLine();
                 if (line != null) {
                     row = parser.parseLine(line);
                     if (row != null) {
@@ -625,13 +783,13 @@ public class ApproximateValinor implements AutoCloseable {
 
     @Override
     public void close() {
-        if (randomAccessReader != null) {
+        if (mappedFileReader != null) {
             try {
-                randomAccessReader.close();
+                mappedFileReader.close();
             } catch (IOException e) {
-                LOG.warn("Failed to close randomAccessReader", e);
+                LOG.warn("Failed to close mappedFileReader", e);
             } finally {
-                randomAccessReader = null;
+                mappedFileReader = null;
             }
         }
     }
