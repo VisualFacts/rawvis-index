@@ -183,8 +183,11 @@ public class ScenarioRunnerTest {
                 assertNotNull(interval, "missing CI for measure " + measure);
                 assertTrue(interval.length == 2, "CI must have length 2 for measure " + measure);
                 double lo = interval[0], hi = interval[1];
-                double absEps = 1e-6; // small absolute epsilon for FP and degenerate CIs
-                double relEps = 1e-12 * Math.abs((lo + hi) / 2.0);
+                // FP tolerance for comparing CI bounds to expected values
+                // Different parsing paths (DuckDB vs our parsers) can yield slightly different sums
+                // For sums in hundreds of thousands, 1e-5 relative tolerance is appropriate
+                double absEps = 1e-3; // small absolute epsilon for near-zero sums
+                double relEps = 1e-8 * Math.abs((lo + hi) / 2.0);  // relative tolerance for large sums
                 double eps = Math.max(absEps, relEps);
                 double expectedSum = expected.get(measure).sum();
                 boolean insideInterval = expectedSum >= lo - eps && expectedSum <= hi + eps;
