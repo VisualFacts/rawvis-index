@@ -1,18 +1,25 @@
 package gr.athenarc.imsi.visualfacts.experiments.util;
 
-import com.google.common.collect.Range;
-import gr.athenarc.imsi.visualfacts.CategoricalColumn;
-import gr.athenarc.imsi.visualfacts.Rectangle;
-import gr.athenarc.imsi.visualfacts.Schema;
-import gr.athenarc.imsi.visualfacts.query.Query;
+import static gr.athenarc.imsi.visualfacts.experiments.util.UserOpType.*;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
 import org.apache.commons.math3.distribution.EnumeratedDistribution;
 import org.apache.commons.math3.util.Pair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.*;
+import com.google.common.collect.Range;
 
-import static gr.athenarc.imsi.visualfacts.experiments.util.UserOpType.*;
+import gr.athenarc.imsi.visualfacts.CategoricalColumn;
+import gr.athenarc.imsi.visualfacts.Rectangle;
+import gr.athenarc.imsi.visualfacts.Schema;
+import gr.athenarc.imsi.visualfacts.query.Query;
 
 public class QuerySequenceGenerator {
 
@@ -68,6 +75,9 @@ public class QuerySequenceGenerator {
                 rect = zoomOut(query);
             } else {
                 rect = pan(query, shifts[i], directions[i]);
+                if (opType.equals(ZI) || opType.equals(ZO)) {
+                    opType = P;
+                }
             }
 
             Map<Integer, String> filters = new HashMap<>();
