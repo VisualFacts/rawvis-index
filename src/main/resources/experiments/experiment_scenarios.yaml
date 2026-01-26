@@ -1,4 +1,14 @@
 datasets:
+  synth10_1M:
+    csv: /data-nonraid/maroulis/data/data_10_cols_1M.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9]
+    bounds: "0:1000,0:1000"
+    objectCount: 1000000  
+    validationFilters: []
   synth10:
     csv: /data-nonraid/maroulis/data/data_10_cols.csv
     hasHeader: false
@@ -20,7 +30,7 @@ datasets:
     objectCount: 100000000
     validationFilters: []
   taxi:
-    csv: /data-nonraid/maroulis/data/taxi_data/yellow_tripdata_2014_cleaned_10M.csv
+    csv: /data-nonraid/maroulis/data/taxi_data/yellow_tripdata_2014_cleaned.csv
     hasHeader: false
     delimiter: ','
     xColumn: 5
@@ -31,31 +41,50 @@ datasets:
     validationFilters:
       - "12<0"
       - "12>400"
+  sdss:
+    csv: /data-nonraid/maroulis/data/sdss
+    hasHeader: false
+    delimiter: '\t'
+    xColumn: 397
+    yColumn: 398
+    measureCols: [41,376]
+    bounds: "0:360,-9.67629:68.5575"
+    objectCount: 40921983
+    validationFilters: []
 scenarios:
-  synth10_pan_scenario:
+  synth10_pan:
     dataset: synth10
     q0:
       rect: "544:574,323:353"
       filters: {}
     minShift: 10
     maxShift: 20
-    zoomFactor: 1.5
+    zoomFactor: 0
     seqCount: 100
-  synth50_pan_scenario:
+  synth50_pan:
     dataset: synth50
     q0:
       rect: "544:574,323:353"
       filters: {}
     minShift: 10
     maxShift: 20
-    zoomFactor: 1.5
+    zoomFactor: 0
     seqCount: 100
-  taxi_pan_scenario:
+  taxi_pan:
     dataset: taxi
     q0:
       rect: "-73.99831454:-73.97500902,40.7151612032:40.73263959"
       filters: {}
     minShift: 10
     maxShift: 10
-    zoomFactor: 1.0
+    zoomFactor: 0
+    seqCount: 100
+  sdss_pan:
+    dataset: sdss
+    q0:
+      rect: "224.1001225:225.9001275,-0.09264849:0.29852049"
+      filters: {}
+    minShift: 10
+    maxShift: 20
+    zoomFactor: 0
     seqCount: 100
