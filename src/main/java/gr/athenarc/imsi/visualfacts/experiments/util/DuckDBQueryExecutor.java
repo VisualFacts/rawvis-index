@@ -520,21 +520,20 @@ public class DuckDBQueryExecutor {
     }
 
     /**
-     * Get the number of columns in the CSV file by reading the header.
+     * Get the number of columns in the CSV file by querying its schema.
      */
     private int getCSVColumnCount() throws Exception {
+        // Query the CSV directly with LIMIT 0 to get column metadata without reading data
         String query = String.format(
-                "SELECT COUNT(*) FROM (SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0) AS t;",
+                "SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0;",
                 csvPath);
 
         try (Statement stmt = connection.createStatement();
                 ResultSet rs = stmt.executeQuery(query)) {
-            // This approach gets column count by checking metadata
-            if (rs.next()) {
-                return rs.getMetaData().getColumnCount();
-            }
+            int columnCount = rs.getMetaData().getColumnCount();
+            LOG.debug("CSV has {} columns", columnCount);
+            return columnCount;
         }
-        return 10; // default
     }
 
     public long getTableCreationTimeNanos() {
