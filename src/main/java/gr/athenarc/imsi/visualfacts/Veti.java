@@ -34,7 +34,7 @@ import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
-import gr.athenarc.imsi.visualfacts.util.io.RandomAccessReader;
+import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
 public class Veti implements AutoCloseable {
 
@@ -42,7 +42,7 @@ public class Veti implements AutoCloseable {
 
     private boolean isInitialized = false;
 
-    private RandomAccessReader randomAccessReader;
+    private MappedFileReader randomAccessReader;
 
     private Grid grid;
 
@@ -121,7 +121,7 @@ public class Veti implements AutoCloseable {
                 Charset.forName("US-ASCII"),
                 selectedColumns,
                 schema.getHasHeader(),
-                DELIMITER);
+                schema.getDelimiter());
 
         objectsIndexed = 0;
         int objectsSkipped = 0; // Counter for skipped rows
@@ -214,7 +214,7 @@ public class Veti implements AutoCloseable {
         QueryResults queryResults = new QueryResults(query);
 
         if (randomAccessReader == null) {
-            randomAccessReader = RandomAccessReader.open(new File(schema.getCsv()));
+            randomAccessReader = MappedFileReader.open(new File(schema.getCsv()));
         }
         List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
@@ -295,7 +295,7 @@ public class Veti implements AutoCloseable {
         int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
         CsvRowReader lineParser = new UnivocityCsvRowReader();
         CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("US-ASCII"),
-                parseColumns, false, DELIMITER);
+                parseColumns, false, schema.getDelimiter());
         try {
             lineParser.open(lineConfig);
         } catch (IOException e) {
