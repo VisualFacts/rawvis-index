@@ -60,9 +60,29 @@ public class DatasetConfig {
         Rectangle boundsRect = QueryUtils.convertToRectangle(bounds);
         List<DataValidationFilter> filters = parseValidationFilters();
         String resolvedCsv = resolveCsvPath(csv);
-        Schema schema = new Schema(resolvedCsv, delimiter.charAt(0), xColumn, yColumn, measureCols, boundsRect, objectCount, filters);
+        char delimChar = parseDelimiter(delimiter);
+        Schema schema = new Schema(resolvedCsv, delimChar, xColumn, yColumn, measureCols, boundsRect, objectCount, filters);
         schema.setHasHeader(hasHeader);
         return schema;
+    }
+
+    /**
+     * Parses a delimiter string, handling escape sequences like \t for tab.
+     */
+    private char parseDelimiter(String delim) {
+        if (delim == null || delim.isEmpty()) {
+            return ',';
+        }
+        if (delim.equals("\\t")) {
+            return '\t';
+        }
+        if (delim.equals("\\n")) {
+            return '\n';
+        }
+        if (delim.equals("\\r")) {
+            return '\r';
+        }
+        return delim.charAt(0);
     }
 
     /**

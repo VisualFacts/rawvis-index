@@ -48,6 +48,11 @@ public class Schema {
         return csv;
     }
 
+    
+    public Character getDelimiter() {
+        return delimiter;
+    }
+
     public Short getColValue(String[] parsedRow, int col) {
         String rawValue = parsedRow[col];
         return categoricalColumns.get(col).getValueKey(rawValue);
