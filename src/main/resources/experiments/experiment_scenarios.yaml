@@ -7,7 +7,7 @@ datasets:
     yColumn: 1
     measureCols: [2,3,4,5,6,7,8,9]
     bounds: "0:1000,0:1000"
-    objectCount: 1000000  
+    objectCount: 1000000
     validationFilters: []
   synth10:
     csv: /data-nonraid/maroulis/data/data_10_cols.csv
@@ -17,7 +17,7 @@ datasets:
     yColumn: 1
     measureCols: [2,3,4,5,6,7,8,9]
     bounds: "0:1000,0:1000"
-    objectCount: 100000000  
+    objectCount: 100000000
     validationFilters: []
   synth50:
     csv: /data-nonraid/maroulis/data/data_50_cols.csv
@@ -45,15 +45,17 @@ datasets:
     csv: /data-nonraid/maroulis/data/sdss
     hasHeader: false
     delimiter: '\t'
-    xColumn: 397
-    yColumn: 398
-    measureCols: [41,376]
+    xColumn: 397   # ra (Right Ascension)
+    yColumn: 398   # dec (Declination)
+    # Measure columns (0-indexed): psfFlux_u(41), psfFlux_r(43), psfMag_u(51), psfMag_r(53),
+    #   petroMag_u(71), petroMag_r(73), extinction_u(414), extinction_r(416)
+    measureCols: [41, 43, 51, 53, 71, 73, 414, 416]
     bounds: "0:360,-9.67629:68.5575"
     objectCount: 40921983
     validationFilters: []
 scenarios:
   synth10_pan:
-    dataset: synth10
+    dataset: synth10_1M
     q0:
       rect: "544:574,323:353"
       filters: {}
@@ -61,6 +63,15 @@ scenarios:
     maxShift: 20
     zoomFactor: 0
     seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
   synth50_pan:
     dataset: synth50
     q0:
@@ -70,6 +81,15 @@ scenarios:
     maxShift: 20
     zoomFactor: 0
     seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
   taxi_pan:
     dataset: taxi
     q0:
@@ -79,12 +99,32 @@ scenarios:
     maxShift: 10
     zoomFactor: 0
     seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
+
+  # Queries pan along Right Ascension within the primary SDSS imaging stripe (Dec ≈ -3° to 0°), where photometric data density is highest.
   sdss_pan:
     dataset: sdss
     q0:
-      rect: "224.1001225:225.9001275,-0.09264849:0.29852049"
+      rect: "180:190,-3:0"
       filters: {}
-    minShift: 10
-    maxShift: 20
+    minShift: 5
+    maxShift: 12
     zoomFactor: 0
     seqCount: 100
+    directionWeights:
+      N: 0.2
+      NE: 0.8
+      E: 3.0
+      SE: 0.8
+      S: 0.2
+      SW: 0.3
+      W: 1.0
+      NW: 0.3

@@ -2,6 +2,8 @@ package gr.athenarc.imsi.visualfacts.experiments.config;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.Map;
+
 /**
  * Configuration class for exploration scenarios in experiment YAML files.
  * An exploration scenario defines a sequence of queries simulating user exploration behavior.
@@ -25,6 +27,9 @@ public class ExplorationScenarioConfig {
 
     @JsonProperty("seqCount")
     private int seqCount;
+
+    @JsonProperty("directionWeights")
+    private Map<String, Double> directionWeights;
 
     // Default constructor for Jackson
     public ExplorationScenarioConfig() {
@@ -80,6 +85,14 @@ public class ExplorationScenarioConfig {
         this.seqCount = seqCount;
     }
 
+    public Map<String, Double> getDirectionWeights() {
+        return directionWeights;
+    }
+
+    public void setDirectionWeights(Map<String, Double> directionWeights) {
+        this.directionWeights = directionWeights;
+    }
+
     @Override
     public String toString() {
         return "ExplorationScenarioConfig{" +
@@ -89,6 +102,7 @@ public class ExplorationScenarioConfig {
                 ", maxShift=" + maxShift +
                 ", zoomFactor=" + zoomFactor +
                 ", seqCount=" + seqCount +
+                ", directionWeights=" + directionWeights +
                 '}';
     }
 }

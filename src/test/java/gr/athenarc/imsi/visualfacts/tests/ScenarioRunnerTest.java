@@ -89,7 +89,8 @@ public class ScenarioRunnerTest {
                 scenarioConfig.getMinShift(),
                 scenarioConfig.getMaxShift(),
                 0, 0,
-                scenarioConfig.getZoomFactor());
+                scenarioConfig.getZoomFactor(),
+                scenarioConfig.getDirectionWeights());
         queries = generator.generateQuerySequence(q0, scenarioConfig.getSeqCount(), schema);
         LOG.info("Generated {} queries for scenario", queries.size());
 

@@ -33,17 +33,25 @@ public class QuerySequenceGenerator {
 
     private float zoomFactor;
 
+    private Map<String, Double> directionWeights;
+
     public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, float zoomFactor) {
+        this(minShift, maxShift, minFilters, maxFilters, zoomFactor, null);
+    }
+
+    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, float zoomFactor,
+                                  Map<String, Double> directionWeights) {
         this.minShift = minShift;
         this.maxShift = maxShift;
         this.minFilters = minFilters;
         this.maxFilters = maxFilters;
         this.zoomFactor = zoomFactor;
+        this.directionWeights = directionWeights;
     }
 
     public List<Query> generateQuerySequence(Query q0, int count, Schema schema) {
 
-        Direction[] directions = Direction.getRandomDirections(count);
+        Direction[] directions = Direction.getRandomDirections(count, directionWeights);
         int[] shifts = new Random(0).ints(count, minShift, maxShift + 1).toArray();
         int[] filterCounts = new Random(0).ints(count, minFilters, maxFilters + 1).toArray();
 

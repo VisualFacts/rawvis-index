@@ -388,7 +388,7 @@ public class Experiments {
         float zoomFactor = scenarioConfig.getZoomFactor();
 
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
-                maxFilters, zoomFactor);
+                maxFilters, zoomFactor, scenarioConfig.getDirectionWeights());
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
     }
 
