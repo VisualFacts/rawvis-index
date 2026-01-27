@@ -94,7 +94,10 @@ public class Grid extends Tile {
 
         float yMin = this.bounds.getYRange().lowerEndpoint();
         int i = (int) Math.floor((y - yMin) / rowSize);
-        if (i == gridSize) {
+        // Clamp to valid range to handle floating-point precision issues at boundaries
+        if (i < 0) {
+            i = 0;
+        } else if (i >= gridSize) {
             i = gridSize - 1;
         }
         return i;
@@ -105,7 +108,10 @@ public class Grid extends Tile {
 
         float xMin = this.bounds.getXRange().lowerEndpoint();
         int j = (int) Math.floor((x - xMin) / colSize);
-        if (j == gridSize) {
+        // Clamp to valid range to handle floating-point precision issues at boundaries
+        if (j < 0) {
+            j = 0;
+        } else if (j >= gridSize) {
             j = gridSize - 1;
         }
         return j;
