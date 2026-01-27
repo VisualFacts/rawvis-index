@@ -247,6 +247,8 @@
                                 <argument>-B</argument>
                                 <argument>build</argument>
                                 <argument>-DCMAKE_BUILD_TYPE=Release</argument>
+                                <argument>-DCMAKE_C_FLAGS=-march=native</argument>
+                                <argument>-DCMAKE_CXX_FLAGS=-march=native</argument>
                             </arguments>
                         </configuration>
                     </execution>

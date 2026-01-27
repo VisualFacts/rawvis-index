@@ -19,7 +19,7 @@ import java.nio.ByteOrder;
  */
 public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
 
-    private static final int DEFAULT_MAX_ROWS_PER_BATCH = 32768;
+    private static final int DEFAULT_MAX_ROWS_PER_BATCH = 131072;  // 128K rows per JNI call
 
     private CsvReaderConfig config;
 

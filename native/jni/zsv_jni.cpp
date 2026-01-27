@@ -6,6 +6,10 @@
 #include <math.h>
 #include <ctype.h>
 
+#ifdef __linux__
+#include <fcntl.h>  // for posix_fadvise
+#endif
+
 #include <fast_float/fast_float.h>
 
 extern "C"
@@ -96,6 +100,12 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
         throw_ioe(env, "Failed to open CSV file");
         return 0;
     }
+
+    // I/O optimizations for large files
+    setvbuf(f, NULL, _IOFBF, 8 * 1024 * 1024);  // 8MB read buffer
+#ifdef __linux__
+    posix_fadvise(fileno(f), 0, 0, POSIX_FADV_SEQUENTIAL);  // hint: sequential read
+#endif
 
     reader_t *r = (reader_t *)calloc(1, sizeof(reader_t));
     if (!r)
