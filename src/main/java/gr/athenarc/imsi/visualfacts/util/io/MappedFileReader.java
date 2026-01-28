@@ -120,6 +120,138 @@ public class MappedFileReader implements Closeable {
         return mappedBytes.readPosition() >= fileSize;
     }
     
+    // Buffer for float parsing (avoids allocation per call)
+    private static final int MAX_FLOAT_CHARS = 32;
+    private final byte[] floatBuffer = new byte[MAX_FLOAT_CHARS];
+    
+    /**
+     * Extracts specific columns as floats directly from the mmap buffer.
+     * This is optimized for wide rows where you only need a few columns.
+     * Stops scanning immediately after the last needed column.
+     * 
+     * IMPORTANT: sortedColumnIndices must be sorted in ascending order!
+     * The returned array is compact: result[i] corresponds to sortedColumnIndices[i].
+     * 
+     * @param sortedColumnIndices column indices to extract (must be sorted ascending)
+     * @param delimiter the column delimiter byte (e.g., '\t' or ',')
+     * @return float array with extracted values (NaN for missing/invalid values),
+     *         indexed by position in sortedColumnIndices (not by original column index)
+     */
+    public float[] extractFloats(int[] sortedColumnIndices, byte delimiter) {
+        float[] result = new float[sortedColumnIndices.length];
+        
+        if (sortedColumnIndices.length == 0 || mappedBytes.readPosition() >= fileSize) {
+            return result;
+        }
+        
+        int maxCol = sortedColumnIndices[sortedColumnIndices.length - 1];
+        int currentCol = 0;
+        int nextTargetIdx = 0;
+        int nextTargetCol = sortedColumnIndices[0];
+        int bufPos = 0;
+        
+        while (mappedBytes.readPosition() < fileSize && currentCol <= maxCol) {
+            byte b = mappedBytes.readByte();
+            
+            if (b == delimiter || b == '\n' || b == '\r') {
+                // End of column
+                if (currentCol == nextTargetCol) {
+                    // This is a target column - parse the float
+                    result[nextTargetIdx] = parseFloatFromBytes(floatBuffer, 0, bufPos);
+                    nextTargetIdx++;
+                    if (nextTargetIdx < sortedColumnIndices.length) {
+                        nextTargetCol = sortedColumnIndices[nextTargetIdx];
+                    } else {
+                        // Got all columns - stop early (skip remaining ~84 columns for SDSS)
+                        break;
+                    }
+                }
+                
+                if (b == '\n' || b == '\r') {
+                    break; // End of row
+                }
+                
+                currentCol++;
+                bufPos = 0;
+            } else {
+                // Only buffer bytes for target columns
+                if (currentCol == nextTargetCol && bufPos < MAX_FLOAT_CHARS) {
+                    floatBuffer[bufPos++] = b;
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Fast float parser for simple decimal numbers.
+     * Handles: 123, -123, 123.456, -123.456
+     * Falls back to Float.parseFloat for scientific notation or edge cases.
+     */
+    private static float parseFloatFromBytes(byte[] buf, int offset, int len) {
+        if (len == 0) {
+            return Float.NaN;
+        }
+        
+        int pos = offset;
+        int end = offset + len;
+        boolean negative = false;
+        
+        // Handle sign
+        if (buf[pos] == '-') {
+            negative = true;
+            pos++;
+        } else if (buf[pos] == '+') {
+            pos++;
+        }
+        
+        if (pos >= end) {
+            return Float.NaN;
+        }
+        
+        // Parse integer part
+        long intPart = 0;
+        while (pos < end && buf[pos] >= '0' && buf[pos] <= '9') {
+            intPart = intPart * 10 + (buf[pos] - '0');
+            pos++;
+        }
+        
+        // Parse fractional part
+        double fracPart = 0;
+        if (pos < end && buf[pos] == '.') {
+            pos++;
+            double divisor = 10;
+            while (pos < end && buf[pos] >= '0' && buf[pos] <= '9') {
+                fracPart += (buf[pos] - '0') / divisor;
+                divisor *= 10;
+                pos++;
+            }
+        }
+        
+        // Check for scientific notation - fall back to standard parser
+        if (pos < end && (buf[pos] == 'e' || buf[pos] == 'E')) {
+            try {
+                return Float.parseFloat(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
+            } catch (NumberFormatException e) {
+                return Float.NaN;
+            }
+        }
+        
+        // Check we consumed all characters
+        if (pos != end) {
+            // Unexpected characters - try standard parser
+            try {
+                return Float.parseFloat(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
+            } catch (NumberFormatException e) {
+                return Float.NaN;
+            }
+        }
+        
+        double result = intPart + fracPart;
+        return (float) (negative ? -result : result);
+    }
+    
     @Override
     public void close() throws IOException {
         if (mappedBytes != null) {

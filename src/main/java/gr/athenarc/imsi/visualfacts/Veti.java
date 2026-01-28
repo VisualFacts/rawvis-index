@@ -31,8 +31,6 @@ import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
-import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
-import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
@@ -287,82 +285,64 @@ public class Veti implements AutoCloseable {
             }
         }
 
-        List<Integer> cols = new ArrayList<>();
-
-        cols.addAll(schema.getMeasureCols());
-        cols.addAll(catAttrsToRead.stream().map(CategoricalColumn::getIndex).collect(Collectors.toList()));
-
-        int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
-        CsvRowReader lineParser = new UnivocityCsvRowReader();
-        CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("US-ASCII"),
-                parseColumns, false, schema.getDelimiter());
-        try {
-            lineParser.open(lineConfig);
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to configure CSV line parser", e);
-        }
-
         KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
         int ioCount = 0;
-        String line = null;
-        String[] row = null;
+        
+        // Prepare sorted measure column indices for fast extraction
+        // extractFloats returns a compact array indexed by position, not by column index
+        List<Integer> measureColsList = schema.getMeasureCols();
+        int[] sortedMeasureCols = measureColsList.stream().mapToInt(Integer::intValue).sorted().toArray();
+        
+        // Build mapping from original column index to position in sorted array
+        Map<Integer, Integer> measureColToExtractedPos = new HashMap<>();
+        for (int i = 0; i < sortedMeasureCols.length; i++) {
+            measureColToExtractedPos.put(sortedMeasureCols[i], i);
+        }
+        
+        byte delimiterByte = (byte) schema.getDelimiter().charValue();
+        
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
             points.add(new float[] { point.getY(), point.getX() });
             try {
                 randomAccessReader.seek(point.getFileOffset());
-                line = randomAccessReader.readLine();
-                if (line != null) {
-                    row = lineParser.parseLine(line);
-                    if (row != null) {
-                        QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        TreeNode node = queryNode.getNode();
+                
+                // Fast path: extract only measure columns as floats directly from mmap
+                float[] extractedValues = randomAccessReader.extractFloats(sortedMeasureCols, delimiterByte);
+                
+                QueryNode queryNode = pointIterator.getCurrentQueryNode();
+                TreeNode node = queryNode.getNode();
 
-                        // Parse measure values once and store them in a temporary map
-                        Map<Integer, Float> measureValues = new HashMap<>();
-                        for (Integer measureCol : schema.getMeasureCols()) {
-                            measureValues.put(measureCol, Float.parseFloat(row[measureCol]));
-                        }
-                        if (queryNode.isFullyContained()) {
-                            // we expand the node with unknown attrs
-                            if (!initMode.equals("valinor") && queryNode.getUnknownCatAttrs() != null
-                                    && !queryNode.getUnknownCatAttrs().isEmpty()) {
-                                for (CategoricalColumn unknownAttr : queryNode.getUnknownCatAttrs()) {
-                                    node = node.getOrAddChild(unknownAttr.getValueKey(row[unknownAttr.getIndex()]));
-                                }
-                                node.addPoint(point);
-                                int idx1 = 0;
-                                for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                                    node.adjustStats(idx1, schema.getMeasureCount(), entry.getValue());
-                                    idx1++;
-                                }
-                            } else if (queryNode.getUnknownCatAttrs() == null
-                                    || queryNode.getUnknownCatAttrs().isEmpty()) {
-                                int idx2 = 0;
-                                for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                                    node.adjustStats(idx2, schema.getMeasureCount(), entry.getValue());
-                                    idx2++;
-                                }
-                            }
-                        }
-                        ImmutableList<String> groupByValuesList = null;
-                        if (query.getGroupByCols() != null && !query.getGroupByCols().isEmpty()) {
-                            String[] finalRow = row;
-                            groupByValuesList = groupByColumns.stream().map(categoricalColumn -> queryNode
-                                    .getGroupByValues().containsKey(categoricalColumn.getIndex())
-                                            ? categoricalColumn.getValue(
-                                                    queryNode.getGroupByValues().get(categoricalColumn.getIndex()))
-                                            : finalRow[categoricalColumn.getIndex()])
-                                    .collect(ImmutableList.toImmutableList());
-                        }
-
-                        if (checkUnknownAttrs(query, row, queryNode.getUnknownCatAttrs())) {
-                            for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                                queryResults.adjustStats(groupByValuesList, entry.getKey(), entry.getValue());
-                            }
+                // Build measure values map from extracted floats
+                Map<Integer, Float> measureValues = new HashMap<>();
+                for (Integer measureCol : measureColsList) {
+                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
+                    if (extractedPos != null && extractedPos < extractedValues.length) {
+                        float value = extractedValues[extractedPos];
+                        if (!Float.isNaN(value)) {
+                            measureValues.put(measureCol, value);
                         }
                     }
+                }
+                
+                if (queryNode.isFullyContained()) {
+                    // Skip categorical attribute expansion for now (floats-only mode)
+                    if (queryNode.getUnknownCatAttrs() == null || queryNode.getUnknownCatAttrs().isEmpty()) {
+                        int idx = 0;
+                        for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
+                            node.adjustStats(idx, schema.getMeasureCount(), entry.getValue());
+                            idx++;
+                        }
+                    }
+                }
+                
+                ImmutableList<String> groupByValuesList = null;
+                // Skip group-by with categorical columns for now (floats-only mode)
+                
+                // Always include measure values in results
+                for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
+                    queryResults.adjustStats(groupByValuesList, entry.getKey(), entry.getValue());
                 }
             } catch (Exception e) {
                 LOG.debug("An unexpected exception occurred: ", e);

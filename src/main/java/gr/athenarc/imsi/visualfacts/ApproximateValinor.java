@@ -30,8 +30,6 @@ import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
-import gr.athenarc.imsi.visualfacts.util.csv.CsvRowReader;
-import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
@@ -262,19 +260,17 @@ public class ApproximateValinor implements AutoCloseable {
             nonRawNodes.add(queryNode);
         }
 
-        List<Integer> cols = new ArrayList<>();
-
-        cols.addAll(schema.getMeasureCols());
-
-        int[] parseColumns = cols.stream().mapToInt(Integer::intValue).toArray();
-        CsvRowReader lineParser = new UnivocityCsvRowReader();
-        CsvReaderConfig lineConfig = new CsvReaderConfig(null, Charset.forName("UTF-8"),
-                parseColumns, false, schema.getDelimiter());
-        try {
-            lineParser.open(lineConfig);
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to configure CSV line parser", e);
+        // Prepare sorted measure column indices for fast extraction
+        List<Integer> measureColsList = schema.getMeasureCols();
+        int[] sortedMeasureCols = measureColsList.stream().mapToInt(Integer::intValue).sorted().toArray();
+        
+        // Build mapping from original column index to position in sorted array
+        Map<Integer, Integer> measureColToExtractedPos = new HashMap<>();
+        for (int i = 0; i < sortedMeasureCols.length; i++) {
+            measureColToExtractedPos.put(sortedMeasureCols[i], i);
         }
+        
+        byte delimiterByte = (byte) schema.getDelimiter().charValue();
 
         int ioCount = 0;
 
@@ -313,7 +309,7 @@ public class ApproximateValinor implements AutoCloseable {
                     .collect(Collectors.toList()));
 
             // Read the sampled points from the file in sorted order
-            ioCount += readFromFile(query, queryResults, lineParser, pointIterator);
+            ioCount += readFromFile(query, queryResults, sortedMeasureCols, measureColToExtractedPos, delimiterByte, pointIterator);
 
             // Calculate the confidence intervals for all measures
             for (Integer measureCol : query.getMeasureCols()) {
@@ -663,34 +659,37 @@ public class ApproximateValinor implements AutoCloseable {
         return (maxSum - minSum) / (maxSum + minSum);
     }
 
-    private int readFromFile(Query query, QueryResults queryResults, CsvRowReader parser,
+    private int readFromFile(Query query, QueryResults queryResults, int[] sortedMeasureCols,
+            Map<Integer, Integer> measureColToExtractedPos, byte delimiterByte,
             KWayMergePointIterator pointIterator) {
-        String line;
-        String[] row;
         int ioCount = 0;
+        List<Integer> measureColsList = schema.getMeasureCols();
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
             try {
                 mappedFileReader.seek(point.getFileOffset());
-                line = mappedFileReader.readLine();
-                if (line != null) {
-                    row = parser.parseLine(line);
-                    if (row != null) {
-                        QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        // Process all measures in the schema
-                        int idx = 0;
-                        for (Integer measureCol : schema.getMeasureCols()) {
-                            if (row[measureCol] != null) {
-                                double measureValue = Double.parseDouble(row[measureCol]);
-                                queryNode.addSampleValue(measureCol, measureValue);
-                                if (queryNode.isFullyContained()) {
-                                    queryNode.getNode().adjustStats(idx, schema.getMeasureCount(), measureValue);
-                                }
+                
+                // Fast path: extract only measure columns as floats directly from mmap
+                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                
+                QueryNode queryNode = pointIterator.getCurrentQueryNode();
+                TreeNode node = queryNode.getNode();
+                
+                // Process all measures in the schema
+                int idx = 0;
+                for (Integer measureCol : measureColsList) {
+                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
+                    if (extractedPos != null && extractedPos < extractedValues.length) {
+                        float value = extractedValues[extractedPos];
+                        if (!Float.isNaN(value)) {
+                            queryNode.addSampleValue(measureCol, value);
+                            if (queryNode.isFullyContained()) {
+                                node.adjustStats(idx, schema.getMeasureCount(), value);
                             }
-                            idx++;
                         }
                     }
+                    idx++;
                 }
             } catch (Exception e) {
                 LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
@@ -700,32 +699,33 @@ public class ApproximateValinor implements AutoCloseable {
     }
 
     private int readFullyContainedFromFile(Query query, QueryResults queryResults,
-            CsvRowReader parser, KWayMergePointIterator pointIterator) {
-        String line;
-        String[] row;
+            int[] sortedMeasureCols, Map<Integer, Integer> measureColToExtractedPos, 
+            byte delimiterByte, KWayMergePointIterator pointIterator) {
         int ioCount = 0;
+        List<Integer> measureColsList = schema.getMeasureCols();
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
             try {
                 mappedFileReader.seek(point.getFileOffset());
-                line = mappedFileReader.readLine();
-                if (line != null) {
-                    row = parser.parseLine(line);
-                    if (row != null) {
-                        QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                        // Process all measures in the schema
-                        int idx = 0;
-                        for (Integer measureCol : schema.getMeasureCols()) {
-                            if (row[measureCol] != null) {
-                                double measureValue = Double.parseDouble(row[measureCol]);
-                                queryNode.getNode().adjustStats(idx, schema.getMeasureCount(), measureValue);
-
-                            }
-                            idx++;
+                
+                // Fast path: extract only measure columns as floats directly from mmap
+                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                
+                QueryNode queryNode = pointIterator.getCurrentQueryNode();
+                TreeNode node = queryNode.getNode();
+                
+                // Process all measures in the schema
+                int idx = 0;
+                for (Integer measureCol : measureColsList) {
+                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
+                    if (extractedPos != null && extractedPos < extractedValues.length) {
+                        float value = extractedValues[extractedPos];
+                        if (!Float.isNaN(value)) {
+                            node.adjustStats(idx, schema.getMeasureCount(), value);
                         }
-
                     }
+                    idx++;
                 }
             } catch (Exception e) {
                 LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
