@@ -517,11 +517,19 @@ public class ApproximateValinor implements AutoCloseable {
     }
 
     /**
+     * Maximum CV cap to prevent pathological cases from requiring 100% sampling.
+     * CV > 2.0 is statistically "very high variance"; beyond this, approximation
+     * quality degrades but capping ensures practical sample sizes.
+     */
+    private static final double MAX_CV_CAP = 2.0;
+
+    /**
      * Returns the coefficient of variation (CV = std/mean) for a given measure column.
      * CV is used to estimate the required sample size for a given error bound.
+     * The CV is capped at MAX_CV_CAP to ensure practical sample sizes for high-variance data.
      *
      * @param measureIndex the index of the measure (0-based index into measureCols)
-     * @return the coefficient of variation, or 1.0 if not available
+     * @return the coefficient of variation, capped at MAX_CV_CAP, or 1.0 if not available
      */
     public double getMeasureCV(int measureIndex) {
         if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
@@ -535,7 +543,8 @@ public class ApproximateValinor implements AutoCloseable {
         if (mean == 0) {
             return 1.0;
         }
-        return stats.sampleStandardDeviation() / Math.abs(mean);
+        double cv = stats.sampleStandardDeviation() / Math.abs(mean);
+        return Math.min(cv, MAX_CV_CAP);
     }
 
     /**
