@@ -438,8 +438,9 @@ public class ApproximateValinor implements AutoCloseable {
         double z = 1.96;  // 95% confidence
         double requiredN = Math.pow(z * maxCV / errorThreshold, 2);
         
-        // Apply safety margin (50% extra samples)
-        requiredN *= 1.5;
+        // Safety margin multiplier (1.0 = no margin, 1.5 = 50% extra samples)
+        final double SAFETY_MARGIN = 1.0;
+        requiredN *= SAFETY_MARGIN;
         
         // Total population in sampling nodes
         long totalPopulation = samplingNodes.stream()
