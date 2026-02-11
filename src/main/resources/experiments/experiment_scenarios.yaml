@@ -35,7 +35,17 @@ datasets:
     delimiter: ','
     xColumn: 5
     yColumn: 6
-    measureCols: [12]
+    # Columns: 0=vendor, 1=pickup_time, 2=dropoff_time, 3=passenger_count, 4=trip_distance,
+    #          5=pickup_lon, 6=pickup_lat, 7=rate_code, 8=store_fwd, 9=dropoff_lon, 10=dropoff_lat,
+    #          11=payment_type, 12=fare_amount, 13=surcharge, 14=mta_tax, 15=tip_amount, 16=tolls, 17=total_amount
+    # Measure analysis (1M sample): 
+    #   fare_amount(12):  CV=0.82, 0% zeros, min=$2.50
+    #   total_amount(17): CV=0.82, 0% zeros, min=$3.00
+    #   trip_distance(4): CV=1.20, 0.8% zeros
+    #   passenger_count(3): CV=0.49, discrete 1-9
+    #   tip_amount(15):   CV=1.83, 57% zeros (cash not recorded)
+    #   tolls_amount(16): CV=5.50, 97% zeros
+    measureCols: [12, 17, 4, 3]
     bounds: "-74.106216:-73.842545,40.676993:40.839788"
     objectCount: 165000000
     validationFilters:
@@ -45,17 +55,48 @@ datasets:
     csv: /data-nonraid/maroulis/data/sdss
     hasHeader: false
     delimiter: '\t'
+    nullstr: '\N'
     xColumn: 397   # ra (Right Ascension)
     yColumn: 398   # dec (Declination)
     # Measure columns (0-indexed): psfFlux_u(41), psfFlux_r(43), psfMag_u(51), psfMag_r(53),
     #   petroMag_u(71), petroMag_r(73), extinction_u(414), extinction_r(416)
-    measureCols: [41, 43, 51, 53, 71, 73, 414, 416]
+    # measureCols: [41, 43, 51, 53, 71, 73, 414, 416]
+    measureCols: [41, 43, 51, 53, 71, 73, 414, 416]    
+    bounds: "0:360,-9.67629:68.5575"
+    objectCount: 40921983
+    validationFilters: []
+  sdss_100cols:
+    csv: /data-nonraid/maroulis/data/sdss_100cols.tsv
+    hasHeader: false
+    delimiter: '\t'
+    nullstr: '\N'
+    xColumn: 77   # ra (Right Ascension) - original 397, in range 391-420 -> position 77 (70 + 7)
+    yColumn: 78   # dec (Declination) - original 398, in range 391-420 -> position 78 (70 + 8)
+    # 100 columns: original cols 30-99 (70 cols) + original cols 390-419 (30 cols)
+    # Measure column mapping (original -> new):
+    #   psfFlux_u(41->11), psfFlux_r(43->13), extinction_u(414->94), extinction_r(416->96)
+    # Excluded: psfMag_u, psfMag_r, petroMag_u, petroMag_r (contain -9999 sentinel values causing CV > 9)
+    measureCols: [94, 96, 11, 13]
+    bounds: "0:360,-9.67629:68.5575"
+    objectCount: 40921983
+    validationFilters: []
+  sdss_10cols:
+    csv: /data-nonraid/maroulis/data/sdss_10cols.tsv
+    hasHeader: false
+    delimiter: '\t'
+    nullstr: '\N'
+    xColumn: 6    # ra (Right Ascension) 397 -> 6
+    yColumn: 7    # dec (Declination) 398 -> 7
+    # Columns in pruned file (original index -> new index):
+    #   psfFlux_u(41->0), psfFlux_r(43->1), psfMag_u(51->2), psfMag_r(53->3),
+    #   petroMag_u(71->4), petroMag_r(73->5), extinction_u(414->8), extinction_r(416->9)
+    measureCols: [8, 9, 0, 1]
     bounds: "0:360,-9.67629:68.5575"
     objectCount: 40921983
     validationFilters: []
 scenarios:
   synth10_pan:
-    dataset: synth10_1M
+    dataset: synth10
     q0:
       rect: "544:574,323:353"
       filters: {}
@@ -110,8 +151,8 @@ scenarios:
       NW: 1.0
 
   # Queries pan along Right Ascension within the primary SDSS imaging stripe (Dec ≈ -3° to 0°), where photometric data density is highest.
-  sdss_pan:
-    dataset: sdss
+  sdss_100cols_pan:
+    dataset: sdss_100cols
     q0:
       rect: "180:190,-3:0"
       filters: {}
