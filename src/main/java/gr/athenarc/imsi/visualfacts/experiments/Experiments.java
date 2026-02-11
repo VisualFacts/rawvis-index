@@ -439,7 +439,7 @@ public class Experiments {
             String yColStr = String.format("%02d", schema.getyColumn());
             // Create DuckDB executor with the appropriate mode and validation filters
             DuckDBQueryExecutor executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
-                    "column" + yColStr, schema.getValidationFilters());
+                    "column" + yColStr, schema.getValidationFilters(), schema.getNullstr());
 
             // Log initialization timing metrics
             long tableCreationTimeMs = executor.getTableCreationTimeNanos() / 1_000_000;

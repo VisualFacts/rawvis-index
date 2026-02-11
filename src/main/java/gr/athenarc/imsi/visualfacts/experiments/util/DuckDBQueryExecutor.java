@@ -134,6 +134,7 @@ public class DuckDBQueryExecutor {
     private long indexCreationTimeNanos = 0;
     private Integer datasetColumnCount = null; // Cache the dataset column count
     private List<DataValidationFilter> validationFilters = null; // Optional validation filters
+    private String nullstr = null; // Optional null string for CSV parsing
 
     public DuckDBQueryExecutor(String csvPath) throws Exception {
         this.csvPath = csvPath;
@@ -141,16 +142,22 @@ public class DuckDBQueryExecutor {
     }
 
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol) throws Exception {
-        this(csvPath, mode, xCol, yCol, null);
+        this(csvPath, mode, xCol, yCol, null, null);
     }
 
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
                                List<DataValidationFilter> validationFilters) throws Exception {
+        this(csvPath, mode, xCol, yCol, validationFilters, null);
+    }
+
+    public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
+                               List<DataValidationFilter> validationFilters, String nullstr) throws Exception {
         this.csvPath = csvPath;
         this.mode = mode;
         this.xCol = xCol;
         this.yCol = yCol;
         this.validationFilters = validationFilters;
+        this.nullstr = nullstr;
         if (validationFilters != null && !validationFilters.isEmpty()) {
             LOG.info("DuckDB executor initialized with {} validation filters", validationFilters.size());
         }
@@ -225,12 +232,23 @@ public class DuckDBQueryExecutor {
     }
 
 
+    /**
+     * Builds the read_csv_auto options string, including nullstr if configured.
+     */
+    private String buildReadCsvOptions() {
+        StringBuilder opts = new StringBuilder("ignore_errors = true");
+        if (nullstr != null && !nullstr.isEmpty()) {
+            opts.append(", nullstr = '").append(nullstr).append("'");
+        }
+        return opts.toString();
+    }
+
     private void createTableFromCSV() throws Exception {
         long startTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
             String createTableQuery = String.format(
-                    "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', ignore_errors = true);",
-                    tableName, csvPath);
+                    "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', %s);",
+                    tableName, csvPath, buildReadCsvOptions());
             LOG.info("Creating table from CSV: {}", createTableQuery);
             stmt.execute(createTableQuery);
             LOG.info("Table {} created successfully", tableName);
@@ -251,8 +269,8 @@ public class DuckDBQueryExecutor {
 
             // Create table from CSV with geometry column in a single statement
             String createTableWithGeomQuery = String.format(
-                    "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', ignore_errors = true);",
-                    tableName, xCol, yCol, csvPath);
+                    "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', %s);",
+                    tableName, xCol, yCol, csvPath, buildReadCsvOptions());
             LOG.info("Creating table from CSV with geometry column: {}", createTableWithGeomQuery);
             stmt.execute(createTableWithGeomQuery);
             LOG.info("Table {} created with geometry column", tableName);
@@ -335,7 +353,8 @@ public class DuckDBQueryExecutor {
     private QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol,
             EnumSet<AggregateType> aggregateTypes) throws Exception {
 
-        String query = SQLQueryGenerator.getSQLUniAggQuery("\"" + csvPath + "\"", ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
+        String tableSrc = "read_csv_auto('" + csvPath + "', " + buildReadCsvOptions() + ")";
+        String query = SQLQueryGenerator.getSQLUniAggQuery(tableSrc, ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
 
         LOG.trace("Executing direct CSV query: {}", query);
         return executeQueryWithTiming(query);
@@ -525,8 +544,8 @@ public class DuckDBQueryExecutor {
     private int getCSVColumnCount() throws Exception {
         // Query the CSV directly with LIMIT 0 to get column metadata without reading data
         String query = String.format(
-                "SELECT * FROM read_csv_auto('%s', ignore_errors = true) LIMIT 0;",
-                csvPath);
+                "SELECT * FROM read_csv_auto('%s', %s) LIMIT 0;",
+                csvPath, buildReadCsvOptions());
 
         try (Statement stmt = connection.createStatement();
                 ResultSet rs = stmt.executeQuery(query)) {

@@ -1,12 +1,12 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.univocity.parsers.csv.CsvParserSettings;
-
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import com.univocity.parsers.csv.CsvParserSettings;
 
 public class Schema {
     private final String csv;
@@ -19,6 +19,7 @@ public class Schema {
     private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Character delimiter = ',';
     private int objectCount;
+    private String nullstr;
 
     private List<DataValidationFilter> validationFilters;
 
@@ -120,6 +121,14 @@ public class Schema {
 
     public List<DataValidationFilter> getValidationFilters() {
         return validationFilters;
+    }
+
+    public String getNullstr() {
+        return nullstr;
+    }
+
+    public void setNullstr(String nullstr) {
+        this.nullstr = nullstr;
     }
 
     @Override

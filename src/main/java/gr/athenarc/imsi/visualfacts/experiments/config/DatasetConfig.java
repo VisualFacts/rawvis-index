@@ -48,6 +48,9 @@ public class DatasetConfig {
     @JsonProperty("validationFilters")
     private List<String> validationFilters = new ArrayList<>();
 
+    @JsonProperty("nullstr")
+    private String nullstr;
+
     // Default constructor for Jackson
     public DatasetConfig() {
     }
@@ -63,6 +66,7 @@ public class DatasetConfig {
         char delimChar = parseDelimiter(delimiter);
         Schema schema = new Schema(resolvedCsv, delimChar, xColumn, yColumn, measureCols, boundsRect, objectCount, filters);
         schema.setHasHeader(hasHeader);
+        schema.setNullstr(nullstr);
         return schema;
     }
 
@@ -217,6 +221,14 @@ public class DatasetConfig {
 
     public void setValidationFilters(List<String> validationFilters) {
         this.validationFilters = validationFilters;
+    }
+
+    public String getNullstr() {
+        return nullstr;
+    }
+
+    public void setNullstr(String nullstr) {
+        this.nullstr = nullstr;
     }
 
     @Override
