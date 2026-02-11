@@ -10,6 +10,9 @@ public class ApproximateQueryResults extends QueryResults {
     // Error bounds for each measure (key: measure column index)
     private Map<Integer, Double> errorBounds;
 
+    // Number of sampling rounds needed to achieve the error threshold
+    private int samplingRounds;
+
     public ApproximateQueryResults(Query query) {
         super(query);
     }
@@ -28,6 +31,14 @@ public class ApproximateQueryResults extends QueryResults {
 
     public void setErrorBounds(Map<Integer, Double> errorBounds) {
         this.errorBounds = errorBounds;
+    }
+
+    public int getSamplingRounds() {
+        return samplingRounds;
+    }
+
+    public void setSamplingRounds(int samplingRounds) {
+        this.samplingRounds = samplingRounds;
     }
 
     @Override

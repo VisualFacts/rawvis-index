@@ -350,6 +350,7 @@ public class ApproximateValinor implements AutoCloseable {
         queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
         queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedNodesWithoutStats.size());
         queryResults.setSamplingTileCount(samplingNodes.size());
+        queryResults.setSamplingRounds(samplingRounds);
         queryResults.setSamplingRate(samplingRate.get());
         queryResults.setIoCount(ioCount);
 

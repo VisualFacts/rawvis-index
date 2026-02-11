@@ -304,7 +304,7 @@ public class Experiments {
             csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
                     "Leaf tiles",
                     "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
-                    "Sampling Tiles", "Sampling Rate", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval",
+                    "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval",
                     "Error Bound", "run");
 
             Stopwatch stopwatch;
@@ -339,6 +339,7 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getFullyContainedTileWithoutStatsCount());
                 csvWriter.addValue(queryResults.getSamplingTileCount());
                 csvWriter.addValue(queryResults.getSamplingRate());
+                csvWriter.addValue(queryResults.getSamplingRounds());
                 csvWriter.addValue(queryResults.getExpandedNodeCount());
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
