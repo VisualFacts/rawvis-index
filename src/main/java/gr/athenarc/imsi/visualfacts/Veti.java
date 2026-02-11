@@ -329,9 +329,14 @@ public class Veti implements AutoCloseable {
                 if (queryNode.isFullyContained()) {
                     // Skip categorical attribute expansion for now (floats-only mode)
                     if (queryNode.getUnknownCatAttrs() == null || queryNode.getUnknownCatAttrs().isEmpty()) {
+                        // Use schema measure column order (not HashMap iteration order)
+                        // to match the index ordering established during initialization
                         int idx = 0;
-                        for (Map.Entry<Integer, Float> entry : measureValues.entrySet()) {
-                            node.adjustStats(idx, schema.getMeasureCount(), entry.getValue());
+                        for (Integer measureCol : measureColsList) {
+                            Float value = measureValues.get(measureCol);
+                            if (value != null) {
+                                node.adjustStats(idx, schema.getMeasureCount(), value);
+                            }
                             idx++;
                         }
                     }
