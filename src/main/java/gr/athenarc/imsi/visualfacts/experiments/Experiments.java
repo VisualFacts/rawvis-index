@@ -32,6 +32,7 @@ import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
+import gr.athenarc.imsi.visualfacts.experiments.util.PhasedQuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
@@ -381,7 +382,14 @@ public class Experiments {
             return loadQueriesFromFile(queriesFile);
         }
 
-        // Get sequence generation parameters from scenario config
+        // Use phased generator if phases are configured
+        if (scenarioConfig.isPhased()) {
+            LOG.info("Using phased query sequence generator with {} phases", scenarioConfig.getPhases().size());
+            PhasedQuerySequenceGenerator generator = new PhasedQuerySequenceGenerator(scenarioConfig.getPhases());
+            return generator.generateQuerySequence(q0, schema);
+        }
+
+        // Otherwise use simple pan-based generator
         int seqCount = scenarioConfig.getSeqCount();
         int minShift = scenarioConfig.getMinShift();
         int maxShift = scenarioConfig.getMaxShift();

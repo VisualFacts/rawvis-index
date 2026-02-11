@@ -1,12 +1,19 @@
 package gr.athenarc.imsi.visualfacts.experiments.config;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
+import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Configuration class for exploration scenarios in experiment YAML files.
  * An exploration scenario defines a sequence of queries simulating user exploration behavior.
+ * 
+ * Supports two modes:
+ * 1. Simple mode: uses minShift/maxShift/zoomFactor/seqCount/directionWeights for exploration sequences
+ *    with uniform parameters (pan and optionally zoom operations mixed randomly).
+ * 2. Phased mode: uses a list of PhaseConfig objects for multi-phase exploration with distinct
+ *    operation types and parameters per phase. When phases is non-null and non-empty, the simple parameters are ignored.
  */
 public class ExplorationScenarioConfig {
 
@@ -30,6 +37,9 @@ public class ExplorationScenarioConfig {
 
     @JsonProperty("directionWeights")
     private Map<String, Double> directionWeights;
+
+    @JsonProperty("phases")
+    private List<PhaseConfig> phases;
 
     // Default constructor for Jackson
     public ExplorationScenarioConfig() {
@@ -93,6 +103,21 @@ public class ExplorationScenarioConfig {
         this.directionWeights = directionWeights;
     }
 
+    public List<PhaseConfig> getPhases() {
+        return phases;
+    }
+
+    public void setPhases(List<PhaseConfig> phases) {
+        this.phases = phases;
+    }
+
+    /**
+     * Returns true if this scenario uses phased exploration (multi-phase workload).
+     */
+    public boolean isPhased() {
+        return phases != null && !phases.isEmpty();
+    }
+
     @Override
     public String toString() {
         return "ExplorationScenarioConfig{" +
@@ -103,6 +128,7 @@ public class ExplorationScenarioConfig {
                 ", zoomFactor=" + zoomFactor +
                 ", seqCount=" + seqCount +
                 ", directionWeights=" + directionWeights +
+                ", phases=" + phases +
                 '}';
     }
 }
