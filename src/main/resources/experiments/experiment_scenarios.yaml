@@ -51,6 +51,7 @@ datasets:
     validationFilters:
       - "12<0"
       - "12>400"
+      - "4>1000"
   sdss:
     csv: /data-nonraid/maroulis/data/sdss
     hasHeader: false
@@ -177,7 +178,7 @@ scenarios:
   taxi_zoom:
     dataset: taxi
     q0:
-      rect: "-73.99:-73.93,40.745:40.775"
+      rect: "-73.99:-73.94,40.745:40.77"
       filters: {}
     phases:
       # Phase 1: Orient -- user pans a few times to center on Manhattan
