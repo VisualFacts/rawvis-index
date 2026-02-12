@@ -217,8 +217,6 @@ public class Veti implements AutoCloseable {
         List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        List<float[]> points = new ArrayList<>();
-
         int fullyContainedTilesCount = 0;
 
         List<QueryNode> nodesToExpand = new ArrayList<>();
@@ -227,6 +225,20 @@ public class Veti implements AutoCloseable {
 
         Set<CategoricalColumn> catAttrsToRead = new HashSet<>();
         for (Tile leafTile : leafTiles) {
+            // Short-circuited non-leaf tile with frozen exact stats.
+            // This tile was previously split but its pre-split stats were preserved.
+            // Since it's guaranteed fully contained (the only way it's returned from
+            // getOverlappedLeafTiles), use the frozen stats directly.
+            // Note: categorical group-by is unsupported for frozen tiles.
+            if (leafTile.hasFrozenStats()) {
+                fullyContainedTilesCount++;
+                query.getMeasureCols().forEach(measureCol -> {
+                    queryResults.adjustStats(null, measureCol,
+                            leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
+                });
+                continue;
+            }
+
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
             if (isFullyContained) {
@@ -304,7 +316,6 @@ public class Veti implements AutoCloseable {
         while (pointIterator.hasNext()) {
             ioCount++;
             Point point = pointIterator.next();
-            points.add(new float[] { point.getY(), point.getX() });
             try {
                 randomAccessReader.seek(point.getFileOffset());
                 
@@ -354,12 +365,6 @@ public class Veti implements AutoCloseable {
             }
         }
 
-        for (QueryNode node : nonRawNodes) {
-            for (Point point : node) {
-                points.add(new float[] { point.getY(), point.getX() });
-            }
-        }
-
         for (QueryNode queryNode : nodesToExpand) {
             queryNode.getNode().convertToNonleaf();
         }
@@ -368,7 +373,6 @@ public class Veti implements AutoCloseable {
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
         queryResults.setExpandedNodeCount(nodesToExpand.size());
-        queryResults.setPoints(points);
 
         Map<Integer, StatsAccumulator> rectStatsAccumulators = new HashMap<>();
         // Aggregate stats for each measure across all groups

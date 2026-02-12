@@ -1,13 +1,14 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.math.StatsAccumulator;
-import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
-import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
-
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.List;
+
+import com.google.common.math.StatsAccumulator;
+
+import it.unimi.dsi.fastutil.shorts.Short2ObjectMap;
+import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
 
 public class TreeNode {
 
@@ -114,6 +115,10 @@ public class TreeNode {
     public void convertToNonleaf() {
         points = null;
         statsArray = null;
+    }
+
+    public StatsAccumulator[] getStatsArray() {
+        return statsArray;
     }
 
     public BitSet getSampledTracker() {

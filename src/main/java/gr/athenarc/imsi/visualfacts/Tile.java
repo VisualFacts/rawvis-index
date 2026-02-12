@@ -1,17 +1,41 @@
 package gr.athenarc.imsi.visualfacts;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
+import java.util.stream.Collectors;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.google.common.math.Stats;
+import com.google.common.math.StatsAccumulator;
+
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 
-import java.util.*;
-import java.util.stream.Collectors;
-
 public abstract class Tile {
+
+    private static final Logger LOG = LogManager.getLogger(Tile.class);
 
     protected Rectangle bounds;
 
     protected TreeNode root;
     List<CategoricalColumn> categoricalColumns;
+
+    /**
+     * Frozen stats from a tile that has been split. These are exact aggregate
+     * statistics captured before the split destroyed the root node.
+     * Only set when ALL measures had complete stats (count == pointCount)
+     * and the root had no categorical children.
+     */
+    private Stats[] frozenStats;
+    private int frozenPointCount;
 
 
     public Tile(Rectangle bounds) {
@@ -183,12 +207,75 @@ public abstract class Tile {
         this.categoricalColumns = categoricalColumns;
     }
 
+    /**
+     * Freezes the current root node's complete stats before splitting.
+     * Only freezes when:
+     * - root exists with non-null points
+     * - root has NO categorical children (categorical attributes formally unsupported)
+     * - ALL measures have complete stats (count == point count)
+     *
+     * This enables short-circuiting subtree traversal for future queries
+     * that fully contain this tile.
+     */
+    public void freezeStats() {
+        if (root == null || root.getPoints() == null) return;
+
+        // Categorical trees: root has children representing categorical attribute branches.
+        // Freezing stats for categorical trees is not supported — categorical query
+        // processing is currently disabled. When categorical support is re-enabled,
+        // this method should be extended to aggregate stats across categorical leaves.
+        if (root.getChildren() != null && !root.getChildren().isEmpty()) {
+            LOG.trace("Skipping stats freeze for tile with categorical tree: {}", bounds);
+            return;
+        }
+
+        StatsAccumulator[] nodeStats = root.getStatsArray();
+        if (nodeStats == null || nodeStats.length == 0) return;
+
+        int pointCount = root.getPoints().size();
+        Stats[] candidate = new Stats[nodeStats.length];
+        for (int i = 0; i < nodeStats.length; i++) {
+            if (nodeStats[i] == null || nodeStats[i].count() != pointCount) {
+                return; // Not all measures complete — don't freeze
+            }
+            candidate[i] = nodeStats[i].snapshot();
+        }
+        frozenStats = candidate;
+        frozenPointCount = pointCount;
+        LOG.trace("Froze exact stats for tile {} ({} points, {} measures)",
+                bounds, pointCount, nodeStats.length);
+    }
+
+    /**
+     * Returns true if this tile has frozen exact stats from a prior split.
+     * When true, all measures are guaranteed to have complete stats.
+     */
+    public boolean hasFrozenStats() {
+        return frozenStats != null;
+    }
+
+    /**
+     * Returns the frozen Stats snapshot for the given measure index,
+     * or null if not available.
+     */
+    public Stats getFrozenStats(int measureIndex) {
+        if (frozenStats == null || measureIndex < 0 || measureIndex >= frozenStats.length) {
+            return null;
+        }
+        return frozenStats[measureIndex];
+    }
+
+    public int getFrozenPointCount() {
+        return frozenPointCount;
+    }
+
     @Override
     public String toString() {
         return "Tile{" +
                 "bounds=" + bounds +
                 ", root=" + root +
                 ", categoricalColumns=" + categoricalColumns +
+                ", frozenStats=" + (frozenStats != null ? "yes(" + frozenPointCount + " pts)" : "no") +
                 '}';
     }
 }

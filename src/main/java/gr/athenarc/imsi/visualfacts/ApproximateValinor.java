@@ -217,7 +217,22 @@ public class ApproximateValinor implements AutoCloseable {
         List<QueryNode> fullyContainedNodesWithoutStats = new ArrayList<>();
         List<QueryNode> partialNodes = new ArrayList<>();
 
+        int frozenStatsTileCount = 0;
+
         for (Tile leafTile : leafTiles) {
+            // Short-circuited non-leaf tile with frozen exact stats.
+            // This tile was previously split but its pre-split stats were preserved.
+            // Since it's guaranteed fully contained (the only way it's returned from
+            // getOverlappedLeafTiles), use the frozen stats directly.
+            if (leafTile.hasFrozenStats()) {
+                frozenStatsTileCount++;
+                query.getMeasureCols().forEach(measureCol -> {
+                    queryResults.adjustStats(null, measureCol,
+                            leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
+                });
+                continue;
+            }
+
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
 
@@ -347,7 +362,7 @@ public class ApproximateValinor implements AutoCloseable {
         });
 
         queryResults.setTileCount(leafTiles.size());
-        queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size());
+        queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size() + frozenStatsTileCount);
         queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedNodesWithoutStats.size());
         queryResults.setSamplingTileCount(samplingNodes.size());
         queryResults.setSamplingRounds(samplingRounds);

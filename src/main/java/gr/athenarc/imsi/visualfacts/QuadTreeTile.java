@@ -1,14 +1,16 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.collect.BoundType;
-import com.google.common.collect.Range;
-import gr.athenarc.imsi.visualfacts.query.Query;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Stack;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.google.common.collect.BoundType;
+import com.google.common.collect.Range;
+
+import gr.athenarc.imsi.visualfacts.query.Query;
 
 public class QuadTreeTile extends Tile {
 
@@ -40,6 +42,11 @@ public class QuadTreeTile extends Tile {
         List leafTiles = new ArrayList();
 
         if (this.topLeft == null) {
+            leafTiles.add(this);
+        } else if (this.hasFrozenStats() && rect.encloses(this.bounds)) {
+            // Short-circuit: this non-leaf tile has frozen exact stats and is fully
+            // contained by the query. Return self as a virtual leaf — no need to
+            // recurse into the subtree.
             leafTiles.add(this);
         } else {
             if (rect.intersects(this.topRight.bounds))
@@ -75,6 +82,11 @@ public class QuadTreeTile extends Tile {
             this.bottomLeft.setCategoricalColumns(this.getCategoricalColumns());
             this.bottomRight = new QuadTreeTile(new Rectangle(rangeRight, rangeBottom));
             this.bottomRight.setCategoricalColumns(this.getCategoricalColumns());
+
+            // Freeze exact stats before destroying the root node.
+            // If the root has complete stats for all measures, they are
+            // preserved as frozenStats on this tile for future queries.
+            this.freezeStats();
 
             this.reAddPoints(root, new Stack<>());
             this.root = null;
