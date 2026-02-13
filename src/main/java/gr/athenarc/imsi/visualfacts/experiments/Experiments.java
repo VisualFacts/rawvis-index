@@ -99,6 +99,9 @@ public class Experiments {
     @Parameter(names = "--measureMaxDepth", description = "Measure index max depth after every query in the sequence")
     private boolean measureMaxDepth = false;
 
+    @Parameter(names = "--samplingOnly", description = "VALINOR-S baseline: disable aggregate metadata reuse, use plain sampling")
+    private boolean samplingOnly = false;
+
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
 
@@ -309,7 +312,7 @@ public class Experiments {
 
             Stopwatch stopwatch;
 
-            index = new ApproximateValinor(schema, errorBound);
+            index = new ApproximateValinor(schema, errorBound, samplingOnly);
 
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();

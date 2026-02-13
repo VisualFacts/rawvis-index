@@ -53,12 +53,29 @@ public class ApproximateValinor implements AutoCloseable {
 
     private double errorThreshold = 0.05;
 
+    /**
+     * When true, disables all aggregate metadata reuse:
+     * - No frozen stats short-circuit
+     * - No FC+Stats (complete leaf stats) reuse
+     * - No sampledTracker persistence across queries
+     * - No TreeNode stats updates during sampling
+     * This mode implements the VALINOR-S baseline: plain incremental sampling
+     * over the VALINOR spatial index without precomputed aggregate metadata.
+     */
+    private boolean samplingOnly = false;
+
     // Global statistics per measure column, computed during initialization
     private StatsAccumulator[] globalMeasureStats;
 
     public ApproximateValinor(Schema schema, Double errorThreshold) {
         this.schema = schema;
         this.errorThreshold = errorThreshold;
+    }
+
+    public ApproximateValinor(Schema schema, Double errorThreshold, boolean samplingOnly) {
+        this.schema = schema;
+        this.errorThreshold = errorThreshold;
+        this.samplingOnly = samplingOnly;
     }
 
     public void generateGrid(Query q0) {
@@ -224,7 +241,7 @@ public class ApproximateValinor implements AutoCloseable {
             // This tile was previously split but its pre-split stats were preserved.
             // Since it's guaranteed fully contained (the only way it's returned from
             // getOverlappedLeafTiles), use the frozen stats directly.
-            if (leafTile.hasFrozenStats()) {
+            if (!samplingOnly && leafTile.hasFrozenStats()) {
                 frozenStatsTileCount++;
                 query.getMeasureCols().forEach(measureCol -> {
                     queryResults.adjustStats(null, measureCol,
@@ -243,7 +260,7 @@ public class ApproximateValinor implements AutoCloseable {
                     continue;
                 }
 
-                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
+                if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (node.points.size() > THRESHOLD) {
                     leafTile.split();
@@ -357,9 +374,11 @@ public class ApproximateValinor implements AutoCloseable {
         // Iterate over fully contained query nodes without stats and set their
         // TreeNode's sampled tracker for using in future queries. Their stats have been
         // updated in the readFromFile method
-        fullyContainedNodesWithoutStats.forEach(queryNode -> {
-            queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
-        });
+        if (!samplingOnly) {
+            fullyContainedNodesWithoutStats.forEach(queryNode -> {
+                queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
+            });
+        }
 
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedNodesWithStats.size() + frozenStatsTileCount);
@@ -710,7 +729,7 @@ public class ApproximateValinor implements AutoCloseable {
                         float value = extractedValues[extractedPos];
                         if (!Float.isNaN(value)) {
                             queryNode.addSampleValue(measureCol, value);
-                            if (queryNode.isFullyContained()) {
+                            if (!samplingOnly && queryNode.isFullyContained()) {
                                 node.adjustStats(idx, schema.getMeasureCount(), value);
                             }
                         }
