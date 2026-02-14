@@ -12,19 +12,22 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 
 # List of scenarios to run
-# scenarios=("synth10_pan" "synth50_pan" "taxi_pan")
-scenarios=("taxi_pan")
+# scenarios=("synth10_pan" "synth50_pan" "taxi_pan" "taxi_zoom")
+scenarios=("taxi_zoom")
 
 # DuckDB execution modes
-modes=(directCSV)
+modes=(table directCSV)
 # modes=(table directCSV spatialIndex)
 
 # Define the number of measure columns to test (as integers)
-# num_measures_list=(1 2 4 6 8)
-num_measures_list=(1)
+num_measures_list=(1 2 4 6 8)
 
 # Number of times to run each experiment
-num_runs=1
+num_runs=2
+
+# Optional: start run index (e.g., RUN_START=3 ./exp_duckdb.sh to start at run 3)
+run_start=${RUN_START:-1}
+run_end=$((run_start + num_runs - 1))
 
 for mode in "${modes[@]}"
 do
@@ -35,8 +38,13 @@ do
         mkdir -p "$mode_results_dir"
         for num_measures in "${num_measures_list[@]}"
         do
-            for run in $(seq 1 $num_runs)
+            for run in $(seq $run_start $run_end)
             do
+                out_file="${mode_results_dir}results_mcols${num_measures}_run${run}.csv"
+                if [[ -f "$out_file" ]]; then
+                    echo "Skipping existing result: $out_file"
+                    continue
+                fi
                 echo "Running DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run..."
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
@@ -47,7 +55,7 @@ do
                     -duckDbMode "$mode" \
                     -numMeasures $num_measures \
                     -run $run \
-                    -out "${mode_results_dir}results_mcols${num_measures}_run${run}.csv"
+                    -out "$out_file"
                 echo "Completed DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run."
             done
         done
