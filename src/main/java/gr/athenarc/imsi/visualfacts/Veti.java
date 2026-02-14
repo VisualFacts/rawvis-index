@@ -258,7 +258,7 @@ public class Veti implements AutoCloseable {
 
             if (count > THRESHOLD) {
                 leafTile.split();
-                queryNodes = leafTile.getOverlappedLeafTiles(query).stream()
+                queryNodes = leafTile.getOverlappedActualLeafTiles(query).stream()
                         .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
                         .collect(Collectors.toList());
             }

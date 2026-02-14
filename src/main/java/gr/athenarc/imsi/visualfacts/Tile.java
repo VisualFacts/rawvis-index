@@ -66,6 +66,13 @@ public abstract class Tile {
 
     public abstract List<Tile> getOverlappedLeafTiles(Query query);
 
+    /**
+     * Like getOverlappedLeafTiles but always recurses to actual leaf tiles,
+     * ignoring the frozen-stats short-circuit. Use this after split() to
+     * ensure children are visited even if the parent has frozen stats.
+     */
+    public abstract List<Tile> getOverlappedActualLeafTiles(Query query);
+
     public abstract void split();
 
     public abstract int getMaxDepth();

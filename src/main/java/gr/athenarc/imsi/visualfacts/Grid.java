@@ -1,16 +1,18 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.collect.Range;
-import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
-import gr.athenarc.imsi.visualfacts.query.Query;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import com.google.common.collect.BoundType;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Stack;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.google.common.collect.BoundType;
+import com.google.common.collect.Range;
+
+import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
+import gr.athenarc.imsi.visualfacts.query.Query;
 
 public class Grid extends Tile {
 
@@ -166,6 +168,57 @@ public class Grid extends Tile {
         for (int i = iMin; i <= iMax; i++) {
             for (int j = jMin; j <= jMax; j++) {
                 leafTiles.addAll(tiles[i][j].getOverlappedLeafTiles(query));
+            }
+        }
+        return leafTiles;
+    }
+
+    @Override
+    public List<Tile> getOverlappedActualLeafTiles(Query query) {
+        List<Tile> leafTiles = new ArrayList<>();
+        Range<Float> queryXRange, queryYRange;
+        Rectangle rect = query.getRect();
+        try {
+            queryXRange = rect.getXRange().intersection(this.bounds.getXRange());
+            queryYRange = rect.getYRange().intersection(this.bounds.getYRange());
+        } catch (IllegalArgumentException e) {
+            return leafTiles;
+        }
+
+        if (queryXRange.isEmpty() || queryYRange.isEmpty()) {
+            return leafTiles;
+        }
+
+        float yLower = queryYRange.lowerEndpoint();
+        if (queryYRange.lowerBoundType() == BoundType.OPEN) {
+            yLower = Math.nextUp(yLower);
+        }
+        float yUpper = queryYRange.upperEndpoint();
+        if (queryYRange.upperBoundType() == BoundType.OPEN) {
+            yUpper = Math.nextDown(yUpper);
+        }
+
+        float xLower = queryXRange.lowerEndpoint();
+        if (queryXRange.lowerBoundType() == BoundType.OPEN) {
+            xLower = Math.nextUp(xLower);
+        }
+        float xUpper = queryXRange.upperEndpoint();
+        if (queryXRange.upperBoundType() == BoundType.OPEN) {
+            xUpper = Math.nextDown(xUpper);
+        }
+
+        if (xLower > xUpper || yLower > yUpper) {
+            return leafTiles;
+        }
+
+        int iMin = getRowIndex(yLower);
+        int iMax = getRowIndex(yUpper);
+        int jMin = getColIndex(xLower);
+        int jMax = getColIndex(xUpper);
+
+        for (int i = iMin; i <= iMax; i++) {
+            for (int j = jMin; j <= jMax; j++) {
+                leafTiles.addAll(tiles[i][j].getOverlappedActualLeafTiles(query));
             }
         }
         return leafTiles;

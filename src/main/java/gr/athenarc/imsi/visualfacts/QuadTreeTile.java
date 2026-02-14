@@ -62,6 +62,27 @@ public class QuadTreeTile extends Tile {
     }
 
     @Override
+    public List<Tile> getOverlappedActualLeafTiles(Query query) {
+        Rectangle rect = query.getRect();
+        List<Tile> leafTiles = new ArrayList<>();
+
+        if (this.topLeft == null) {
+            leafTiles.add(this);
+        } else {
+            // Always recurse to actual leaves — no frozen-stats short-circuit.
+            if (rect.intersects(this.topRight.bounds))
+                leafTiles.addAll(this.topRight.getOverlappedActualLeafTiles(query));
+            if (rect.intersects(this.bottomRight.bounds))
+                leafTiles.addAll(this.bottomRight.getOverlappedActualLeafTiles(query));
+            if (rect.intersects(this.bottomLeft.bounds))
+                leafTiles.addAll(this.bottomLeft.getOverlappedActualLeafTiles(query));
+            if (rect.intersects(this.topLeft.bounds))
+                leafTiles.addAll(this.topLeft.getOverlappedActualLeafTiles(query));
+        }
+        return leafTiles;
+    }
+
+    @Override
     public void split() {
         try {
             Range<Float> xRange = this.bounds.getXRange();

@@ -228,7 +228,9 @@ public class ApproximateValinor implements AutoCloseable {
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
-        List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
+        List<Tile> leafTiles = samplingOnly
+                ? this.grid.getOverlappedActualLeafTiles(query)
+                : this.grid.getOverlappedLeafTiles(query);
 
         List<QueryNode> fullyContainedNodesWithStats = new ArrayList<>();
         List<QueryNode> fullyContainedNodesWithoutStats = new ArrayList<>();
@@ -264,7 +266,7 @@ public class ApproximateValinor implements AutoCloseable {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (node.points.size() > THRESHOLD) {
                     leafTile.split();
-                    leafTile.getOverlappedLeafTiles(query).stream()
+                    leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
                             .forEach(qn -> {
                                 // Check for full containment on each returned subtile node
