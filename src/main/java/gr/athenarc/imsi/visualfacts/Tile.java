@@ -7,7 +7,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.Stack;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
@@ -42,22 +41,24 @@ public abstract class Tile {
         this.bounds = bounds;
     }
 
-    public abstract Tile getLeafTile(Point point);
-
-
-    public TreeNode addPoint(Point point, String[] row) {
-        return getOrAddCategoricalNode(row).addPoint(point);
-    }
-
-    protected TreeNode addPoint(Point point, Stack<Short> labels) {
-        return getOrAddCategoricalNode(labels).addPoint(point);
-    }
+    public abstract Tile getLeafTile(float x, float y);
 
     public Rectangle getBounds() {
         return bounds;
     }
 
     public TreeNode getRoot() {
+        return root;
+    }
+
+    /**
+     * Returns the root TreeNode for this tile, creating it if needed.
+     * For non-categorical path only (categorical columns not currently used).
+     */
+    public TreeNode getOrCreateRoot() {
+        if (root == null) {
+            root = new TreeNode((short) 0);
+        }
         return root;
     }
 
@@ -78,47 +79,6 @@ public abstract class Tile {
     public abstract int getMaxDepth();
 
     public abstract int getLeafTileCount();
-
-    private TreeNode getOrAddCategoricalNode(String[] row) {
-        if (root == null) {
-            root = new TreeNode((short) 0);
-        }
-        TreeNode node = root;
-        if (categoricalColumns == null) {
-            return node;
-        }
-        for (CategoricalColumn categoricalColumn : categoricalColumns) {
-            TreeNode child = node.getOrAddChild(categoricalColumn.getValueKey(row[categoricalColumn.getIndex()]));
-            node = child;
-        }
-        return node;
-    }
-
-    private TreeNode getOrAddCategoricalNode(Stack<Short> labels) {
-        if (root == null) {
-            root = new TreeNode((short) 0);
-        }
-        TreeNode node = root;
-        for (short label : labels) {
-            TreeNode child = node.getOrAddChild(label);
-            node = child;
-        }
-        return node;
-    }
-
-/*    private TreeNode getCategoricalNode(Stack<Short> labels) {
-        TreeNode node = root;
-        if (node == null)
-            return null;
-
-        for (short label : labels) {
-            TreeNode child = node.getChild(label);
-            node = child;
-            if (node == null)
-                return null;
-        }
-        return node;
-    }*/
 
     public List<QueryNode> getQueryNodes(Query query, ContainmentExaminer containmentExaminer, Schema schema) {
         //we keep the old list of attrs in case node nodes match the query in this tile so that we dont expand trees unnecessarily
@@ -192,20 +152,6 @@ public abstract class Tile {
         return new ArrayList<>(categoricalColumns.subList(level, categoricalColumns.size()));
     }
 
-    protected void reAddPoints(TreeNode node, Stack<Short> labels) {
-        if (node.getChildren() != null) {
-            for (TreeNode child : node.getChildren()) {
-                labels.push(child.getLabel());
-                reAddPoints(child, labels);
-                labels.pop();
-            }
-        } else {
-            for (Point point : node.getPoints()) {
-                this.addPoint(point, labels);
-            }
-        }
-    }
-
     public List<CategoricalColumn> getCategoricalColumns() {
         return categoricalColumns;
     }
@@ -225,7 +171,7 @@ public abstract class Tile {
      * that fully contain this tile.
      */
     public void freezeStats() {
-        if (root == null || root.getPoints() == null) return;
+        if (root == null || !root.hasPoints()) return;
 
         // Categorical trees: root has children representing categorical attribute branches.
         // Freezing stats for categorical trees is not supported — categorical query
@@ -239,7 +185,7 @@ public abstract class Tile {
         StatsAccumulator[] nodeStats = root.getStatsArray();
         if (nodeStats == null || nodeStats.length == 0) return;
 
-        int pointCount = root.getPoints().size();
+        int pointCount = root.getSize();
         Stats[] candidate = new Stats[nodeStats.length];
         for (int i = 0; i < nodeStats.length; i++) {
             if (nodeStats[i] == null || nodeStats[i].count() != pointCount) {

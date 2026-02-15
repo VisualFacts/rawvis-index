@@ -1,10 +1,10 @@
 package gr.athenarc.imsi.visualfacts;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import java.util.BitSet;
 import java.util.Random;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     private final BitSet selectedSamples; // Holds only eligible sampled points
@@ -35,8 +35,7 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
 
     /**
      * Implements reservoir sampling to select exactly `remainingSamplesNeeded`
-     * points
-     * from the set of query-intersecting and unsampled points.
+     * points from the set of query-intersecting and unsampled points.
      */
     private BitSet selectRandomBitsReservoir(int remainingSamplesNeeded) {
         BitSet reservoir = new BitSet();
@@ -60,7 +59,6 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
                 int r = random.nextInt(processedCount + 1);
                 if (r < remainingSamplesNeeded) {
                     // Replace an existing point in the reservoir
-                    // Pick a random existing sample in the reservoir to remove,
                     int toRemove = getRandomSetBit(reservoir, random);
                     reservoir.clear(toRemove);
                     reservoir.set(index);
@@ -71,16 +69,13 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         return reservoir;
     }
 
-        /**
+    /**
      * Returns the index of a randomly chosen set bit from the given reservoir BitSet.
-     * This ensures uniform selection among the currently set bits.
      */
     private int getRandomSetBit(BitSet reservoir, Random random) {
         int size = reservoir.cardinality();
-        // Pick which set bit we want to remove
         int target = random.nextInt(size);
 
-        // Iterate through the set bits to find the target-th one
         int current = reservoir.nextSetBit(0);
         for (int count = 0; count < target; count++) {
             current = reservoir.nextSetBit(current + 1);
@@ -89,20 +84,22 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     }
 
     @Override
-    protected Point getNext() {
-        TreeNode node = queryNode.getNode();
-
-        // Directly iterate over selectedSamples instead of scanning all points
-        if (currentIndex >= 0) {
-            Point point = node.getPoints().get(currentIndex);
-            queryNode.getSampledTracker().set(currentIndex); // Mark as sampled
-
-            // Move to next selected sample
-            currentIndex = selectedSamples.nextSetBit(currentIndex + 1);
-            return point;
+    protected boolean advanceInternal() {
+        if (currentIndex < 0) {
+            return false;
         }
+        // Mark current as sampled
+        queryNode.getSampledTracker().set(currentIndex);
+        return true;
+    }
 
-        return null; // No more samples
+    @Override
+    protected long peekOffset() {
+        long offset = queryNode.getNode().getOffset(currentIndex);
+        // Move to next selected sample for the next advance call
+        int consumed = currentIndex;
+        currentIndex = selectedSamples.nextSetBit(currentIndex + 1);
+        return offset;
     }
 
     public QueryNode getQueryNode() {

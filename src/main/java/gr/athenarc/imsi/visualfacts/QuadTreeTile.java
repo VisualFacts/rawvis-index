@@ -2,7 +2,6 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Stack;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -105,11 +104,34 @@ public class QuadTreeTile extends Tile {
             this.bottomRight.setCategoricalColumns(this.getCategoricalColumns());
 
             // Freeze exact stats before destroying the root node.
-            // If the root has complete stats for all measures, they are
-            // preserved as frozenStats on this tile for future queries.
             this.freezeStats();
 
-            this.reAddPoints(root, new Stack<>());
+            // Two-phase redistribute: count per quadrant, allocate exact, then insert.
+            TreeNode src = this.root;
+            int n = src.getSize();
+            int[] counts = new int[4]; // 0=BL, 1=TL, 2=BR, 3=TR
+
+            for (int i = 0; i < n; i++) {
+                int q = (src.getX(i) <= xMiddle ? 0 : 2) | (src.getY(i) <= yMiddle ? 0 : 1);
+                counts[q]++;
+            }
+
+            QuadTreeTile[] quads = { this.bottomLeft, this.topLeft, this.bottomRight, this.topRight };
+            TreeNode[] roots = new TreeNode[4];
+            for (int q = 0; q < 4; q++) {
+                if (counts[q] > 0) {
+                    roots[q] = quads[q].getOrCreateRoot();
+                    roots[q].setPoints(new float[counts[q]], new float[counts[q]], new long[counts[q]], 0);
+                }
+            }
+
+            for (int i = 0; i < n; i++) {
+                float x = src.getX(i);
+                float y = src.getY(i);
+                int q = (x <= xMiddle ? 0 : 2) | (y <= yMiddle ? 0 : 1);
+                roots[q].insertAtCursor(x, y, src.getOffset(i));
+            }
+
             this.root = null;
         } catch (IllegalArgumentException e){
             LOG.debug(e);
@@ -118,25 +140,17 @@ public class QuadTreeTile extends Tile {
     }
 
     @Override
-    public Tile getLeafTile(Point point) {
+    public Tile getLeafTile(float x, float y) {
         if (this.topLeft == null) {
             return this;
         } else {
-            boolean left = point.getX() <= this.bottomLeft.bounds.getXRange().upperEndpoint();
-            boolean bottom = point.getY() <= this.bottomLeft.bounds.getYRange().upperEndpoint();
+            boolean left = x <= this.bottomLeft.bounds.getXRange().upperEndpoint();
+            boolean bottom = y <= this.bottomLeft.bounds.getYRange().upperEndpoint();
             QuadTreeTile tmp;
             if (left) {
-                if (bottom) {
-                    tmp = this.bottomLeft;
-                } else {
-                    tmp = this.topLeft;
-                }
+                tmp = bottom ? this.bottomLeft : this.topLeft;
             } else {
-                if (bottom) {
-                    tmp = this.bottomRight;
-                } else {
-                    tmp = this.topRight;
-                }
+                tmp = bottom ? this.bottomRight : this.topRight;
             }
             return tmp;
         }
@@ -149,22 +163,6 @@ public class QuadTreeTile extends Tile {
         }
         return topLeft.getLeafTileCount() + topRight.getLeafTileCount()
                 + bottomLeft.getLeafTileCount() + bottomRight.getLeafTileCount();
-    }
-
-    @Override
-    public TreeNode addPoint(Point point, String[] row) {
-        if (topLeft != null) {
-            return getLeafTile(point).addPoint(point, row);
-        }
-        return super.addPoint(point, row);
-    }
-
-    @Override
-    public TreeNode addPoint(Point point, Stack<Short> labels) {
-        if (topLeft != null) {
-            return getLeafTile(point).addPoint(point, labels);
-        }
-        return super.addPoint(point, labels);
     }
 
     @Override

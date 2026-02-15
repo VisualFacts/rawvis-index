@@ -1,35 +1,34 @@
 package gr.athenarc.imsi.visualfacts;
 
-import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
+import java.util.BitSet;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-
+/**
+ * Iterates over points in a QueryNode that match the containment examiner.
+ * For fully-contained tiles (no containment examiner), iterates all points.
+ * Uses pre-computed queryPointsBitSet from QueryNode for efficient traversal.
+ */
 public class NodePointsIterator extends AbstractNodePointIterator {
-    private int i = -1;
+    private int currentIndex = -1;
+    private final BitSet queryPointsBitSet;
     private static final Logger LOG = LogManager.getLogger(NodePointsIterator.class);
 
     public NodePointsIterator(QueryNode queryNode) {
         this.queryNode = queryNode;
+        this.queryPointsBitSet = queryNode.getQueryPointsBitSet();
     }
 
-    protected Point getNext() {
-        ContainmentExaminer containmentExaminer = queryNode.getContainmentExaminer();
-        TreeNode node = queryNode.getNode();
-        try {
-            if (containmentExaminer == null) {
-                if (node.getPoints() == null){
-                    LOG.error(queryNode);
-                    LOG.error(queryNode.getTile().getCategoricalColumns());
-                }
-                return node.getPoints().get(++i);
-            }
-            Point point;
-            while (!containmentExaminer.contains(point = node.getPoints().get(++i))) ;
-            return point;
-        } catch (IndexOutOfBoundsException e) {
-            return null;
-        }
+    @Override
+    protected boolean advanceInternal() {
+        currentIndex = queryPointsBitSet.nextSetBit(currentIndex + 1);
+        return currentIndex >= 0;
+    }
+
+    @Override
+    protected long peekOffset() {
+        return queryNode.getNode().getOffset(currentIndex);
     }
 
     public QueryNode getQueryNode() {

@@ -158,6 +158,14 @@ public class ApproximateValinor implements AutoCloseable {
         try {
             rowReader.open(readerConfig);
             float[] row;
+
+            // --- Phase 1: CSV scan → global staging arrays + per-tile counts + stats ---
+            final int capacity = schema.getObjectCount();
+            float[] gXs = new float[capacity];
+            float[] gYs = new float[capacity];
+            long[] gOffsets = new long[capacity];
+            int validCount = 0;
+
             while ((row = rowReader.nextRow()) != null) {
                 long rowOffset = rowReader.currentOffset();
 
@@ -174,12 +182,20 @@ public class ApproximateValinor implements AutoCloseable {
                     continue;
                 }
 
-                Point point = new Point(row[xPos], row[yPos], rowOffset);
+                float x = row[xPos];
+                float y = row[yPos];
 
-                TreeNode node = this.grid.addPoint(point, (String[]) null);
+                TreeNode node = this.grid.getOrCreateLeafRoot(x, y);
                 if (node == null) {
                     continue;
                 }
+
+                gXs[validCount] = x;
+                gYs[validCount] = y;
+                gOffsets[validCount] = rowOffset;
+                validCount++;
+
+                node.incrementCount();
 
                 for (int i = 0; i < measureCount; i++) {
                     if (measurePositions[i] < 0) continue;
@@ -191,6 +207,25 @@ public class ApproximateValinor implements AutoCloseable {
                 }
 
             }
+
+            // --- Phase 2: allocate exact per-tile arrays, distribute from global ---
+            for (Object obj : grid.getLeafTiles()) {
+                Tile leafTile = (Tile) obj;
+                TreeNode root = leafTile.getRoot();
+                if (root != null && root.getSize() > 0) {
+                    root.allocateExact();
+                }
+            }
+            for (int i = 0; i < validCount; i++) {
+                TreeNode node = this.grid.getOrCreateLeafRoot(gXs[i], gYs[i]);
+                node.insertAtCursor(gXs[i], gYs[i], gOffsets[i]);
+            }
+
+            // Free staging arrays
+            gXs = null;
+            gYs = null;
+            gOffsets = null;
+
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV", e);
         } finally {
@@ -258,13 +293,13 @@ public class ApproximateValinor implements AutoCloseable {
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             for (QueryNode queryNode : queryNodes) {
                 TreeNode node = queryNode.getNode();
-                if (node.getPoints() == null) {
+                if (node.getSize() == 0) {
                     continue;
                 }
 
                 if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
-                } else if (node.points.size() > THRESHOLD) {
+                } else if (node.getSize() > THRESHOLD) {
                     leafTile.split();
                     leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
@@ -537,7 +572,7 @@ public class ApproximateValinor implements AutoCloseable {
      */
     private void aggregateNodeStats(TreeNode node, int measureCount) {
         // If this is a leaf node (has points), aggregate its stats
-        if (node.getPoints() != null && !node.getPoints().isEmpty()) {
+        if (node.hasPoints()) {
             for (int i = 0; i < measureCount; i++) {
                 StatsAccumulator nodeStats = node.getStats(i);
                 if (nodeStats != null && nodeStats.count() > 0) {
@@ -713,9 +748,9 @@ public class ApproximateValinor implements AutoCloseable {
         List<Integer> measureColsList = schema.getMeasureCols();
         while (pointIterator.hasNext()) {
             ioCount++;
-            Point point = pointIterator.next();
+            long fileOffset = pointIterator.nextOffset();
             try {
-                mappedFileReader.seek(point.getFileOffset());
+                mappedFileReader.seek(fileOffset);
                 
                 // Fast path: extract only measure columns as floats directly from mmap
                 float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
@@ -739,7 +774,7 @@ public class ApproximateValinor implements AutoCloseable {
                     idx++;
                 }
             } catch (Exception e) {
-                LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
+                LOG.error("Error reading from file at offset " + fileOffset + ": " + e.getMessage(), e);
             }
         }
         return ioCount;
@@ -752,9 +787,9 @@ public class ApproximateValinor implements AutoCloseable {
         List<Integer> measureColsList = schema.getMeasureCols();
         while (pointIterator.hasNext()) {
             ioCount++;
-            Point point = pointIterator.next();
+            long fileOffset = pointIterator.nextOffset();
             try {
-                mappedFileReader.seek(point.getFileOffset());
+                mappedFileReader.seek(fileOffset);
                 
                 // Fast path: extract only measure columns as floats directly from mmap
                 float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
@@ -775,7 +810,7 @@ public class ApproximateValinor implements AutoCloseable {
                     idx++;
                 }
             } catch (Exception e) {
-                LOG.error("Error reading from file at offset " + point.getFileOffset() + ": " + e.getMessage(), e);
+                LOG.error("Error reading from file at offset " + fileOffset + ": " + e.getMessage(), e);
             }
         }
         return ioCount;

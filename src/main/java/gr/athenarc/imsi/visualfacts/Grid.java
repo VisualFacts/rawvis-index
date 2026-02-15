@@ -3,7 +3,6 @@ package gr.athenarc.imsi.visualfacts;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Stack;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -69,10 +68,6 @@ public class Grid extends Tile {
             }
         }
 
-        if (this.root != null) {
-            this.reAddPoints(root, new Stack<>());
-            this.root = null;
-        }
     }
 
     private Range[] createSubranges(Range<Float> range, int count) {
@@ -224,25 +219,28 @@ public class Grid extends Tile {
         return leafTiles;
     }
 
-    @Override
-    public TreeNode addPoint(Point point, String[] row) {
-        if (this.bounds.contains(point)) {
-            return this.getLeafTile(point).addPoint(point, row);
-        } else
-            return null;
+    /**
+     * Routes to the leaf tile for (x,y) and returns its root TreeNode
+     * (creating it if needed), without adding any point data.
+     * Used in two-phase init: phase 1 counts, phase 2 inserts.
+     */
+    public TreeNode getOrCreateLeafRoot(float x, float y) {
+        if (this.bounds.contains(x, y)) {
+            return this.getLeafTile(x, y).getOrCreateRoot();
+        }
+        return null;
     }
 
     @Override
-    public Tile getLeafTile(Point point) {
+    public Tile getLeafTile(float x, float y) {
         if (this.tiles == null) {
             return this;
         } else {
             try {
-                return tiles[getRowIndex(point.getY())][getColIndex(point.getX())].getLeafTile(point);
+                return tiles[getRowIndex(y)][getColIndex(x)].getLeafTile(x, y);
             } catch (ArrayIndexOutOfBoundsException e) {
                 LOG.error(e);
-                LOG.error(point);
-                LOG.error(this.bounds);
+                LOG.error("Point ({}, {}) out of bounds for grid {}", x, y, this.bounds);
                 throw e;
             }
         }

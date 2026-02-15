@@ -2,18 +2,18 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.util.BitSet;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import gr.athenarc.imsi.visualfacts.query.Query;
-import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import com.google.common.math.StatsAccumulator;
 
-public class QueryNode implements Iterable<Point> {
+import gr.athenarc.imsi.visualfacts.query.Query;
+import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
+
+public class QueryNode {
     private static final Logger LOG = LogManager.getLogger(QueryNode.class);
     private Map<Integer, Short> groupByValues;
     private TreeNode node;
@@ -28,7 +28,7 @@ public class QueryNode implements Iterable<Point> {
     private BitSet queryPointsBitSet;
 
     // Sampling-based statistics for multiple measures
-    private Map<Integer, StatsAccumulator> sampleStatsAccumulators; //
+    private Map<Integer, StatsAccumulator> sampleStatsAccumulators;
     private BitSet sampledTracker;
 
     public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
@@ -55,32 +55,31 @@ public class QueryNode implements Iterable<Point> {
             }
             this.sampledTracker = node.getSampledTracker();
         } else {
-            this.sampledTracker = new BitSet(node.getPoints().size()); // All bits default to false (unsampled)
+            this.sampledTracker = new BitSet(node.getSize());
         }
         computeQueryIntersection();
     }
 
     /**
-     * Iterates over the points in the tile, checks against the containment
-     * examiner,
-     * and sets up the BitSet marking points inside the query.
+     * Iterates over the points in the node, checks against the containment
+     * examiner, and sets up the BitSet marking points inside the query.
      */
     private void computeQueryIntersection() {
-        List<Point> points = node.getPoints();
-        queryPointsBitSet = new BitSet(points.size());
+        int size = node.getSize();
+        queryPointsBitSet = new BitSet(size);
 
         // If the tile is fully contained, all points belong to the query
         if (containmentExaminer == null) {
-            queryPointsBitSet.set(0, points.size()); // Mark all points
-            intersectionCount = points.size();
+            queryPointsBitSet.set(0, size);
+            intersectionCount = size;
             return;
         }
 
-        // Otherwise, check containment for each point
+        // Otherwise, check containment for each point using flat array access
         intersectionCount = 0;
-        for (int i = 0; i < points.size(); i++) {
-            if (containmentExaminer.contains(points.get(i))) {
-                queryPointsBitSet.set(i); // Mark this point as inside the query
+        for (int i = 0; i < size; i++) {
+            if (containmentExaminer.contains(node.getX(i), node.getY(i))) {
+                queryPointsBitSet.set(i);
                 intersectionCount++;
             }
         }
@@ -123,11 +122,6 @@ public class QueryNode implements Iterable<Point> {
 
     public BitSet getSampledTracker() {
         return sampledTracker;
-    }
-
-    @Override
-    public Iterator<Point> iterator() {
-        return new NodePointsIterator(this);
     }
 
     @Override

@@ -1,9 +1,8 @@
 package gr.athenarc.imsi.visualfacts;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
-import java.util.List;
 
 import com.google.common.math.StatsAccumulator;
 
@@ -15,7 +14,15 @@ public class TreeNode {
     private static int counter;
 
     private final short label;
-    protected List<Point> points;
+
+    // Flat parallel arrays for point storage — replaces List<Point>.
+    // During init: two-phase (incrementCount → allocateExact → insertAtCursor).
+    // During split: count per quadrant → setPoints with exact size → insertAtCursor.
+    private float[] xs;
+    private float[] ys;
+    private long[] offsets;
+    private int size;
+
     private Short2ObjectMap<TreeNode> children;
     private StatsAccumulator[] statsArray;
     private BitSet sampledTracker;
@@ -46,31 +53,71 @@ public class TreeNode {
      *
      * @param measure the measure to check statistics for
      * @return {@code true} if the stats object for the given measure is not null and its count is equal
-     *         to the size of the points list, otherwise {@code false}.
+     *         to the number of points, otherwise {@code false}.
      */
     public boolean hasStats(int measureIndex) {
-        if (points == null || statsArray == null) {
+        if (size == 0 || statsArray == null) {
             return false;
         }
         if (measureIndex < 0 || measureIndex >= statsArray.length) {
             return false;
         }
         StatsAccumulator stats = statsArray[measureIndex];
-        // todo: check what happens in case of null value for an object
-        return stats != null && stats.count() == points.size();
+        return stats != null && stats.count() == size;
     }
 
-    public TreeNode addPoint(Point point) {
-        if (points == null) {
-            points = new ArrayList<>();
-        }
-        points.add(point);
-        return this;
+    // ---- Two-phase init support ----
+
+    /**
+     * Phase 1: just count, no array allocation.
+     */
+    public void incrementCount() {
+        size++;
     }
 
-    public List<Point> getPoints() {
-        return points;
+    /**
+     * Between phases: allocate exact-sized arrays based on accumulated count,
+     * then reset size to 0 as a write cursor for phase 2.
+     */
+    public void allocateExact() {
+        xs = new float[size];
+        ys = new float[size];
+        offsets = new long[size];
+        size = 0;
     }
+
+    /**
+     * Phase 2: insert point at current cursor position. No bounds check.
+     * Arrays must have been allocated via {@link #allocateExact()}.
+     */
+    public void insertAtCursor(float x, float y, long offset) {
+        xs[size] = x;
+        ys[size] = y;
+        offsets[size] = offset;
+        size++;
+    }
+
+    /**
+     * Bulk-sets the point arrays with exact sizes. Used during split redistribute
+     * where counts are known. Takes ownership of the passed arrays.
+     * Set size=0 when using as a cursor target with insertAtCursor.
+     */
+    public void setPoints(float[] xs, float[] ys, long[] offsets, int size) {
+        this.xs = xs;
+        this.ys = ys;
+        this.offsets = offsets;
+        this.size = size;
+    }
+
+    // ---- Indexed access ----
+
+    public float getX(int i) { return xs[i]; }
+    public float getY(int i) { return ys[i]; }
+    public long getOffset(int i) { return offsets[i]; }
+    public int getSize() { return size; }
+
+    /** Returns true if this node has point data. */
+    public boolean hasPoints() { return xs != null && size > 0; }
 
     public StatsAccumulator getStats(int measureIndex) {
         if (statsArray == null || measureIndex < 0 || measureIndex >= statsArray.length) {
@@ -107,13 +154,17 @@ public class TreeNode {
     public String toString() {
         return "TreeNode{" +
                 "label=" + label +
+                ", size=" + size +
                 ", children=" + children +
-                ", statsArray=" + java.util.Arrays.toString(statsArray) +
+                ", statsArray=" + Arrays.toString(statsArray) +
                 '}';
     }
 
     public void convertToNonleaf() {
-        points = null;
+        xs = null;
+        ys = null;
+        offsets = null;
+        size = 0;
         statsArray = null;
     }
 

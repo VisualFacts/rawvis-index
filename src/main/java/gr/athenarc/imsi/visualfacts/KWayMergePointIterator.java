@@ -1,47 +1,47 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.collect.Ordering;
-
 import java.util.Comparator;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
 
-
-public class KWayMergePointIterator extends AbstractPointIterator {
+/**
+ * K-way merge iterator that produces points in file-offset order
+ * from multiple node iterators.
+ */
+public class KWayMergePointIterator {
 
     private QueryNode currentQueryNode;
-    private PriorityQueue<NodePointsPeekingIterator> tilesPQueue;
+    private PriorityQueue<AbstractNodePointIterator> pq;
+    private long currentOffset;
 
-
-    public KWayMergePointIterator(List<AbstractNodePointIterator> nodePointsIterators) {
-        Comparator<NodePointsPeekingIterator> comparator = new Ordering<NodePointsPeekingIterator>() {
-            @Override
-            public int compare(NodePointsPeekingIterator i1, NodePointsPeekingIterator i2) {
-                return Long.compare(i1.peek().getFileOffset(), i2.peek().getFileOffset());
-            }
-        };
-        tilesPQueue = new PriorityQueue<>(nodePointsIterators.size() > 0 ? nodePointsIterators.size() : 1, comparator);
-        for (AbstractNodePointIterator nodePointsIterator : nodePointsIterators) {
-            if (nodePointsIterator.hasNext()) {
-                tilesPQueue.add(new NodePointsPeekingIterator(nodePointsIterator));
+    public KWayMergePointIterator(List<? extends AbstractNodePointIterator> nodePointsIterators) {
+        Comparator<AbstractNodePointIterator> comparator =
+                Comparator.comparingLong(AbstractNodePointIterator::getCurrentOffset);
+        pq = new PriorityQueue<>(Math.max(nodePointsIterators.size(), 1), comparator);
+        for (AbstractNodePointIterator it : nodePointsIterators) {
+            if (it.hasNext()) {
+                pq.add(it);
             }
         }
     }
 
-    protected Point getNext() {
-        try {
-            NodePointsPeekingIterator nodePointsPeekingIt = tilesPQueue.remove();
-            Point point = nodePointsPeekingIt.next();
-            currentQueryNode = nodePointsPeekingIt.getQueryNode();
+    public boolean hasNext() {
+        return !pq.isEmpty();
+    }
 
-            if (nodePointsPeekingIt.hasNext()) {
-                tilesPQueue.add(nodePointsPeekingIt);
-            }
-            return point;
-        } catch (NoSuchElementException e) {
-            return null;
+    /**
+     * Returns the file offset of the next point in merge order.
+     * After calling this, {@link #getCurrentQueryNode()} returns the
+     * QueryNode that owns this point.
+     */
+    public long nextOffset() {
+        AbstractNodePointIterator it = pq.poll();
+        currentOffset = it.nextOffset();
+        currentQueryNode = it.getQueryNode();
+        if (it.hasNext()) {
+            pq.add(it);
         }
+        return currentOffset;
     }
 
     public QueryNode getCurrentQueryNode() {

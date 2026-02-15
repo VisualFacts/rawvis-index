@@ -1,7 +1,6 @@
 package gr.athenarc.imsi.visualfacts.util;
 
 import com.google.common.collect.Range;
-import gr.athenarc.imsi.visualfacts.Point;
 
 public class YContainmentExaminer implements ContainmentExaminer {
 
@@ -12,7 +11,7 @@ public class YContainmentExaminer implements ContainmentExaminer {
     }
 
     @Override
-    public boolean contains(Point point) {
-        return yRange.contains(point.getY());
+    public boolean contains(float x, float y) {
+        return yRange.contains(y);
     }
 }

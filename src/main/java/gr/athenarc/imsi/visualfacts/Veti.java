@@ -127,6 +127,18 @@ public class Veti implements AutoCloseable {
         try {
             rowReader.open(readerConfig);
             float[] row;
+
+            // --- Phase 1: CSV scan → global staging arrays + per-tile counts + stats ---
+            final int capacity = schema.getObjectCount();
+            float[] gXs = new float[capacity];
+            float[] gYs = new float[capacity];
+            long[] gOffsets = new long[capacity];
+            int validCount = 0;
+
+            final Integer xPos = colIndexToRowPos.get(schema.getxColumn());
+            final Integer yPos = colIndexToRowPos.get(schema.getyColumn());
+            final int logInterval = Math.max(1, schema.getObjectCount() / 10);
+
             while ((row = rowReader.nextRow()) != null) {
                 long rowOffset = rowReader.currentOffset();
                 try {
@@ -143,16 +155,20 @@ public class Veti implements AutoCloseable {
                         continue;
                     }
 
-                    Integer xPos = colIndexToRowPos.get(schema.getxColumn());
-                    Integer yPos = colIndexToRowPos.get(schema.getyColumn());
-                    Point point = new Point(row[xPos], row[yPos], rowOffset);
+                    float x = row[xPos];
+                    float y = row[yPos];
 
-
-
-                    TreeNode node = this.grid.addPoint(point, (String[]) null);
+                    TreeNode node = this.grid.getOrCreateLeafRoot(x, y);
                     if (node == null) {
                         continue;
                     }
+
+                    gXs[validCount] = x;
+                    gYs[validCount] = y;
+                    gOffsets[validCount] = rowOffset;
+                    validCount++;
+
+                    node.incrementCount();
 
                     int idx = 0;
                     for (Integer measureCol : schema.getMeasureCols()) {
@@ -166,15 +182,32 @@ public class Veti implements AutoCloseable {
                         idx++;
                     }
 
-                    int logInterval = Math.max(1, schema.getObjectCount() / 10);
                     if (++objectsIndexed % logInterval == 0) {
                         LOG.debug("Indexing object " + objectsIndexed);
-                        LOG.debug(point);
                     }
                 } catch (Exception e) {
                     LOG.error("Problem parsing row number " + objectsIndexed + ": " + Arrays.toString(row), e);
                 }
             }
+
+            // --- Phase 2: allocate exact per-tile arrays, distribute from global ---
+            for (Object obj : grid.getLeafTiles()) {
+                Tile leafTile = (Tile) obj;
+                TreeNode root = leafTile.getRoot();
+                if (root != null && root.getSize() > 0) {
+                    root.allocateExact();
+                }
+            }
+            for (int i = 0; i < validCount; i++) {
+                TreeNode node = this.grid.getOrCreateLeafRoot(gXs[i], gYs[i]);
+                node.insertAtCursor(gXs[i], gYs[i], gOffsets[i]);
+            }
+
+            // Free staging arrays
+            gXs = null;
+            gYs = null;
+            gOffsets = null;
+
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV file", e);
         } finally {
@@ -251,8 +284,8 @@ public class Veti implements AutoCloseable {
                 TreeNode node = queryNode.getNode();
                 if ((!isFullyContained
                         || query.getMeasureCols().stream().anyMatch(measureCol -> !node.hasStats(schema.getMeasureIndex(measureCol))))
-                        && node.getPoints() != null) {
-                    count += node.getPoints().size();
+                        && node.hasPoints()) {
+                    count += node.getSize();
                 }
             }
 
@@ -315,9 +348,9 @@ public class Veti implements AutoCloseable {
         
         while (pointIterator.hasNext()) {
             ioCount++;
-            Point point = pointIterator.next();
+            long fileOffset = pointIterator.nextOffset();
             try {
-                randomAccessReader.seek(point.getFileOffset());
+                randomAccessReader.seek(fileOffset);
                 
                 // Fast path: extract only measure columns as floats directly from mmap
                 float[] extractedValues = randomAccessReader.extractFloats(sortedMeasureCols, delimiterByte);

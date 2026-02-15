@@ -1,11 +1,11 @@
 package gr.athenarc.imsi.visualfacts;
 
-import com.google.common.collect.Range;
-
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+
+import com.google.common.collect.Range;
 
 
 public class Rectangle implements Serializable {
@@ -28,10 +28,6 @@ public class Rectangle implements Serializable {
 
     public boolean contains(float x, float y) {
         return xRange.contains(x) && yRange.contains(y);
-    }
-
-    public boolean contains(Point point) {
-        return contains(point.getX(), point.getY());
     }
 
     public boolean intersects(Rectangle other) {
