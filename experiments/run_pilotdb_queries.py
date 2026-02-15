@@ -118,14 +118,35 @@ def parse_queries(queries_file):
 
 
 # ---------------------------------------------------------------------------
+# CSV read options (must match Java DuckDBQueryExecutor.buildReadCsvOptions)
+# ---------------------------------------------------------------------------
+
+def _build_read_csv_options(nullstr=None, delimiter=None, has_header=None):
+    """Build the options string for DuckDB's read_csv_auto, matching the Java side.
+
+    The Java DuckDBQueryExecutor always sets ignore_errors=true and adds
+    nullstr when the dataset config provides one (e.g. SDSS uses '\\N').
+    """
+    parts = ["ignore_errors = true"]
+    if nullstr:
+        parts.append(f"nullstr = '{nullstr}'")
+    if delimiter:
+        # DuckDB expects the delimiter as a string literal
+        parts.append(f"delim = '{delimiter}'")
+    if has_header is not None:
+        parts.append(f"header = {'true' if has_header else 'false'}")
+    return ", ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Column naming helpers
 # ---------------------------------------------------------------------------
 
-def _get_column_count(csv_path):
+def _get_column_count(csv_path, csv_options="ignore_errors = true"):
     """Return the number of columns in a CSV via DuckDB introspection."""
     try:
         con = duckdb.connect(":memory:")
-        con.execute(f"SELECT * FROM read_csv_auto('{csv_path}') LIMIT 0").fetchall()
+        con.execute(f"SELECT * FROM read_csv_auto('{csv_path}', {csv_options}) LIMIT 0").fetchall()
         count = len(con.description) if con.description else 10
         con.close()
         return count
@@ -270,7 +291,8 @@ def _write_row(writer, csv_path, i, elapsed, sql, error_bound, result_str, resul
 
 def run_queries(queries_file, csv_path, x_col, y_col, measure_cols,
                 output_file, error_bound, failure_prob=0.05, explain=False,
-                validation_filters=None):
+                validation_filters=None, nullstr=None, delimiter=None,
+                has_header=None):
     """Execute bbox queries via PilotDB approximate execution.
 
     Args:
@@ -285,8 +307,13 @@ def run_queries(queries_file, csv_path, x_col, y_col, measure_cols,
         explain: Print each generated SQL statement.
         validation_filters: List of filter strings (e.g. ['12<0', '12>400']) that
             define invalid rows to exclude, matching Java experiment behaviour.
+        nullstr: Null string representation in the CSV (e.g. '\\N' for SDSS).
+        delimiter: Column delimiter (e.g. '\\t' for tab-separated).
+        has_header: Whether the CSV has a header row.
     """
-    col_count = _get_column_count(csv_path)
+    csv_options = _build_read_csv_options(nullstr=nullstr, delimiter=delimiter,
+                                          has_header=has_header)
+    col_count = _get_column_count(csv_path, csv_options=csv_options)
     x_col_name = _col_name(int(x_col), col_count)
     y_col_name = _col_name(int(y_col), col_count)
     table = "query_table"
@@ -306,7 +333,10 @@ def run_queries(queries_file, csv_path, x_col, y_col, measure_cols,
     if temp_dir:
         con.execute(f"SET temp_directory = '{temp_dir}'")
 
-    con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_csv_auto('{csv_path}')")
+    create_sql = f"CREATE TABLE {table} AS SELECT * FROM read_csv_auto('{csv_path}', {csv_options})"
+    if explain:
+        print(f"  CREATE: {create_sql}")
+    con.execute(create_sql)
     init_elapsed = time.time() - init_start
 
     # --- Execute queries ---
@@ -398,9 +428,15 @@ def main():
         if csv_path is None or x_col is None or y_col is None:
             parser.error('Either --scenario or --csv/--x-col/--y-col must be provided.')
 
+    # Extract CSV parsing options from config (nullstr, delimiter, hasHeader)
+    nullstr = cfg.get('nullstr') if args.scenario else None
+    delimiter = cfg.get('delimiter') if args.scenario else None
+    has_header = cfg.get('hasHeader') if args.scenario else None
+
     run_queries(args.queries_file, csv_path, x_col, y_col, measure_cols,
                 args.out, error_bound=args.error, failure_prob=args.probability,
-                explain=args.explain, validation_filters=validation_filters)
+                explain=args.explain, validation_filters=validation_filters,
+                nullstr=nullstr, delimiter=delimiter, has_header=has_header)
 
 
 if __name__ == '__main__':
