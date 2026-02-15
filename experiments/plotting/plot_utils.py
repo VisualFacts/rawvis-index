@@ -498,7 +498,7 @@ def plot_confidence_intervals(
         matplotlib Figure
     """
     df = load_experimental_data(directory)
-    df = df[df['run'] == 1]  # Use first run only
+    df = df[df['run'] == 1]  # CI bands are per-execution; averaging bounds across runs is misleading
     
     agg_df = df.groupby(['errorBound', 'i']).agg(
         conf_lb=('Confidence Interval LB', 'mean'),
@@ -582,9 +582,6 @@ def plot_relative_error_for_measure(
     for col, val in fixed_params.items():
         df = df[df[col] == val]
     
-    # Use first run only
-    df = df[df['run'] == 1]
-    
     if not include_initialization:
         df = df[df[query_col] != 0]
     
@@ -612,9 +609,8 @@ def plot_relative_error_for_measure(
     for eb in error_bounds:
         eb_df = df[df['errorBound'] == eb].copy()
         
-        # Parse CI for this measure
-        relative_errors = []
-        query_indices = []
+        # Parse CI for this measure across all runs, then average per query
+        per_row_errors = []  # list of (query_idx, run, rel_error)
         
         for _, row in eb_df.iterrows():
             ci_dict = parse_ci_dict(row.get('Confidence Interval', ''))
@@ -626,18 +622,18 @@ def plot_relative_error_for_measure(
                     rel_error = (ub - lb) / 2 / abs(midpoint)
                 else:
                     rel_error = 0
-                relative_errors.append(rel_error)
-                query_indices.append(row[query_col])
+                per_row_errors.append((row[query_col], rel_error))
         
-        if query_indices:
-            # Sort by query index
-            sorted_pairs = sorted(zip(query_indices, relative_errors))
-            query_indices, relative_errors = zip(*sorted_pairs)
+        if per_row_errors:
+            # Average relative error across runs per query
+            err_df = pd.DataFrame(per_row_errors, columns=[query_col, 'rel_error'])
+            avg_err = err_df.groupby(query_col)['rel_error'].mean().reset_index()
+            avg_err = avg_err.sort_values(query_col)
             
             label = format_error_bound_label(eb)
             ax.plot(
-                query_indices,
-                relative_errors,
+                avg_err[query_col],
+                avg_err['rel_error'],
                 label=label,
                 linewidth=2,
                 color=color_palette[eb],
@@ -698,7 +694,8 @@ def plot_ci_vs_exact_for_measure(
     for col, val in fixed_params.items():
         df = df[df[col] == val]
     
-    # Use first run only
+    # CI bands are per-execution; averaging bounds across runs would shrink bands
+    # and misrepresent the actual interval from a single execution
     df = df[df['run'] == 1]
     
     if not include_initialization:
@@ -798,13 +795,21 @@ def compute_accuracy_summary(
     if not include_initialization:
         df = df[df['i'] != 0]
     
-    # Aggregate by error bound across all runs
-    summary = df.groupby('errorBound').agg(
+    # Compute per-run totals, then average across runs
+    per_run = df.groupby(['errorBound', 'run']).agg(
         total_time=('Time (sec)', 'sum'),
         avg_time=('Time (sec)', 'mean'),
         total_io=('I/Os', 'sum'),
         avg_io=('I/Os', 'mean'),
         num_queries=('i', 'count'),
+    ).reset_index()
+    
+    summary = per_run.groupby('errorBound').agg(
+        total_time=('total_time', 'mean'),
+        avg_time=('avg_time', 'mean'),
+        total_io=('total_io', 'mean'),
+        avg_io=('avg_io', 'mean'),
+        num_queries=('num_queries', 'first'),
     ).reset_index()
     
     # Compute speedup relative to exact (errorBound=0)
@@ -967,19 +972,23 @@ def plot_competitors_comparison(
     if not include_initialization:
         df = df[df['i'] != 0]
     
-    # Use first run only and aggregate by query
-    df = df[df['run'] == 1]
+    # Average across runs per competitor per query
+    agg_df = (
+        df.groupby(['competitor_label', 'i'])
+        .agg(mean_val=(y_col, 'mean'))
+        .reset_index()
+    )
     
     # Build color palette
     color_palette = {COMPETITORS[c]['label']: COMPETITORS[c]['color'] for c in competitors}
     
     fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
     
-    for comp_label in df['competitor_label'].unique():
-        comp_df = df[df['competitor_label'] == comp_label].sort_values('i')
+    for comp_label in agg_df['competitor_label'].unique():
+        comp_df = agg_df[agg_df['competitor_label'] == comp_label].sort_values('i')
         ax.plot(
             comp_df['i'],
-            comp_df[y_col],
+            comp_df['mean_val'],
             label=comp_label,
             linewidth=2,
             color=color_palette.get(comp_label, 'black'),
@@ -1040,8 +1049,12 @@ def plot_competitors_with_bars(
     if not include_initialization:
         df = df[df['i'] != 0]
     
-    # Use first run only
-    df = df[df['run'] == 1]
+    # Average across runs per competitor per query
+    agg_df = (
+        df.groupby(['competitor_label', 'i'])
+        .agg(mean_val=(y_col, 'mean'))
+        .reset_index()
+    )
     
     # Build color palette
     color_palette = {COMPETITORS[c]['label']: COMPETITORS[c]['color'] for c in competitors}
@@ -1053,11 +1066,11 @@ def plot_competitors_with_bars(
     ax2 = fig.add_subplot(gs[1])
     
     # Line plot on left
-    for comp_label in df['competitor_label'].unique():
-        comp_df = df[df['competitor_label'] == comp_label].sort_values('i')
+    for comp_label in agg_df['competitor_label'].unique():
+        comp_df = agg_df[agg_df['competitor_label'] == comp_label].sort_values('i')
         ax1.plot(
             comp_df['i'],
-            comp_df[y_col],
+            comp_df['mean_val'],
             label=comp_label,
             linewidth=2,
             color=color_palette.get(comp_label, 'black'),
@@ -1068,8 +1081,8 @@ def plot_competitors_with_bars(
     if not include_initialization:
         ax1.set_xlim(left=1)
     
-    # Bar chart on right
-    totals = df.groupby('competitor_label')[y_col].sum().sort_values()
+    # Bar chart on right — compute per-run total, then average
+    totals = df.groupby(['competitor_label', 'run'])[y_col].sum().groupby('competitor_label').mean().sort_values()
     bars = ax2.bar(totals.index, totals.values, alpha=0.8)
     
     for bar, label in zip(bars, totals.index):
@@ -1130,16 +1143,13 @@ def plot_competitors_bars_only(
     if not include_initialization:
         df = df[df['i'] != 0]
     
-    # Use first run only
-    df = df[df['run'] == 1]
-    
     # Build color palette
     color_palette = {COMPETITORS[c]['label']: COMPETITORS[c]['color'] for c in competitors}
     
     fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
     
-    # Bar chart
-    totals = df.groupby('competitor_label')[y_col].sum().sort_values()
+    # Bar chart — compute per-run total, then average across runs
+    totals = df.groupby(['competitor_label', 'run'])[y_col].sum().groupby('competitor_label').mean().sort_values()
     bars = ax.bar(totals.index, totals.values, alpha=0.8)
     
     for bar, label in zip(bars, totals.index):

@@ -79,7 +79,7 @@ do
         subdir="valinor_s/"
     elif [[ "$approach" == "valinor_a" ]]; then
         extra_args=""
-        subdir=""
+        subdir="valinor_a/"
     else
         echo "Unknown approach: $approach (expected valinor_a or valinor_s)"
         continue

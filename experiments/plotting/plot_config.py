@@ -186,14 +186,14 @@ COMPETITORS = {
     'valinor': {
         'label': 'VALINOR-A',
         'color': '#2ca02c',  # Green
-        'subdir': None,  # Root directory (our method)
+        'subdir': 'valinor_a',
         'has_error_bound': True,
         'file_pattern': 'results_mcols{mcols}_error{error}_run*.csv',
     },
     'valinor_exact': {
         'label': 'VALINOR (Exact)',
         'color': '#d62728',  # Red
-        'subdir': None,
+        'subdir': 'valinor_a',
         'has_error_bound': True,
         'file_pattern': 'results_mcols{mcols}_error0_run*.csv',
     },
