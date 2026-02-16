@@ -37,6 +37,7 @@ public class TreeNode {
     }
 
     public void adjustStats(int measureIndex, int measureCount, double value) {
+        if (Double.isNaN(value)) return;
         if (statsArray == null) {
             statsArray = new StatsAccumulator[measureCount];
         }
