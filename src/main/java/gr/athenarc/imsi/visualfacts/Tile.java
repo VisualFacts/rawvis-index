@@ -182,16 +182,22 @@ public abstract class Tile {
             return;
         }
 
+        int[] processedCounts = root.getStatsPointCount();
         StatsAccumulator[] nodeStats = root.getStatsArray();
-        if (nodeStats == null || nodeStats.length == 0) return;
+        if (processedCounts == null || processedCounts.length == 0) return;
 
         int pointCount = root.getSize();
-        Stats[] candidate = new Stats[nodeStats.length];
-        for (int i = 0; i < nodeStats.length; i++) {
-            if (nodeStats[i] == null || nodeStats[i].count() != pointCount) {
-                return; // Not all measures complete — don't freeze
+        int measureCount = processedCounts.length;
+        Stats[] candidate = new Stats[measureCount];
+        for (int i = 0; i < measureCount; i++) {
+            if (processedCounts[i] != pointCount) {
+                return; // Not all points processed for this measure — don't freeze
             }
-            candidate[i] = nodeStats[i].snapshot();
+            // nodeStats[i] may be null if ALL points were NaN for this measure.
+            // That's still a valid frozen state (count=0).
+            candidate[i] = (nodeStats != null && i < nodeStats.length && nodeStats[i] != null)
+                    ? nodeStats[i].snapshot()
+                    : Stats.of(); // empty stats: count=0, sum=0
         }
         frozenStats = candidate;
         frozenPointCount = pointCount;

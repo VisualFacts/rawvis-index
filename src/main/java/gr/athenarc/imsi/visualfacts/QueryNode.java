@@ -50,8 +50,11 @@ public class QueryNode {
         if (node.getSampledTracker() != null && containmentExaminer == null) {
             // Add stats for each measure from the node's stats
             for (Integer measure : query.getMeasureCols()) {
-                StatsAccumulator accumulator = sampleStatsAccumulators.get(measure);
-                accumulator.addAll(node.getStats(schema.getMeasureIndex(measure)).snapshot());
+                StatsAccumulator nodeStats = node.getStats(schema.getMeasureIndex(measure));
+                if (nodeStats != null) {
+                    StatsAccumulator accumulator = sampleStatsAccumulators.get(measure);
+                    accumulator.addAll(nodeStats.snapshot());
+                }
             }
             this.sampledTracker = node.getSampledTracker();
         } else {

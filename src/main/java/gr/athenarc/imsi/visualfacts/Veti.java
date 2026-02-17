@@ -370,17 +370,18 @@ public class Veti implements AutoCloseable {
                     }
                 }
                 
+                // Progressive stats building for post-split child nodes.
+                // Safe because init-time nodes already have hasStats==true (via
+                // statsPointCount) and take the fast path above — they never reach here.
+                // Only post-split children (with no stats yet) need this.
                 if (queryNode.isFullyContained()) {
-                    // Skip categorical attribute expansion for now (floats-only mode)
                     if (queryNode.getUnknownCatAttrs() == null || queryNode.getUnknownCatAttrs().isEmpty()) {
-                        // Use schema measure column order (not HashMap iteration order)
-                        // to match the index ordering established during initialization
                         int idx = 0;
                         for (Integer measureCol : measureColsList) {
-                            Float value = measureValues.get(measureCol);
-                            if (value != null) {
-                                node.adjustStats(idx, schema.getMeasureCount(), value);
-                            }
+                            Integer extractedPos = measureColToExtractedPos.get(measureCol);
+                            float value = (extractedPos != null && extractedPos < extractedValues.length)
+                                    ? extractedValues[extractedPos] : Float.NaN;
+                            node.adjustStats(idx, schema.getMeasureCount(), value);
                             idx++;
                         }
                     }

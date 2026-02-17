@@ -370,6 +370,7 @@ public class ApproximateValinor implements AutoCloseable {
         Map<Integer, double[]> confidenceIntervals = new HashMap<>();
         Map<Integer, Double> errorBounds = new HashMap<>();
         int samplingRounds = 0;
+        int maxSamplingRounds = 50;
         do {
             samplingRounds++;
             // Create Sampling Iterators for all tiles needing sampling
@@ -397,6 +398,12 @@ public class ApproximateValinor implements AutoCloseable {
 
             // If error bound is still too high, increase sampling rate
             if (maxErrorBound > errorThreshold) {
+                if (samplingRounds >= maxSamplingRounds) {
+                    LOG.warn("Sampling did not converge after {} rounds (error={}, threshold={}). " +
+                        "Likely caused by NaN-heavy nodes. Returning best estimate.",
+                        samplingRounds, maxErrorBound, errorThreshold);
+                    break;
+                }
                 LOG.debug("Round {}: error={} > threshold={}, increasing rate from {} to {}", 
                     samplingRounds, maxErrorBound, errorThreshold, samplingRate.get(),
                     adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
@@ -664,31 +671,47 @@ public class ApproximateValinor implements AutoCloseable {
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();
             double N = qnode.getIntersectionCount();
+            int totalSampled = qnode.getSampledTracker().cardinality();
 
-            // SHORT-CIRCUIT if we sampled 100% of that node
-            if (n == N) {
-                // We have the entire sub-population in this node, so no sampling uncertainty.
-                // sampleStatsAcc.sum() == sum of all values in that node
+            // SHORT-CIRCUIT if we sampled 100% of that node's points (all read from disk)
+            if (totalSampled >= (int) N) {
+                // We have read every point in this node — n is the exact non-NaN count.
                 double nodeExactSum = qnode.getSampleStatsAcc(measureCol).sum();
                 exactSum += nodeExactSum; // Add to exact part,
                 // variance contribution is 0
                 continue;
             }
             if (n < 2) {
-                // fallback path: use minSum / maxSum or skip
-                // Or you can add a big variance chunk if you want to keep it approximate
-                LOG.error("Sampling Node with less than 2 samples");
+                // Too few non-NaN samples (common with NaN-heavy columns like Gaia's ~19% null rate).
+                // Use init-time stats if available, otherwise use the single sample or skip.
+                if (n == 1) {
+                    // Single valid sample — use it as the mean estimate with high uncertainty
+                    double singleValue = qnode.getSampleStatsAcc(measureCol).mean();
+                    int sampledCount = qnode.getSampledTracker().cardinality();
+                    // Effective non-NaN population: scale down N by observed non-NaN ratio
+                    double effectiveN = N * ((double) n / Math.max(sampledCount, 1));
+                    totalEstimate += effectiveN * singleValue;
+                    // No variance contribution (can't compute stdev from 1 sample)
+                    // This is conservative — the loop guard will prevent infinite retries
+                } 
+                // n == 0: all sampled points were NaN for this measure — node contributes nothing
+                LOG.trace("Node with {} valid samples out of {} sampled (intersectionCount={})",
+                    n, qnode.getSampledTracker().cardinality(), (int) N);
                 continue;
             }
 
             double mean = qnode.getSampleStatsAcc(measureCol).mean();
             double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
 
-            // // node-level estimate
-            double nodeEstimate = N * mean;
+            // Estimate effective non-NaN population from observed non-NaN ratio
+            double nonNaNRatio = (double) n / Math.max(totalSampled, 1);
+            double effectiveN = N * nonNaNRatio;
+
+            // node-level estimate (over estimated non-NaN population)
+            double nodeEstimate = effectiveN * mean;
             // node-level variance considering the finite population correction for without
             // replacement sampling
-            double nodeVariance = N * N * (stdev * stdev / n) * (1.0 - ((double) n / N));
+            double nodeVariance = effectiveN * effectiveN * (stdev * stdev / n) * (1.0 - ((double) n / effectiveN));
             ;
 
             totalEstimate += nodeEstimate;
@@ -762,14 +785,14 @@ public class ApproximateValinor implements AutoCloseable {
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    if (extractedPos != null && extractedPos < extractedValues.length) {
-                        float value = extractedValues[extractedPos];
-                        if (!Float.isNaN(value)) {
-                            queryNode.addSampleValue(measureCol, value);
-                            if (!samplingOnly && queryNode.isFullyContained()) {
-                                node.adjustStats(idx, schema.getMeasureCount(), value);
-                            }
-                        }
+                    float value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Float.NaN;
+                    if (!Float.isNaN(value)) {
+                        queryNode.addSampleValue(measureCol, value);
+                    }
+                    // Progressive stats building for post-split children (safe via statsPointCount).
+                    if (!samplingOnly && queryNode.isFullyContained()) {
+                        node.adjustStats(idx, schema.getMeasureCount(), value);
                     }
                     idx++;
                 }
@@ -797,16 +820,13 @@ public class ApproximateValinor implements AutoCloseable {
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
                 
-                // Process all measures in the schema
+                // Process all measures — progressive stats building for post-split children
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    if (extractedPos != null && extractedPos < extractedValues.length) {
-                        float value = extractedValues[extractedPos];
-                        if (!Float.isNaN(value)) {
-                            node.adjustStats(idx, schema.getMeasureCount(), value);
-                        }
-                    }
+                    float value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Float.NaN;
+                    node.adjustStats(idx, schema.getMeasureCount(), value);
                     idx++;
                 }
             } catch (Exception e) {

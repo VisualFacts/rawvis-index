@@ -25,6 +25,7 @@ public class TreeNode {
 
     private Short2ObjectMap<TreeNode> children;
     private StatsAccumulator[] statsArray;
+    private int[] statsPointCount; // per-measure count of processed points (incl. NaN)
     private BitSet sampledTracker;
     
     public TreeNode(short label) {
@@ -37,6 +38,13 @@ public class TreeNode {
     }
 
     public void adjustStats(int measureIndex, int measureCount, double value) {
+        // Always count this point as processed, even if NaN.
+        // This lets hasStats() distinguish "fully accumulated" from "only sampled."
+        if (statsPointCount == null) {
+            statsPointCount = new int[measureCount];
+        }
+        statsPointCount[measureIndex]++;
+
         if (Double.isNaN(value)) return;
         if (statsArray == null) {
             statsArray = new StatsAccumulator[measureCount];
@@ -57,14 +65,17 @@ public class TreeNode {
      *         to the number of points, otherwise {@code false}.
      */
     public boolean hasStats(int measureIndex) {
-        if (size == 0 || statsArray == null) {
+        if (size == 0 || statsPointCount == null) {
             return false;
         }
-        if (measureIndex < 0 || measureIndex >= statsArray.length) {
+        if (measureIndex < 0 || measureIndex >= statsPointCount.length) {
             return false;
         }
-        StatsAccumulator stats = statsArray[measureIndex];
-        return stats != null && stats.count() == size;
+        // Check that every point has been processed for this measure,
+        // not just the non-NaN ones. statsPointCount is incremented for
+        // every point (including NaN), while stats.count() only reflects
+        // non-NaN values.
+        return statsPointCount[measureIndex] == size;
     }
 
     // ---- Two-phase init support ----
@@ -167,10 +178,15 @@ public class TreeNode {
         offsets = null;
         size = 0;
         statsArray = null;
+        statsPointCount = null;
     }
 
     public StatsAccumulator[] getStatsArray() {
         return statsArray;
+    }
+
+    public int[] getStatsPointCount() {
+        return statsPointCount;
     }
 
     public BitSet getSampledTracker() {
