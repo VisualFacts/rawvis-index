@@ -110,8 +110,9 @@ public class DuckDBQueryExecutor {
         @Override
         public String toString() {
             return String.format(
-                    "StatsDuckDB{count=%d, min=%.4f, max=%.4f, sum=%.4f, mean=%.4f, sumOfSquares=%.4f}",
-                    count, min, max, sum, mean, sumOfSquares);
+                    "StatsDuckDB{count=%d, min=%s, max=%s, sum=%s, mean=%s, sumOfSquares=%s}",
+                    count, Double.toString(min), Double.toString(max),
+                    Double.toString(sum), Double.toString(mean), Double.toString(sumOfSquares));
         }
     }
 
