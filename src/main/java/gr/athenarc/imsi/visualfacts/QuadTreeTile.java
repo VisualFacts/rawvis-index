@@ -106,30 +106,39 @@ public class QuadTreeTile extends Tile {
             // Freeze exact stats before destroying the root node.
             this.freezeStats();
 
-            // Two-phase redistribute: count per quadrant, allocate exact, then insert.
+            // Sub-partition parent's slice into 4 quadrant sub-slices in-place.
             TreeNode src = this.root;
+            SharedPointStore store = src.getStore();
+            int parentStart = src.getStart();
             int n = src.getSize();
-            int[] counts = new int[4]; // 0=BL, 1=TL, 2=BR, 3=TR
 
+            // Count per quadrant and assign quadrant IDs
+            int[] counts = new int[4]; // 0=BL, 1=TL, 2=BR, 3=TR
+            int[] subIds = new int[n];
             for (int i = 0; i < n; i++) {
-                int q = (src.getX(i) <= xMiddle ? 0 : 2) | (src.getY(i) <= yMiddle ? 0 : 1);
+                int q = (store.getX(parentStart + i) <= xMiddle ? 0 : 2)
+                      | (store.getY(parentStart + i) <= yMiddle ? 0 : 1);
+                subIds[i] = q;
                 counts[q]++;
             }
 
-            QuadTreeTile[] quads = { this.bottomLeft, this.topLeft, this.bottomRight, this.topRight };
-            TreeNode[] roots = new TreeNode[4];
-            for (int q = 0; q < 4; q++) {
-                if (counts[q] > 0) {
-                    roots[q] = quads[q].getOrCreateRoot();
-                    roots[q].setPoints(new float[counts[q]], new float[counts[q]], new long[counts[q]], 0);
-                }
+            // Compute sub-starts (absolute positions within the shared store)
+            int[] subStarts = new int[4];
+            subStarts[0] = parentStart;
+            for (int q = 1; q < 4; q++) {
+                subStarts[q] = subStarts[q - 1] + counts[q - 1];
             }
 
-            for (int i = 0; i < n; i++) {
-                float x = src.getX(i);
-                float y = src.getY(i);
-                int q = (x <= xMiddle ? 0 : 2) | (y <= yMiddle ? 0 : 1);
-                roots[q].insertAtCursor(x, y, src.getOffset(i));
+            // In-place sub-partition
+            store.subPartition(parentStart, n, subIds, subStarts, 4);
+
+            // Wire children to sub-slices
+            QuadTreeTile[] quads = { this.bottomLeft, this.topLeft, this.bottomRight, this.topRight };
+            for (int q = 0; q < 4; q++) {
+                if (counts[q] > 0) {
+                    TreeNode childRoot = quads[q].getOrCreateRoot();
+                    childRoot.setSlice(store, subStarts[q], counts[q]);
+                }
             }
 
             this.root = null;

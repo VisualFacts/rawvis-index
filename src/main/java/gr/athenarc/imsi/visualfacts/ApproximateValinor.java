@@ -8,6 +8,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -44,6 +45,8 @@ public class ApproximateValinor implements AutoCloseable {
     private Grid grid;
 
     private Schema schema;
+
+    private SharedPointStore pointStore;
 
     private String sort = "asc";
 
@@ -159,11 +162,18 @@ public class ApproximateValinor implements AutoCloseable {
             rowReader.open(readerConfig);
             float[] row;
 
-            // --- Phase 1: CSV scan → global staging arrays + per-tile counts + stats ---
+            // Build tile index mapping for partition
+            List leafTileList = grid.getLeafTiles();
+            int numTiles = leafTileList.size();
+            IdentityHashMap<Tile, Integer> tileIndexMap = new IdentityHashMap<>(numTiles);
+            for (int t = 0; t < numTiles; t++) {
+                tileIndexMap.put((Tile) leafTileList.get(t), t);
+            }
+
+            // --- Phase 1: CSV scan → shared store + tileIds + per-tile counts + stats ---
             final int capacity = schema.getObjectCount();
-            float[] gXs = new float[capacity];
-            float[] gYs = new float[capacity];
-            long[] gOffsets = new long[capacity];
+            SharedPointStore store = new SharedPointStore(capacity);
+            int[] tileIds = new int[capacity];
             int validCount = 0;
 
             while ((row = rowReader.nextRow()) != null) {
@@ -185,14 +195,14 @@ public class ApproximateValinor implements AutoCloseable {
                 float x = row[xPos];
                 float y = row[yPos];
 
-                TreeNode node = this.grid.getOrCreateLeafRoot(x, y);
-                if (node == null) {
+                if (!grid.getBounds().contains(x, y)) {
                     continue;
                 }
+                Tile leafTile = (Tile) grid.getLeafTile(x, y);
+                TreeNode node = leafTile.getOrCreateRoot();
 
-                gXs[validCount] = x;
-                gYs[validCount] = y;
-                gOffsets[validCount] = rowOffset;
+                store.set(validCount, x, y, rowOffset);
+                tileIds[validCount] = tileIndexMap.get(leafTile);
                 validCount++;
 
                 node.incrementCount();
@@ -208,23 +218,37 @@ public class ApproximateValinor implements AutoCloseable {
 
             }
 
-            // --- Phase 2: allocate exact per-tile arrays, distribute from global ---
-            for (Object obj : grid.getLeafTiles()) {
-                Tile leafTile = (Tile) obj;
-                TreeNode root = leafTile.getRoot();
-                if (root != null && root.getSize() > 0) {
-                    root.allocateExact();
+            // --- Phase 1.5: compute prefix sums from per-tile counts ---
+            int[] counts = new int[numTiles];
+            int[] starts = new int[numTiles];
+            for (int t = 0; t < numTiles; t++) {
+                TreeNode root = ((Tile) leafTileList.get(t)).getRoot();
+                counts[t] = root != null ? root.getSize() : 0;
+            }
+            if (numTiles > 0) {
+                starts[0] = 0;
+                for (int t = 1; t < numTiles; t++) {
+                    starts[t] = starts[t - 1] + counts[t - 1];
                 }
             }
-            for (int i = 0; i < validCount; i++) {
-                TreeNode node = this.grid.getOrCreateLeafRoot(gXs[i], gYs[i]);
-                node.insertAtCursor(gXs[i], gYs[i], gOffsets[i]);
+
+            // --- Phase 2: in-place partition by tile (cycle chasing) ---
+            LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);
+            long partStart = System.nanoTime();
+            store.partition(tileIds, validCount, starts, numTiles);
+            LOG.info("Partition done in {:.3f} s".replace("{:.3f}", 
+                    String.format("%.3f", (System.nanoTime() - partStart) / 1e9)));
+            tileIds = null; // free
+
+            // --- Phase 3: wire tiles to shared store slices ---
+            for (int t = 0; t < numTiles; t++) {
+                TreeNode root = ((Tile) leafTileList.get(t)).getRoot();
+                if (root != null && counts[t] > 0) {
+                    root.setSlice(store, starts[t], counts[t]);
+                }
             }
 
-            // Free staging arrays
-            gXs = null;
-            gYs = null;
-            gOffsets = null;
+            this.pointStore = store;
 
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV", e);

@@ -15,12 +15,11 @@ public class TreeNode {
 
     private final short label;
 
-    // Flat parallel arrays for point storage — replaces List<Point>.
-    // During init: two-phase (incrementCount → allocateExact → insertAtCursor).
-    // During split: count per quadrant → setPoints with exact size → insertAtCursor.
-    private float[] xs;
-    private float[] ys;
-    private long[] offsets;
+    // Point data: references a slice [start, start+size) of a SharedPointStore.
+    // During Phase 1 (counting), store is null and only size is used (via incrementCount).
+    // After Phase 3 (wiring), store is set and getX/getY/getOffset delegate to it.
+    private SharedPointStore store;
+    private int start;
     private int size;
 
     private Short2ObjectMap<TreeNode> children;
@@ -78,7 +77,7 @@ public class TreeNode {
         return statsPointCount[measureIndex] == size;
     }
 
-    // ---- Two-phase init support ----
+    // ---- Phase 1: counting ----
 
     /**
      * Phase 1: just count, no array allocation.
@@ -87,49 +86,30 @@ public class TreeNode {
         size++;
     }
 
-    /**
-     * Between phases: allocate exact-sized arrays based on accumulated count,
-     * then reset size to 0 as a write cursor for phase 2.
-     */
-    public void allocateExact() {
-        xs = new float[size];
-        ys = new float[size];
-        offsets = new long[size];
-        size = 0;
-    }
+    // ---- Slice wiring (Phase 3) ----
 
     /**
-     * Phase 2: insert point at current cursor position. No bounds check.
-     * Arrays must have been allocated via {@link #allocateExact()}.
+     * Wires this node to a slice of the shared point store.
+     * Called after the global partition (or sub-partition during split)
+     * has placed this tile's points at contiguous positions [start, start+size).
      */
-    public void insertAtCursor(float x, float y, long offset) {
-        xs[size] = x;
-        ys[size] = y;
-        offsets[size] = offset;
-        size++;
-    }
-
-    /**
-     * Bulk-sets the point arrays with exact sizes. Used during split redistribute
-     * where counts are known. Takes ownership of the passed arrays.
-     * Set size=0 when using as a cursor target with insertAtCursor.
-     */
-    public void setPoints(float[] xs, float[] ys, long[] offsets, int size) {
-        this.xs = xs;
-        this.ys = ys;
-        this.offsets = offsets;
+    public void setSlice(SharedPointStore store, int start, int size) {
+        this.store = store;
+        this.start = start;
         this.size = size;
     }
 
     // ---- Indexed access ----
 
-    public float getX(int i) { return xs[i]; }
-    public float getY(int i) { return ys[i]; }
-    public long getOffset(int i) { return offsets[i]; }
+    public float getX(int i) { return store.getX(start + i); }
+    public float getY(int i) { return store.getY(start + i); }
+    public long getOffset(int i) { return store.getOffset(start + i); }
     public int getSize() { return size; }
+    public int getStart() { return start; }
+    public SharedPointStore getStore() { return store; }
 
-    /** Returns true if this node has point data. */
-    public boolean hasPoints() { return xs != null && size > 0; }
+    /** Returns true if this node has point data wired to a shared store. */
+    public boolean hasPoints() { return store != null && size > 0; }
 
     public StatsAccumulator getStats(int measureIndex) {
         if (statsArray == null || measureIndex < 0 || measureIndex >= statsArray.length) {
@@ -173,9 +153,8 @@ public class TreeNode {
     }
 
     public void convertToNonleaf() {
-        xs = null;
-        ys = null;
-        offsets = null;
+        store = null;
+        start = 0;
         size = 0;
         statsArray = null;
         statsPointCount = null;
