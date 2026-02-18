@@ -34,9 +34,18 @@ import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
-public class ApproximateValinor implements AutoCloseable {
+/**
+ * Unified Valinor index supporting both exact and approximate query modes.
+ * <p>
+ * When {@code errorThreshold <= 0}, runs in exact mode: reads all points from
+ * disk and returns precise aggregate statistics.
+ * <p>
+ * When {@code errorThreshold > 0}, runs in approximate mode with adaptive
+ * multi-round sampling, confidence intervals, and error bounds.
+ */
+public class Valinor implements AutoCloseable {
 
-    private static final Logger LOG = LogManager.getLogger(ApproximateValinor.class);
+    private static final Logger LOG = LogManager.getLogger(Valinor.class);
 
     private boolean isInitialized = false;
 
@@ -54,7 +63,7 @@ public class ApproximateValinor implements AutoCloseable {
 
     private int objectsIndexed = 0;
 
-    private double errorThreshold = 0.05;
+    private double errorThreshold = 0;
 
     /**
      * When true, disables all aggregate metadata reuse:
@@ -67,18 +76,37 @@ public class ApproximateValinor implements AutoCloseable {
      */
     private boolean samplingOnly = false;
 
-    // Global statistics per measure column, computed during initialization
+    // Global statistics per measure column, computed during initialization (approximate mode only)
     private StatsAccumulator[] globalMeasureStats;
 
-    public ApproximateValinor(Schema schema, Double errorThreshold) {
+    /**
+     * Creates a Valinor index in exact mode.
+     */
+    public Valinor(Schema schema) {
+        this.schema = schema;
+        this.errorThreshold = 0;
+    }
+
+    /**
+     * Creates a Valinor index. If errorThreshold &gt; 0, runs in approximate mode
+     * with adaptive sampling. If errorThreshold &lt;= 0, runs in exact mode.
+     */
+    public Valinor(Schema schema, double errorThreshold) {
         this.schema = schema;
         this.errorThreshold = errorThreshold;
     }
 
-    public ApproximateValinor(Schema schema, Double errorThreshold, boolean samplingOnly) {
+    /**
+     * Creates a Valinor index in approximate mode with optional sampling-only baseline.
+     */
+    public Valinor(Schema schema, double errorThreshold, boolean samplingOnly) {
         this.schema = schema;
         this.errorThreshold = errorThreshold;
         this.samplingOnly = samplingOnly;
+    }
+
+    public boolean isExactMode() {
+        return errorThreshold <= 0;
     }
 
     public void generateGrid(Query q0) {
@@ -98,7 +126,7 @@ public class ApproximateValinor implements AutoCloseable {
         }
     }
 
-    public ApproximateQueryResults initialize(Query q0) {
+    public QueryResults initialize(Query q0) {
         generateGrid(q0);
 
         List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
@@ -134,7 +162,7 @@ public class ApproximateValinor implements AutoCloseable {
         CsvFloatRowReader rowReader = new ZsvCsvFloatRowReader();
 
         objectsIndexed = 0;
-        int objectsSkipped = 0; // Counter for skipped rows
+        int objectsSkipped = 0;
 
         final int xPos = colIndexToRowPos.get(schema.getxColumn());
         final int yPos = colIndexToRowPos.get(schema.getyColumn());
@@ -262,22 +290,165 @@ public class ApproximateValinor implements AutoCloseable {
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         LOG.debug("Total Skipped Objects: " + objectsSkipped);
         
-        // Compute global stats by aggregating from all leaf tile nodes
-        computeGlobalMeasureStats();
+        if (!isExactMode()) {
+            // Compute global stats by aggregating from all leaf tile nodes (needed for initial sampling rate)
+            computeGlobalMeasureStats();
+        }
         
-        // todo evaluate q0
-        ApproximateQueryResults queryResults = new ApproximateQueryResults(q0);
-        return queryResults;
+        if (isExactMode()) {
+            return new QueryResults(q0);
+        } else {
+            return new ApproximateQueryResults(q0);
+        }
     }
 
     public int getObjectsIndexed() {
         return objectsIndexed;
     }
 
-    public synchronized ApproximateQueryResults executeQuery(Query query) throws IOException {
+    public synchronized QueryResults executeQuery(Query query) throws IOException {
         if (!isInitialized) {
             return initialize(query);
         }
+        if (isExactMode()) {
+            return executeExactQuery(query);
+        } else {
+            return executeApproximateQuery(query);
+        }
+    }
+
+    // ==================== Exact Mode ====================
+
+    private QueryResults executeExactQuery(Query query) throws IOException {
+        Rectangle rect = query.getRect();
+        QueryResults queryResults = new QueryResults(query);
+
+        if (mappedFileReader == null) {
+            mappedFileReader = MappedFileReader.open(new File(schema.getCsv()));
+        }
+
+        List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
+        int fullyContainedTilesCount = 0;
+
+        List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
+
+        for (Tile leafTile : leafTiles) {
+            // Short-circuited non-leaf tile with frozen exact stats
+            if (leafTile.hasFrozenStats()) {
+                fullyContainedTilesCount++;
+                query.getMeasureCols().forEach(measureCol -> {
+                    queryResults.adjustStats(null, measureCol,
+                            leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
+                });
+                continue;
+            }
+
+            ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
+            boolean isFullyContained = containmentExaminer == null;
+            if (isFullyContained) {
+                fullyContainedTilesCount++;
+            }
+
+            List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
+            int count = 0;
+            for (QueryNode queryNode : queryNodes) {
+                TreeNode node = queryNode.getNode();
+                if ((!isFullyContained
+                        || query.getMeasureCols().stream().anyMatch(mc -> !node.hasStats(schema.getMeasureIndex(mc))))
+                        && node.hasPoints()) {
+                    count += node.getSize();
+                }
+            }
+
+            if (count > THRESHOLD) {
+                leafTile.split();
+                queryNodes = leafTile.getOverlappedActualLeafTiles(query).stream()
+                        .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
+                        .collect(Collectors.toList());
+            }
+
+            for (QueryNode queryNode : queryNodes) {
+                TreeNode node = queryNode.getNode();
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
+                    query.getMeasureCols().forEach(measureCol -> {
+                        queryResults.adjustStats(null, measureCol,
+                                queryNode.getNode().getStats(schema.getMeasureIndex(measureCol)).snapshot());
+                    });
+                } else {
+                    rawIterators.add(new NodePointsIterator(queryNode));
+                }
+            }
+        }
+
+        KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
+        int ioCount = 0;
+        
+        // Prepare sorted measure column indices for fast extraction
+        List<Integer> measureColsList = schema.getMeasureCols();
+        int[] sortedMeasureCols = measureColsList.stream().mapToInt(Integer::intValue).sorted().toArray();
+        
+        // Build mapping from original column index to position in sorted array
+        Map<Integer, Integer> measureColToExtractedPos = new HashMap<>();
+        for (int i = 0; i < sortedMeasureCols.length; i++) {
+            measureColToExtractedPos.put(sortedMeasureCols[i], i);
+        }
+        
+        byte delimiterByte = (byte) schema.getDelimiter().charValue();
+        
+        while (pointIterator.hasNext()) {
+            ioCount++;
+            long fileOffset = pointIterator.nextOffset();
+            try {
+                mappedFileReader.seek(fileOffset);
+                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                
+                QueryNode queryNode = pointIterator.getCurrentQueryNode();
+                TreeNode node = queryNode.getNode();
+
+                int idx = 0;
+                for (Integer measureCol : measureColsList) {
+                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
+                    float value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Float.NaN;
+                    
+                    if (!Float.isNaN(value)) {
+                        queryResults.adjustStats(null, measureCol, value);
+                    }
+                    
+                    // Progressive stats building for post-split child nodes
+                    if (queryNode.isFullyContained()) {
+                        node.adjustStats(idx, schema.getMeasureCount(), value);
+                    }
+                    idx++;
+                }
+            } catch (Exception e) {
+                LOG.debug("An unexpected exception occurred: ", e);
+            }
+        }
+
+        queryResults.setTileCount(leafTiles.size());
+        queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
+        queryResults.setIoCount(ioCount);
+
+        // Compute rectStats by aggregating stats across all groups
+        Map<Integer, StatsAccumulator> rectStatsAccumulators = new HashMap<>();
+        queryResults.getStats().forEach((groupByValues, measureStats) -> {
+            measureStats.forEach((measureCol, stats) -> {
+                rectStatsAccumulators
+                        .computeIfAbsent(measureCol, m -> new StatsAccumulator())
+                        .addAll(stats);
+            });
+        });
+        Map<Integer, Stats> rectStats = rectStatsAccumulators.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().snapshot()));
+        queryResults.setRectStats(rectStats);
+
+        return queryResults;
+    }
+
+    // ==================== Approximate Mode ====================
+
+    private ApproximateQueryResults executeApproximateQuery(Query query) throws IOException {
         Rectangle rect = query.getRect();
 
         ApproximateQueryResults queryResults = new ApproximateQueryResults(query);
@@ -298,10 +469,7 @@ public class ApproximateValinor implements AutoCloseable {
         int frozenStatsTileCount = 0;
 
         for (Tile leafTile : leafTiles) {
-            // Short-circuited non-leaf tile with frozen exact stats.
-            // This tile was previously split but its pre-split stats were preserved.
-            // Since it's guaranteed fully contained (the only way it's returned from
-            // getOverlappedLeafTiles), use the frozen stats directly.
+            // Short-circuited non-leaf tile with frozen exact stats
             if (!samplingOnly && leafTile.hasFrozenStats()) {
                 frozenStatsTileCount++;
                 query.getMeasureCols().forEach(measureCol -> {
@@ -328,7 +496,6 @@ public class ApproximateValinor implements AutoCloseable {
                     leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
                             .forEach(qn -> {
-                                // Check for full containment on each returned subtile node
                                 if (qn.isFullyContained()) {
                                     fullyContainedNodesWithoutStats.add(qn);
                                 } else {
@@ -336,7 +503,6 @@ public class ApproximateValinor implements AutoCloseable {
                                 }
                             });
                 } else {
-                    // For nodes that do not require splitting, check full containment:
                     if (isFullyContained) {
                         fullyContainedNodesWithoutStats.add(queryNode);
                     } else {
@@ -366,25 +532,6 @@ public class ApproximateValinor implements AutoCloseable {
         byte delimiterByte = (byte) schema.getDelimiter().charValue();
 
         int ioCount = 0;
-
-        // ////////////
-        // /// baseline method that includes reading all points from fully contained
-        // tiles
-        // KWayMergePointIterator fullyContainedPointIterator = new
-        // KWayMergePointIterator(
-        // fullyContainedNodesWithoutStats.stream()
-        // .map(queryNode -> new NodePointsIterator(queryNode))
-        // .collect(Collectors.toList()));
-
-        // // Read all points from fully contained tiles and adjust their stats
-        // ioCount += readFullyContainedFromFile(query, queryResults, measureCol0,
-        // parser, fullyContainedPointIterator);
-
-        // for (QueryNode queryNode : fullyContainedNodesWithoutStats) {
-        // queryResults.adjustStats(null, queryNode.getNode().getStats().snapshot());
-        // }
-        // // end of baseline method
-        // ////////////
 
         List<QueryNode> samplingNodes = new ArrayList<>();
         samplingNodes.addAll(partialNodes);
@@ -439,9 +586,7 @@ public class ApproximateValinor implements AutoCloseable {
         LOG.debug("Sampling completed in {} round(s), final rate={}, I/Os={}", 
             samplingRounds, samplingRate.get(), ioCount);
 
-        // Iterate over fully contained query nodes without stats and set their
-        // TreeNode's sampled tracker for using in future queries. Their stats have been
-        // updated in the readFromFile method
+        // Persist sampledTracker for future queries
         if (!samplingOnly) {
             fullyContainedNodesWithoutStats.forEach(queryNode -> {
                 queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
@@ -462,69 +607,40 @@ public class ApproximateValinor implements AutoCloseable {
         return queryResults;
     }
 
+    // ==================== Sampling Helpers ====================
+
     /**
-     * Adjusts the sampling rate based on the current relative error and the target
-     * error threshold.
-     * 
-     * @param currentRate    the current sampling rate (e.g., 0.1 for 10% sampling)
-     * @param currentError   the current relative error from the sample estimates
-     * @param errorThreshold the desired error threshold
-     * @return the new sampling rate, capped at 1.0 (i.e., 100% sampling)
+     * Adjusts the sampling rate based on the current relative error and the target error threshold.
      */
     private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
-        // If the current error is already below or equal to the threshold, no
-        // adjustment is needed.
         if (currentError <= errorThreshold) {
             return currentRate;
         }
-
-        // Compute the multiplicative factor based on the error ratio squared.
-        // The intuition: variance (and thus error) decreases approximately as
-        // 1/sqrt(n),
-        // so to reduce error by a factor of (currentError/errorThreshold),
-        // you need roughly (currentError/errorThreshold)^2 times more samples.
         double factor = Math.pow(currentError / errorThreshold, 2);
-
-        // To avoid an overly large jump in sampling rate, cap the maximum increase.
-        // For example, limit the increase to a maximum factor of 2x.
         double maxFactor = 2.0;
         if (factor > maxFactor) {
             factor = maxFactor;
         }
-
-        // Calculate the new sampling rate.
         double newRate = currentRate * factor;
-
-        // Compute the delta increase
         double delta = newRate - currentRate;
-
-        // Set a minimum delta (for example, 0.01) to ensure noticeable progress
         double minDelta = 0.01;
         if (delta < minDelta) {
             newRate = currentRate + minDelta;
         }
-
-        // Ensure the new sampling rate does not exceed 100%.
         if (newRate > 1.0) {
             newRate = 1.0;
         }
-
         return newRate;
     }
 
     /**
-     * Computes the initial sampling rate for the given sampling nodes.
-     * CV-based estimation for more efficient sampling.
-     *
-     * @param samplingNodes the list of nodes that require sampling
-     * @return the initial sampling rate (between 0 and 1)
+     * Computes the initial sampling rate using CV-based estimation (Cochran's formula).
      */
     private double computeInitialSamplingRate(List<QueryNode> samplingNodes) {
         if (samplingNodes == null || samplingNodes.isEmpty()) {
             return 0.01d;
         }
         
-        // Get the maximum CV across all measure columns
         double maxCV = 0.0;
         for (int i = 0; i < schema.getMeasureCount(); i++) {
             double cv = getMeasureCV(i);
@@ -532,20 +648,16 @@ public class ApproximateValinor implements AutoCloseable {
                 maxCV = cv;
             }
         }
-        // If no valid CV found, fall back to conservative default
         if (maxCV <= 0) {
             maxCV = 1.0;
         }
         
-        // Cochran's formula: n = (z * CV / error)^2
         double z = 1.96;  // 95% confidence
         double requiredN = Math.pow(z * maxCV / errorThreshold, 2);
         
-        // Safety margin multiplier (1.0 = no margin, 1.5 = 50% extra samples)
         final double SAFETY_MARGIN = 1.0;
         requiredN *= SAFETY_MARGIN;
         
-        // Total population in sampling nodes
         long totalPopulation = samplingNodes.stream()
             .mapToLong(QueryNode::getIntersectionCount)
             .sum();
@@ -556,7 +668,6 @@ public class ApproximateValinor implements AutoCloseable {
         
         double rate = requiredN / totalPopulation;
         
-        // Ensure at least MIN_SAMPLES for CLT validity, then clamp to max 100%
         final int MIN_SAMPLES = 50;
         double minRateForCLT = (double) MIN_SAMPLES / totalPopulation;
         rate = Math.max(rate, minRateForCLT);
@@ -579,7 +690,6 @@ public class ApproximateValinor implements AutoCloseable {
             globalMeasureStats[i] = new StatsAccumulator();
         }
         
-        // Traverse all leaf tiles and aggregate their root node stats
         for (Object tileObj : grid.getLeafTiles()) {
             Tile tile = (Tile) tileObj;
             TreeNode root = tile.getRoot();
@@ -602,7 +712,6 @@ public class ApproximateValinor implements AutoCloseable {
      * Recursively aggregates stats from a TreeNode and all its children.
      */
     private void aggregateNodeStats(TreeNode node, int measureCount) {
-        // If this is a leaf node (has points), aggregate its stats
         if (node.hasPoints()) {
             for (int i = 0; i < measureCount; i++) {
                 StatsAccumulator nodeStats = node.getStats(i);
@@ -611,8 +720,6 @@ public class ApproximateValinor implements AutoCloseable {
                 }
             }
         }
-        
-        // Recurse into children if any
         if (node.getChildren() != null) {
             for (TreeNode child : node.getChildren()) {
                 aggregateNodeStats(child, measureCount);
@@ -622,22 +729,15 @@ public class ApproximateValinor implements AutoCloseable {
 
     /**
      * Maximum CV cap to prevent pathological cases from requiring 100% sampling.
-     * CV > 2.0 is statistically "very high variance"; beyond this, approximation
-     * quality degrades but capping ensures practical sample sizes.
      */
     private static final double MAX_CV_CAP = 2.0;
 
     /**
      * Returns the coefficient of variation (CV = std/mean) for a given measure column.
-     * CV is used to estimate the required sample size for a given error bound.
-     * The CV is capped at MAX_CV_CAP to ensure practical sample sizes for high-variance data.
-     *
-     * @param measureIndex the index of the measure (0-based index into measureCols)
-     * @return the coefficient of variation, capped at MAX_CV_CAP, or 1.0 if not available
      */
     public double getMeasureCV(int measureIndex) {
         if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
-            return 1.0;  // Conservative default
+            return 1.0;
         }
         StatsAccumulator stats = globalMeasureStats[measureIndex];
         if (stats == null || stats.count() < 2) {
@@ -653,9 +753,6 @@ public class ApproximateValinor implements AutoCloseable {
 
     /**
      * Returns the global statistics for a given measure column.
-     *
-     * @param measureIndex the index of the measure (0-based index into measureCols)
-     * @return the Stats snapshot, or null if not available
      */
     public Stats getGlobalMeasureStats(int measureIndex) {
         if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
@@ -665,30 +762,19 @@ public class ApproximateValinor implements AutoCloseable {
         return stats != null ? stats.snapshot() : null;
     }
 
-    // private double adjustSamplingRate(double currentRate, double currentError,
-    // double errorThreshold) {
-    // LOG.debug("Adjusting sampling rate: currentRate={}, currentError={},
-    // errorThreshold={}", currentRate,
-    // currentError, errorThreshold);
-    // double adjustmentFactor = (currentError - errorThreshold) / errorThreshold;
-    // // How far above the limit we are
-    // return Math.min(1.0, currentRate * (1.0 + adjustmentFactor)); // Increase
-    // sampling but cap at 100%
-    // }
+    // ==================== Confidence Interval Computation ====================
 
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
             double samplingRate, int measureCol) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(null)) {
             exactSum = queryResults.getStats().get(null).get(measureCol).sum();
-            // sum from "fully contained" nodes with known stats
         }
 
         if (samplingNodes == null || samplingNodes.isEmpty()) {
             return new double[] { exactSum, exactSum };
         }
 
-        // We'll accumulate total estimated sum & total variance from sampled nodes:
         double totalEstimate = 0.0;
         double totalVariance = 0.0;
 
@@ -697,28 +783,19 @@ public class ApproximateValinor implements AutoCloseable {
             double N = qnode.getIntersectionCount();
             int totalSampled = qnode.getSampledTracker().cardinality();
 
-            // SHORT-CIRCUIT if we sampled 100% of that node's points (all read from disk)
+            // SHORT-CIRCUIT if we sampled 100% of that node's points
             if (totalSampled >= (int) N) {
-                // We have read every point in this node — n is the exact non-NaN count.
                 double nodeExactSum = qnode.getSampleStatsAcc(measureCol).sum();
-                exactSum += nodeExactSum; // Add to exact part,
-                // variance contribution is 0
+                exactSum += nodeExactSum;
                 continue;
             }
             if (n < 2) {
-                // Too few non-NaN samples (common with NaN-heavy columns like Gaia's ~19% null rate).
-                // Use init-time stats if available, otherwise use the single sample or skip.
                 if (n == 1) {
-                    // Single valid sample — use it as the mean estimate with high uncertainty
                     double singleValue = qnode.getSampleStatsAcc(measureCol).mean();
                     int sampledCount = qnode.getSampledTracker().cardinality();
-                    // Effective non-NaN population: scale down N by observed non-NaN ratio
                     double effectiveN = N * ((double) n / Math.max(sampledCount, 1));
                     totalEstimate += effectiveN * singleValue;
-                    // No variance contribution (can't compute stdev from 1 sample)
-                    // This is conservative — the loop guard will prevent infinite retries
                 } 
-                // n == 0: all sampled points were NaN for this measure — node contributes nothing
                 LOG.trace("Node with {} valid samples out of {} sampled (intersectionCount={})",
                     n, qnode.getSampledTracker().cardinality(), (int) N);
                 continue;
@@ -727,24 +804,17 @@ public class ApproximateValinor implements AutoCloseable {
             double mean = qnode.getSampleStatsAcc(measureCol).mean();
             double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
 
-            // Estimate effective non-NaN population from observed non-NaN ratio
             double nonNaNRatio = (double) n / Math.max(totalSampled, 1);
             double effectiveN = N * nonNaNRatio;
 
-            // node-level estimate (over estimated non-NaN population)
             double nodeEstimate = effectiveN * mean;
-            // node-level variance considering the finite population correction for without
-            // replacement sampling
             double nodeVariance = effectiveN * effectiveN * (stdev * stdev / n) * (1.0 - ((double) n / effectiveN));
-            ;
 
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
         }
 
         double finalEstimate = exactSum + totalEstimate;
-
-        // standard error from partial region
         double stdError = Math.sqrt(totalVariance);
         double z = getZScoreForConfidence(0.95);
         double margin = z * stdError;
@@ -752,34 +822,18 @@ public class ApproximateValinor implements AutoCloseable {
         double lower = finalEstimate - margin;
         double upper = finalEstimate + margin;
 
-        /*
-         * LOG.
-         * debug("samplingRate={}, exactSum={}, totalEstimate={}, totalVariance={}, lb={}, up={}"
-         * , samplingRate,
-         * exactSum, totalEstimate, totalVariance, lower, upper);
-         */
-
         return new double[] { lower, upper };
     }
 
-    // Helper to retrieve z-score for a confidence level
     private double getZScoreForConfidence(double confidenceLevel) {
-        // For a two-tailed confidence interval, the "confidenceLevel"
-        // is usually something like 0.90, 0.95, or 0.99.
-        // We map these to z-scores from the standard Normal distribution.
-
         if (confidenceLevel == 0.90) {
-            return 1.645; // ~90% CI
+            return 1.645;
         } else if (confidenceLevel == 0.95) {
-            return 1.96; // ~95% CI
+            return 1.96;
         } else if (confidenceLevel == 0.99) {
-            return 2.575; // ~99% CI
+            return 2.575;
         }
-
-        // Fallback: either throw or pick a default
-        throw new IllegalArgumentException(
-                "Unsupported confidence level: " + confidenceLevel);
-
+        throw new IllegalArgumentException("Unsupported confidence level: " + confidenceLevel);
     }
 
     private double calculateMaxErrorBound(double[] confidenceInterval) {
@@ -787,6 +841,8 @@ public class ApproximateValinor implements AutoCloseable {
         double maxSum = confidenceInterval[1];
         return (maxSum - minSum) / (maxSum + minSum);
     }
+
+    // ==================== File I/O ====================
 
     private int readFromFile(Query query, QueryResults queryResults, int[] sortedMeasureCols,
             Map<Integer, Integer> measureColToExtractedPos, byte delimiterByte,
@@ -799,13 +855,11 @@ public class ApproximateValinor implements AutoCloseable {
             try {
                 mappedFileReader.seek(fileOffset);
                 
-                // Fast path: extract only measure columns as floats directly from mmap
                 float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
                 
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
                 
-                // Process all measures in the schema
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
@@ -814,7 +868,7 @@ public class ApproximateValinor implements AutoCloseable {
                     if (!Float.isNaN(value)) {
                         queryNode.addSampleValue(measureCol, value);
                     }
-                    // Progressive stats building for post-split children (safe via statsPointCount).
+                    // Progressive stats building for post-split children
                     if (!samplingOnly && queryNode.isFullyContained()) {
                         node.adjustStats(idx, schema.getMeasureCount(), value);
                     }
@@ -838,13 +892,11 @@ public class ApproximateValinor implements AutoCloseable {
             try {
                 mappedFileReader.seek(fileOffset);
                 
-                // Fast path: extract only measure columns as floats directly from mmap
                 float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
                 
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
                 
-                // Process all measures — progressive stats building for post-split children
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
@@ -860,8 +912,9 @@ public class ApproximateValinor implements AutoCloseable {
         return ioCount;
     }
 
-    private ContainmentExaminer getContainmentExaminer(Tile tile, Rectangle query) {
+    // ==================== Shared Utilities ====================
 
+    private ContainmentExaminer getContainmentExaminer(Tile tile, Rectangle query) {
         Range<Float> queryXRange = query.getXRange();
         Range<Float> queryYRange = query.getYRange();
         boolean checkX = !queryXRange.encloses(tile.getBounds().getXRange());

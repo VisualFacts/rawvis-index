@@ -100,12 +100,12 @@ public class SQLQueryGenerator {
 
     /**
      * Appends aggregate functions for a column based on the specified aggregate types.
-     * Casts columns to FLOAT to match Veti's float precision.
+     * Casts columns to FLOAT to match Valinor's float precision.
      * @return the separator to use for the next column (", " if any aggregates were added)
      */
     private static String appendAggregates(StringBuilder sb, String aggCol, String aliasBase, 
                                             EnumSet<AggregateType> aggregates) {
-        // Cast to FLOAT to match Veti's float precision
+        // Cast to FLOAT to match Valinor's float precision
         String castCol = "CAST(" + aggCol + " AS FLOAT)";
         String innerSep = "";
         if (aggregates.contains(AggregateType.COUNT)) {
@@ -213,7 +213,7 @@ public class SQLQueryGenerator {
         int i = 0;
         for (Range<Float> range : ranges) {
             String col = cols[i];
-            // Cast to FLOAT to match Veti's float precision (avoids float vs double discrepancies)
+            // Cast to FLOAT to match Valinor's float precision (avoids float vs double discrepancies)
             whereClause += "CAST(" + col + " AS FLOAT) > CAST(" + range.lowerEndpoint() + " AS FLOAT) AND " +
                            "CAST(" + col + " AS FLOAT) < CAST(" + range.upperEndpoint() + " AS FLOAT)";
             if (i < ranges.size() - 1) {

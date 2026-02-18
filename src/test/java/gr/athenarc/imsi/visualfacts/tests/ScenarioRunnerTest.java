@@ -17,10 +17,9 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.math.Stats;
 
-import gr.athenarc.imsi.visualfacts.ApproximateValinor;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
-import gr.athenarc.imsi.visualfacts.Veti;
+import gr.athenarc.imsi.visualfacts.Valinor;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
@@ -101,7 +100,7 @@ public class ScenarioRunnerTest {
     @Test
     void exactScenarioMatchesGroundTruth() throws Exception {
         LOG.info("Running exact scenario test with {} queries", queries.size());
-        Veti index = new Veti(schema, null, "valinor", null);
+        Valinor index = new Valinor(schema);
         
         for (int i = 0; i < queries.size(); i++) {
             Query query = queries.get(i);
@@ -150,7 +149,7 @@ public class ScenarioRunnerTest {
         if (schema.getObjectCount() < minRows) {
             assumeTrue(false, "Skipping approximate scenario test: dataset too small (rows: " + schema.getObjectCount() + ")");
         }
-        ApproximateValinor index = new ApproximateValinor(schema, 0.05);
+        Valinor index = new Valinor(schema, 0.05);
         int total = 0;
         int inside = 0;
         double requiredCoverage = Double.parseDouble(System.getProperty("ci.coverage", "0.90"));

@@ -22,11 +22,10 @@ import com.google.common.base.Stopwatch;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
 
-import gr.athenarc.imsi.visualfacts.ApproximateValinor;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.TreeNode;
-import gr.athenarc.imsi.visualfacts.Veti;
+import gr.athenarc.imsi.visualfacts.Valinor;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
@@ -215,7 +214,7 @@ public class Experiments {
         boolean addHeader = new File(outFile).length() == 0;
 
         CsvWriter csvWriter = null;
-        Veti veti = null;
+        Valinor valinor = null;
 
         try {
 
@@ -230,7 +229,7 @@ public class Experiments {
 
             Stopwatch stopwatch;
 
-            veti = new Veti(schema, 0, initMode, 0);
+            valinor = new Valinor(schema);
 
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();
@@ -244,7 +243,7 @@ public class Experiments {
                 LOG.debug("Executing query {}: {}", i, query);
 
                 stopwatch = Stopwatch.createStarted();
-                QueryResults queryResults = veti.executeQuery(query);
+                QueryResults queryResults = valinor.executeQuery(query);
                 stopwatch.stop();
 
                 csvWriter.addValue(schema.getCsv());
@@ -252,9 +251,9 @@ public class Experiments {
                 csvWriter.addValue(initMode);
                 csvWriter.addValue(i);
                 csvWriter.addValue(queryResults.getQuery());
-                csvWriter.addValue(veti.getTotalUtil());
+                csvWriter.addValue(valinor.getTotalUtil());
                 csvWriter.addValue(TreeNode.getInstanceCount());
-                csvWriter.addValue(veti.getLeafTileCount());
+                csvWriter.addValue(valinor.getLeafTileCount());
                 csvWriter.addValue(queryResults.getTileCount());
                 csvWriter.addValue(queryResults.getFullyContainedTileCount());
                 csvWriter.addValue(queryResults.getExpandedNodeCount());
@@ -269,12 +268,11 @@ public class Experiments {
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
             }
         } finally {
-            // Close Veti (if you added a close() method)
-            if (veti != null) {
+            if (valinor != null) {
                 try {
-                    veti.close();
+                    valinor.close();
                 } catch (Exception e) {
-                    LOG.warn("Failed to close Veti", e);
+                    LOG.warn("Failed to close Valinor", e);
                 }
             }
 
@@ -300,7 +298,7 @@ public class Experiments {
         }
 
         CsvWriter csvWriter = null;
-        ApproximateValinor index = null;
+        Valinor index = null;
         try {
             CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
             csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
@@ -312,7 +310,7 @@ public class Experiments {
 
             Stopwatch stopwatch;
 
-            index = new ApproximateValinor(schema, errorBound, samplingOnly);
+            index = new Valinor(schema, errorBound, samplingOnly);
 
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();
@@ -326,7 +324,7 @@ public class Experiments {
                 LOG.debug("Executing query {}: {}", i, query);
 
                 stopwatch = Stopwatch.createStarted();
-                ApproximateQueryResults queryResults = index.executeQuery(query);
+                ApproximateQueryResults queryResults = (ApproximateQueryResults) index.executeQuery(query);
                 stopwatch.stop();
 
                 csvWriter.addValue(schema.getCsv());
@@ -360,12 +358,11 @@ public class Experiments {
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
             }
         } finally {
-            // Close Veti (if you added a close() method)
             if (index != null) {
                 try {
                     index.close();
                 } catch (Exception e) {
-                    LOG.warn("Failed to close ApproximateValinor", e);
+                    LOG.warn("Failed to close Valinor", e);
                 }
             }
 
