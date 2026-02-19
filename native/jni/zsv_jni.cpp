@@ -60,13 +60,13 @@ static void free_reader(reader_t *r)
     free(r);
 }
 
-static inline int parse_float(const unsigned char *s, size_t len, float *out)
+static inline int parse_double(const unsigned char *s, size_t len, double *out)
 {
     // fast_float expects [begin, end)
     const char *begin = reinterpret_cast<const char *>(s);
     const char *end = begin + len;
 
-    // Parse float, require full consumption (like your current strict parser)
+    // Parse double, require full consumption (like your current strict parser)
     auto r = fast_float::from_chars(begin, end, *out);
     return (r.ec == std::errc() && r.ptr == end) ? 1 : 0;
 }
@@ -187,64 +187,64 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_close(
 
 
 JNIEXPORT jint JNICALL
-Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchFloats(
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
     JNIEnv *env, jclass cls, jlong handle, jint maxRows,
-    jobject jOffsets8, jobject jValuesF4, jobject jPresentB1)
+    jobject jOffsets8, jobject jValuesF8, jobject jPresentB1)
 {
     (void)cls;
 
     reader_t *r = handle_to_reader(handle);
     if (!r)
     {
-        throw_ioe(env, "nextBatchFloats(): invalid handle");
+        throw_ioe(env, "nextBatchDoubles(): invalid handle");
         return 0;
     }
     if (r->eof)
         return 0;
     if (maxRows <= 0)
     {
-        throw_ioe(env, "nextBatchFloats(): maxRows must be > 0");
+        throw_ioe(env, "nextBatchDoubles(): maxRows must be > 0");
         return 0;
     }
-    if (!jOffsets8 || !jValuesF4 || !jPresentB1)
+    if (!jOffsets8 || !jValuesF8 || !jPresentB1)
     {
-        throw_ioe(env, "nextBatchFloats(): buffers must not be null");
+        throw_ioe(env, "nextBatchDoubles(): buffers must not be null");
         return 0;
     }
 
     int64_t *offsets = (int64_t *)env->GetDirectBufferAddress(jOffsets8);
-    float *values = (float *)env->GetDirectBufferAddress(jValuesF4);
+    double *values = (double *)env->GetDirectBufferAddress(jValuesF8);
     uint8_t *present = (uint8_t *)env->GetDirectBufferAddress(jPresentB1);
 
     if (!offsets || !values || !present)
     {
-        throw_ioe(env, "nextBatchFloats(): buffers must be direct ByteBuffers");
+        throw_ioe(env, "nextBatchDoubles(): buffers must be direct ByteBuffers");
         return 0;
     }
 
     jlong capOffsets = env->GetDirectBufferCapacity(jOffsets8);
-    jlong capValues = env->GetDirectBufferCapacity(jValuesF4);
+    jlong capValues = env->GetDirectBufferCapacity(jValuesF8);
     jlong capPresent = env->GetDirectBufferCapacity(jPresentB1);
 
     const int k = r->sel_count;
 
     const int64_t needOffsets = 8LL * (int64_t)maxRows;
-    const int64_t needValues = 4LL * (int64_t)maxRows * (int64_t)k;
+    const int64_t needValues = 8LL * (int64_t)maxRows * (int64_t)k;
     const int64_t needPresent = 1LL * (int64_t)maxRows * (int64_t)k;
 
     if (capOffsets < needOffsets)
     {
-        throw_ioe(env, "nextBatchFloats(): offsets8 capacity too small");
+        throw_ioe(env, "nextBatchDoubles(): offsets8 capacity too small");
         return 0;
     }
     if (capValues < needValues)
     {
-        throw_ioe(env, "nextBatchFloats(): valuesF4 capacity too small");
+        throw_ioe(env, "nextBatchDoubles(): valuesF8 capacity too small");
         return 0;
     }
     if (capPresent < needPresent)
     {
-        throw_ioe(env, "nextBatchFloats(): presentB1 capacity too small");
+        throw_ioe(env, "nextBatchDoubles(): presentB1 capacity too small");
         return 0;
     }
 
@@ -283,10 +283,10 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchFloats(
                 if (!cell.str || cell.len == 0)
                     continue;
 
-                float f;
-                if (parse_float((const unsigned char *)cell.str, cell.len, &f))
+                double d;
+                if (parse_double((const unsigned char *)cell.str, cell.len, &d))
                 {
-                    values[base + c] = f;
+                    values[base + c] = d;
                     present[base + c] = 1;
                 }
             }

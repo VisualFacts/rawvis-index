@@ -8,7 +8,7 @@ import java.util.Arrays;
  * <p>
  * Lifecycle:
  * <ol>
- *   <li>Phase 1 (CSV scan): points written sequentially via {@link #set(int, float, float, long)}</li>
+ *   <li>Phase 1 (CSV scan): points written sequentially via {@link #set(int, double, double, long)}</li>
  *   <li>Phase 1.5: prefix-sums computed from per-tile counts</li>
  *   <li>Phase 2 ({@link #partition}): per-array sequential scatter (stable, cache-friendly)</li>
  *   <li>Phase 3: each tile wired to its slice via {@link TreeNode#setSlice}</li>
@@ -16,26 +16,26 @@ import java.util.Arrays;
  */
 public class SharedPointStore {
 
-    private float[] xs;
-    private float[] ys;
+    private double[] xs;
+    private double[] ys;
     private long[] offsets;
     private int capacity;
 
     public SharedPointStore(int capacity) {
         this.capacity = capacity;
-        this.xs = new float[capacity];
-        this.ys = new float[capacity];
+        this.xs = new double[capacity];
+        this.ys = new double[capacity];
         this.offsets = new long[capacity];
     }
 
     public int getCapacity() { return capacity; }
 
-    public float getX(int i) { return xs[i]; }
-    public float getY(int i) { return ys[i]; }
+    public double getX(int i) { return xs[i]; }
+    public double getY(int i) { return ys[i]; }
     public long getOffset(int i) { return offsets[i]; }
 
     /** Writes a point at position {@code i} (used during Phase 1 sequential scan). */
-    public void set(int i, float x, float y, long offset) {
+    public void set(int i, double x, double y, long offset) {
         xs[i] = x;
         ys[i] = y;
         offsets[i] = offset;
@@ -64,7 +64,7 @@ public class SharedPointStore {
 
         // Pass 1: scatter xs
         cursors = Arrays.copyOf(starts, numTiles);
-        float[] newXs = new float[n];
+        double[] newXs = new double[n];
         for (int i = 0; i < n; i++) {
             newXs[cursors[tileIds[i]]++] = xs[i];
         }
@@ -72,7 +72,7 @@ public class SharedPointStore {
 
         // Pass 2: scatter ys
         cursors = Arrays.copyOf(starts, numTiles);
-        float[] newYs = new float[n];
+        double[] newYs = new double[n];
         for (int i = 0; i < n; i++) {
             newYs[cursors[tileIds[i]]++] = ys[i];
         }
@@ -123,8 +123,8 @@ public class SharedPointStore {
 
     /** Swaps elements at absolute positions a and b across all three arrays. */
     private void swap(int a, int b) {
-        float tx = xs[a]; xs[a] = xs[b]; xs[b] = tx;
-        float ty = ys[a]; ys[a] = ys[b]; ys[b] = ty;
+        double tx = xs[a]; xs[a] = xs[b]; xs[b] = tx;
+        double ty = ys[a]; ys[a] = ys[b]; ys[b] = ty;
         long to = offsets[a]; offsets[a] = offsets[b]; offsets[b] = to;
     }
 }

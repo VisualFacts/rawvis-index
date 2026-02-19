@@ -4,14 +4,14 @@ import com.google.common.collect.Range;
 
 public class XContainmentExaminer implements ContainmentExaminer {
 
-    private Range<Float> xRange;
+    private Range<Double> xRange;
 
-    public XContainmentExaminer(Range<Float> xRange) {
+    public XContainmentExaminer(Range<Double> xRange) {
         this.xRange = xRange;
     }
 
     @Override
-    public boolean contains(float x, float y) {
+    public boolean contains(double x, double y) {
         return xRange.contains(x);
     }
 }

@@ -44,7 +44,7 @@ public class PhaseConfig {
 
     /** Zoom factor per step. For zoom_to_point: 0.5 = 2x zoom-in. For zoom_out: 2.0 = 2x zoom-out. */
     @JsonProperty("zoomFactor")
-    private float zoomFactor = 0.5f;
+    private double zoomFactor = 0.5;
 
     public PhaseConfig() {
     }
@@ -115,23 +115,23 @@ public class PhaseConfig {
         this.target = target;
     }
 
-    public float getZoomFactor() {
+    public double getZoomFactor() {
         return zoomFactor;
     }
 
-    public void setZoomFactor(float zoomFactor) {
+    public void setZoomFactor(double zoomFactor) {
         this.zoomFactor = zoomFactor;
     }
 
     /**
-     * Parses the target string "x,y" into a float array [x, y].
+     * Parses the target string "x,y" into a double array [x, y].
      */
-    public float[] getTargetPoint() {
+    public double[] getTargetPoint() {
         if (target == null || target.isEmpty()) {
             return null;
         }
         String[] parts = target.split(",");
-        return new float[] { Float.parseFloat(parts[0].trim()), Float.parseFloat(parts[1].trim()) };
+        return new double[] { Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()) };
     }
 
     @Override

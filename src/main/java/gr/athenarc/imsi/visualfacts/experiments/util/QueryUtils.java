@@ -2,17 +2,18 @@ package gr.athenarc.imsi.visualfacts.experiments.util;
 
 
 import com.google.common.collect.Range;
+
 import gr.athenarc.imsi.visualfacts.Rectangle;
 
 
 public class QueryUtils {
 
 
-    private static Rectangle moveQuery(Rectangle query, float overlap, Direction direction) {
+    private static Rectangle moveQuery(Rectangle query, double overlap, Direction direction) {
 
-        Range<Float> xRange = query.getXRange();
-        Range<Float> yRange = query.getYRange();
-        float interval;
+        Range<Double> xRange = query.getXRange();
+        Range<Double> yRange = query.getYRange();
+        double interval;
         switch (direction) {
             case N:
                 interval = (yRange.upperEndpoint() - yRange.lowerEndpoint()) * (1 - overlap);
@@ -34,15 +35,15 @@ public class QueryUtils {
         return new Rectangle(xRange, yRange);
     }
 
-    public static Range<Float> convertToRange(String s) {
+    public static Range<Double> convertToRange(String s) {
         String[] values = s.split(":");
-        return Range.open(Float.parseFloat(values[0]), Float.parseFloat(values[1]));
+        return Range.open(Double.parseDouble(values[0]), Double.parseDouble(values[1]));
     }
 
     public static Rectangle convertToRectangle(String s) {
         String[] ranges = s.split(",");
         String[] xValues = ranges[0].split(":");
         String[] yValues = ranges[1].split(":");
-        return new Rectangle(Range.open(Float.parseFloat(xValues[0]), Float.parseFloat(xValues[1])), Range.open(Float.parseFloat(yValues[0]), Float.parseFloat(yValues[1])));
+        return new Rectangle(Range.open(Double.parseDouble(xValues[0]), Double.parseDouble(xValues[1])), Range.open(Double.parseDouble(yValues[0]), Double.parseDouble(yValues[1])));
     }
 }

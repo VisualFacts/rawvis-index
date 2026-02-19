@@ -394,7 +394,7 @@ public class Experiments {
         int seqCount = scenarioConfig.getSeqCount();
         int minShift = scenarioConfig.getMinShift();
         int maxShift = scenarioConfig.getMaxShift();
-        float zoomFactor = scenarioConfig.getZoomFactor();
+        double zoomFactor = scenarioConfig.getZoomFactor();
 
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
                 maxFilters, zoomFactor, scenarioConfig.getDirectionWeights());

@@ -1,13 +1,13 @@
 package gr.athenarc.imsi.visualfacts.query;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.math.Stats;
-import com.google.common.math.StatsAccumulator;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.math.Stats;
+import com.google.common.math.StatsAccumulator;
 
 public class QueryResults {
 
@@ -17,7 +17,7 @@ public class QueryResults {
 
     private Map<Integer, Stats> rectStats; // Univariate stats for each query measure
 
-    private List<float[]> points;
+    private List<double[]> points;
 
     private int fullyContainedTileCount;
 
@@ -54,7 +54,7 @@ public class QueryResults {
                         entry -> entry.getValue().snapshot()))));
     }
 
-    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, float measureValue) {
+    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, double measureValue) {
         stats.computeIfAbsent(groupByValues, v -> new HashMap<>())
                 .computeIfAbsent(measure, m -> new StatsAccumulator())
                 .add(measureValue);
@@ -128,11 +128,11 @@ public class QueryResults {
         this.expandedNodeCount = expandedNodeCount;
     }
 
-    public List<float[]> getPoints() {
+    public List<double[]> getPoints() {
         return points;
     }
 
-    public void setPoints(List<float[]> points) {
+    public void setPoints(List<double[]> points) {
         this.points = points;
     }
 

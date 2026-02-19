@@ -30,7 +30,7 @@ public class ExplorationScenarioConfig {
     private int maxShift;
 
     @JsonProperty("zoomFactor")
-    private float zoomFactor = 1.0f;
+    private double zoomFactor = 1.0;
 
     @JsonProperty("seqCount")
     private int seqCount;
@@ -79,11 +79,11 @@ public class ExplorationScenarioConfig {
         this.maxShift = maxShift;
     }
 
-    public float getZoomFactor() {
+    public double getZoomFactor() {
         return zoomFactor;
     }
 
-    public void setZoomFactor(float zoomFactor) {
+    public void setZoomFactor(double zoomFactor) {
         this.zoomFactor = zoomFactor;
     }
 

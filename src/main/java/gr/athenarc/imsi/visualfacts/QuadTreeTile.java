@@ -84,10 +84,10 @@ public class QuadTreeTile extends Tile {
     @Override
     public void split() {
         try {
-            Range<Float> xRange = this.bounds.getXRange();
-            float xMiddle = (xRange.upperEndpoint() + xRange.lowerEndpoint()) / 2f;
-            Range<Float> yRange = this.bounds.getYRange();
-            float yMiddle = (yRange.upperEndpoint() + yRange.lowerEndpoint()) / 2f;
+            Range<Double> xRange = this.bounds.getXRange();
+            double xMiddle = (xRange.upperEndpoint() + xRange.lowerEndpoint()) / 2.0;
+            Range<Double> yRange = this.bounds.getYRange();
+            double yMiddle = (yRange.upperEndpoint() + yRange.lowerEndpoint()) / 2.0;
             Range rangeLeft = Range.range(xRange.lowerEndpoint(), xRange.lowerBoundType(),
                     xMiddle, BoundType.CLOSED);
             Range rangeRight = Range.range(xMiddle, BoundType.OPEN, xRange.upperEndpoint(), xRange.upperBoundType());
@@ -149,7 +149,7 @@ public class QuadTreeTile extends Tile {
     }
 
     @Override
-    public Tile getLeafTile(float x, float y) {
+    public Tile getLeafTile(double x, double y) {
         if (this.topLeft == null) {
             return this;
         } else {

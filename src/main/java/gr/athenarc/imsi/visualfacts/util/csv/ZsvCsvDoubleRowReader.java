@@ -5,19 +5,19 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * Row-by-row CSV reader that returns floats (assumes all selected columns are
+ * Row-by-row CSV reader that returns doubles (assumes all selected columns are
  * numeric).
  *
  * Backed by zsv via JNI:
- * - Uses nextBatchFloats() to parse rows in native code in batches.
- * - Exposes a row-by-row API: nextRow() returns a reused float[].
+ * - Uses nextBatchDoubles() to parse rows in native code in batches.
+ * - Exposes a row-by-row API: nextRow() returns a reused double[].
  * - Exposes current row byte offset via currentOffset().
  *
- * Missing/invalid cells are returned as Float.NaN using a native-produced
+ * Missing/invalid cells are returned as Double.NaN using a native-produced
  * presence buffer
  * (presentB1), without paying a full-batch NaN initialization cost.
  */
-public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
+public final class ZsvCsvDoubleRowReader implements CsvDoubleRowReader {
 
     private static final int DEFAULT_MAX_ROWS_PER_BATCH = 131072;  // 128K rows per JNI call
 
@@ -26,7 +26,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
     private long handle;
 
     private int selCount;
-    private float[] rowBuffer;
+    private double[] rowBuffer;
     private long currentOffset = -1;
 
     // Batch sizing
@@ -34,17 +34,17 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
 
     // Batch buffers (direct, reused)
     private ByteBuffer offsets8; // long[maxRows]
-    private ByteBuffer valuesF4; // float[maxRows * k]
+    private ByteBuffer valuesF8; // double[maxRows * k]
     private ByteBuffer presentB1; // byte[maxRows * k] (0=missing/invalid, 1=present)
 
     // Current batch state
     private int rowsInBatch = 0;
     private int batchRowIndex = 0;
 
-    public ZsvCsvFloatRowReader() {
+    public ZsvCsvDoubleRowReader() {
     }
 
-    public ZsvCsvFloatRowReader withMaxRowsPerBatch(int maxRowsPerBatch) {
+    public ZsvCsvDoubleRowReader withMaxRowsPerBatch(int maxRowsPerBatch) {
         if (maxRowsPerBatch <= 0) {
             throw new IllegalArgumentException("maxRowsPerBatch must be > 0");
         }
@@ -70,7 +70,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
 
         this.config = config;
         this.selCount = selectedCols.length;
-        this.rowBuffer = new float[selCount];
+        this.rowBuffer = new double[selCount];
 
         allocateBatchBuffers();
 
@@ -88,7 +88,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
 
         if (this.handle == 0) {
             cleanupState();
-            throw new IOException("Failed to open zsv native float reader (handle=0)");
+            throw new IOException("Failed to open zsv native double reader (handle=0)");
         }
     }
 
@@ -100,13 +100,13 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
         }
         this.offsets8 = ByteBuffer.allocateDirect((int) offsetsBytesL).order(ByteOrder.nativeOrder());
 
-        // values: 4 * (maxRows * k)
+        // values: 8 * (maxRows * k)
         long valueCount = (long) maxRowsPerBatch * (long) selCount;
-        long valuesBytesL = 4L * valueCount;
+        long valuesBytesL = 8L * valueCount;
         if (valuesBytesL > Integer.MAX_VALUE) {
             throw new IOException("values buffer too large");
         }
-        this.valuesF4 = ByteBuffer.allocateDirect((int) valuesBytesL).order(ByteOrder.nativeOrder());
+        this.valuesF8 = ByteBuffer.allocateDirect((int) valuesBytesL).order(ByteOrder.nativeOrder());
 
         // present: 1 * (maxRows * k)
         long presentBytesL = valueCount;
@@ -117,7 +117,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
     }
 
     @Override
-    public float[] nextRow() throws IOException {
+    public double[] nextRow() throws IOException {
         if (handle == 0) {
             throw new IOException("Reader is not opened. Call open(config) first.");
         }
@@ -133,7 +133,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
         final int r = batchRowIndex++;
         currentOffset = offsets8.getLong(r * 8);
 
-        // Read this row's floats from the batch buffers into rowBuffer.
+        // Read this row's doubles from the batch buffers into rowBuffer.
         // Layout: idx = r*k + c
         final int base = r * selCount;
         for (int c = 0; c < selCount; c++) {
@@ -141,9 +141,9 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
 
             byte p = presentB1.get(idx); // absolute read
             if (p == 0) {
-                rowBuffer[c] = Float.NaN;
+                rowBuffer[c] = Double.NaN;
             } else {
-                rowBuffer[c] = valuesF4.getFloat(idx * 4); // absolute read (byte offset)
+                rowBuffer[c] = valuesF8.getDouble(idx * 8); // absolute read (byte offset)
             }
         }
 
@@ -154,7 +154,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
         batchRowIndex = 0;
 
         // New JNI signature includes presentB1
-        rowsInBatch = ZsvNative.nextBatchFloats(handle, maxRowsPerBatch, offsets8, valuesF4, presentB1);
+        rowsInBatch = ZsvNative.nextBatchDoubles(handle, maxRowsPerBatch, offsets8, valuesF8, presentB1);
     }
 
     @Override
@@ -180,7 +180,7 @@ public final class ZsvCsvFloatRowReader implements CsvFloatRowReader {
         rowBuffer = null;
 
         offsets8 = null;
-        valuesF4 = null;
+        valuesF8 = null;
         presentB1 = null;
 
         rowsInBatch = 0;

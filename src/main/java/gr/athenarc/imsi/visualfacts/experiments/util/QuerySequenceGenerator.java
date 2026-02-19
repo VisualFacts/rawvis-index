@@ -31,15 +31,15 @@ public class QuerySequenceGenerator {
     private int minFilters;
     private int maxFilters;
 
-    private float zoomFactor;
+    private double zoomFactor;
 
     private Map<String, Double> directionWeights;
 
-    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, float zoomFactor) {
+    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, double zoomFactor) {
         this(minShift, maxShift, minFilters, maxFilters, zoomFactor, null);
     }
 
-    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, float zoomFactor,
+    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, double zoomFactor,
                                   Map<String, Double> directionWeights) {
         this.minShift = minShift;
         this.maxShift = maxShift;
@@ -110,8 +110,8 @@ public class QuerySequenceGenerator {
     }
 
     private Rectangle pan(Query query, int shift, Direction direction) {
-        Range<Float> xRange = query.getRect().getXRange();
-        Range<Float> yRange = query.getRect().getYRange();
+        Range<Double> xRange = query.getRect().getXRange();
+        Range<Double> yRange = query.getRect().getYRange();
         shift = Math.abs(shift);
 
         switch (direction) {
@@ -144,24 +144,24 @@ public class QuerySequenceGenerator {
     }
 
     private Rectangle zoomIn(Query query) {
-        return zoom(query, 1f / zoomFactor);
+        return zoom(query, 1.0 / zoomFactor);
     }
 
-    private Rectangle zoom(Query query, float zoomFactor) {
-        Range<Float> xRange = query.getRect().getXRange();
-        Range<Float> yRange = query.getRect().getYRange();
+    private Rectangle zoom(Query query, double zoomFactor) {
+        Range<Double> xRange = query.getRect().getXRange();
+        Range<Double> yRange = query.getRect().getYRange();
 
-        float xMiddle = (xRange.upperEndpoint() + xRange.lowerEndpoint()) / 2f;
-        float yMiddle = (yRange.upperEndpoint() + yRange.lowerEndpoint()) / 2f;
-        float newXSize = (xRange.upperEndpoint() - xRange.lowerEndpoint()) * zoomFactor;
-        float newYSize = (yRange.upperEndpoint() - yRange.lowerEndpoint()) * zoomFactor;
+        double xMiddle = (xRange.upperEndpoint() + xRange.lowerEndpoint()) / 2.0;
+        double yMiddle = (yRange.upperEndpoint() + yRange.lowerEndpoint()) / 2.0;
+        double newXSize = (xRange.upperEndpoint() - xRange.lowerEndpoint()) * zoomFactor;
+        double newYSize = (yRange.upperEndpoint() - yRange.lowerEndpoint()) * zoomFactor;
 
-        return new Rectangle(Range.open(xMiddle - (newXSize / 2f), xMiddle + (newXSize / 2f)),
-                Range.open(yMiddle - (newYSize / 2f), yMiddle + (newYSize / 2f)));
+        return new Rectangle(Range.open(xMiddle - (newXSize / 2.0), xMiddle + (newXSize / 2.0)),
+                Range.open(yMiddle - (newYSize / 2.0), yMiddle + (newYSize / 2.0)));
     }
 
-    private Range<Float> adjustRange(Range<Float> range, int shift) {
-        float interval = (range.upperEndpoint() -
+    private Range<Double> adjustRange(Range<Double> range, int shift) {
+        double interval = (range.upperEndpoint() -
                 range.lowerEndpoint()) * shift / 100;
         return Range.open(range.lowerEndpoint() + interval, range.upperEndpoint() + interval);
     }

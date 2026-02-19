@@ -8,7 +8,7 @@ import com.univocity.parsers.csv.CsvParserSettings;
 /**
  * CsvRowReader backed by Univocity CsvParser.
  */
-public class UnivocityCsvFloatRowReader implements CsvFloatRowReader {
+public class UnivocityCsvDoubleRowReader implements CsvDoubleRowReader {
     private CsvParser parser;
     private long lastOffset;
 
@@ -35,7 +35,7 @@ public class UnivocityCsvFloatRowReader implements CsvFloatRowReader {
     }
 
     @Override
-    public float[] nextRow() {
+    public double[] nextRow() {
         if (parser == null) {
             return null;
         }
@@ -44,15 +44,15 @@ public class UnivocityCsvFloatRowReader implements CsvFloatRowReader {
         if (row == null) {
             return null;
         }
-        float[] floatRow = new float[row.length];
+        double[] doubleRow = new double[row.length];
         for (int i = 0; i < row.length; i++) {
             if (row[i] == null || row[i].isEmpty()) {
-                floatRow[i] = Float.NaN;
+                doubleRow[i] = Double.NaN;
             } else {
-                floatRow[i] = Float.parseFloat(row[i]);
+                doubleRow[i] = Double.parseDouble(row[i]);
             }
         }
-        return floatRow;
+        return doubleRow;
     }
 
     @Override

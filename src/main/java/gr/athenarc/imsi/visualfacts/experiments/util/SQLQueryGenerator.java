@@ -23,7 +23,7 @@ public class SQLQueryGenerator {
      * @param cols      the names of the columns to be used in the where clause and in the select clause
      * @return a select all sql range query
      */
-    public static String getSQLSelectQuery(String tableName, List<Range<Float>> ranges, String... cols) {
+    public static String getSQLSelectQuery(String tableName, List<Range<Double>> ranges, String... cols) {
         String query = "select ";
         String sep = "";
         for (String col : cols) {
@@ -41,7 +41,7 @@ public class SQLQueryGenerator {
      * @param cols      the names of the columns to be used in the where clause
      * @return a count all sql range query
      */
-    public static String getSQLCountQuery(String tableName, List<Range<Float>> ranges, String... cols) {
+    public static String getSQLCountQuery(String tableName, List<Range<Double>> ranges, String... cols) {
         String query = "select ";
         query += "count(*) from " + tableName + " where " + generateWhereClause(ranges, cols) + ";";
         return query;
@@ -50,7 +50,7 @@ public class SQLQueryGenerator {
     /**
      * Generate a uni-variate aggregation query for a single aggregation column (backwards compatible).
      */
-    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, String aggCol, String... cols) {
+    public static String getSQLUniAggQuery(String tableName, List<Range<Double>> ranges, String aggCol, String... cols) {
         return getSQLUniAggQuery(tableName, ranges, java.util.Arrays.asList(aggCol), cols);
     }
 
@@ -58,7 +58,7 @@ public class SQLQueryGenerator {
      * Generate a uni-variate aggregation query for multiple aggregation columns.
      * For each aggregation column we produce count/min/max/sum/avg/sum_of_squares with distinct aliases.
      */
-    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, String... cols) {
+    public static String getSQLUniAggQuery(String tableName, List<Range<Double>> ranges, List<String> aggCols, String... cols) {
         return getSQLUniAggQuery(tableName, ranges, aggCols, null, AggregateType.ALL, cols);
     }
 
@@ -66,7 +66,7 @@ public class SQLQueryGenerator {
      * Generate a uni-variate aggregation query for multiple aggregation columns with validation filters.
      * Validation filters exclude rows that match (e.g., "column12 < 0 OR column12 > 400" excludes outliers).
      */
-    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, 
+    public static String getSQLUniAggQuery(String tableName, List<Range<Double>> ranges, List<String> aggCols, 
                                            List<DataValidationFilter> validationFilters, String... cols) {
         return getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, AggregateType.ALL, cols);
     }
@@ -75,7 +75,7 @@ public class SQLQueryGenerator {
      * Generate a uni-variate aggregation query for multiple aggregation columns with validation filters
      * and a configurable subset of aggregate functions.
      */
-    public static String getSQLUniAggQuery(String tableName, List<Range<Float>> ranges, List<String> aggCols, 
+    public static String getSQLUniAggQuery(String tableName, List<Range<Double>> ranges, List<String> aggCols, 
                                            List<DataValidationFilter> validationFilters,
                                            EnumSet<AggregateType> aggregates, String... cols) {
         StringBuilder sb = new StringBuilder();
@@ -100,36 +100,34 @@ public class SQLQueryGenerator {
 
     /**
      * Appends aggregate functions for a column based on the specified aggregate types.
-     * Casts columns to FLOAT to match Valinor's float precision.
+     * Uses the column directly (no CAST) since Valinor now uses double precision.
      * @return the separator to use for the next column (", " if any aggregates were added)
      */
     private static String appendAggregates(StringBuilder sb, String aggCol, String aliasBase, 
                                             EnumSet<AggregateType> aggregates) {
-        // Cast to FLOAT to match Valinor's float precision
-        String castCol = "CAST(" + aggCol + " AS FLOAT)";
         String innerSep = "";
         if (aggregates.contains(AggregateType.COUNT)) {
-            sb.append(innerSep).append("count(").append(castCol).append(") as count_").append(aliasBase);
+            sb.append(innerSep).append("count(").append(aggCol).append(") as count_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.MIN)) {
-            sb.append(innerSep).append("min(").append(castCol).append(") as min_").append(aliasBase);
+            sb.append(innerSep).append("min(").append(aggCol).append(") as min_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.MAX)) {
-            sb.append(innerSep).append("max(").append(castCol).append(") as max_").append(aliasBase);
+            sb.append(innerSep).append("max(").append(aggCol).append(") as max_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.SUM)) {
-            sb.append(innerSep).append("sum(").append(castCol).append(") as sum_").append(aliasBase);
+            sb.append(innerSep).append("sum(").append(aggCol).append(") as sum_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.AVG)) {
-            sb.append(innerSep).append("avg(").append(castCol).append(") as avg_").append(aliasBase);
+            sb.append(innerSep).append("avg(").append(aggCol).append(") as avg_").append(aliasBase);
             innerSep = ", ";
         }
         if (aggregates.contains(AggregateType.SUM_OF_SQUARES)) {
-            sb.append(innerSep).append("sum(").append(castCol).append(" * ").append(castCol)
+            sb.append(innerSep).append("sum(").append(aggCol).append(" * ").append(aggCol)
               .append(") as sum_of_squares_").append(aliasBase);
             innerSep = ", ";
         }
@@ -139,7 +137,7 @@ public class SQLQueryGenerator {
     /**
      * DuckDB-specific spatial query for one aggregation column (backwards compatible).
      */
-    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, String aggCol) {
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Double>> ranges, String aggCol) {
         return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, java.util.Arrays.asList(aggCol));
     }
 
@@ -147,14 +145,14 @@ public class SQLQueryGenerator {
      * DuckDB-specific spatial query for multiple aggregation columns.
      * Uses ST_Within with ST_MakeEnvelope to leverage the R-tree index on the geometry column.
      */
-    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, java.util.List<String> aggCols) {
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Double>> ranges, java.util.List<String> aggCols) {
         return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, null, AggregateType.ALL);
     }
 
     /**
      * DuckDB-specific spatial query for multiple aggregation columns with validation filters.
      */
-    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, 
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Double>> ranges, 
                                                          java.util.List<String> aggCols,
                                                          List<DataValidationFilter> validationFilters) {
         return getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters, AggregateType.ALL);
@@ -164,7 +162,7 @@ public class SQLQueryGenerator {
      * DuckDB-specific spatial query for multiple aggregation columns with validation filters
      * and a configurable subset of aggregate functions.
      */
-    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Float>> ranges, 
+    public static String getDuckDBSQLSpatialUniAggQuery(String tableName, List<Range<Double>> ranges, 
                                                          java.util.List<String> aggCols,
                                                          List<DataValidationFilter> validationFilters,
                                                          EnumSet<AggregateType> aggregates) {
@@ -172,8 +170,8 @@ public class SQLQueryGenerator {
             throw new IllegalArgumentException("Spatial queries require at least 2 ranges (x and y)");
         }
 
-        Range<Float> xRange = ranges.get(0);
-        Range<Float> yRange = ranges.get(1);
+        Range<Double> xRange = ranges.get(0);
+        Range<Double> yRange = ranges.get(1);
 
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT ");
@@ -201,21 +199,21 @@ public class SQLQueryGenerator {
         return sb.toString();
     }
 
-    public static String getSQLBiAggQuery(String tableName, List<Range<Float>> ranges, String aggCol1, String aggCol2, String... cols) {
+    public static String getSQLBiAggQuery(String tableName, List<Range<Double>> ranges, String aggCol1, String aggCol2, String... cols) {
         String query = "select ";
         query += "count(" + aggCol1 + ") as count1, min(" + aggCol1 + ") as min1, max(" + aggCol1 + ") as max1, sum(" + aggCol1 + ") as sum1, avg(" + aggCol1 + ") as avg1, sum(" + aggCol1 + " * " + aggCol1 + ") as squared1, " +
                 "count(" + aggCol2 + ") as count2, min(" + aggCol2 + ") as min2, max(" + aggCol2 + ") as max2, sum(" + aggCol2 + ") as sum2, avg(" + aggCol2 + ") as avg2, sum(" + aggCol2 + " * " + aggCol2 + ") as squared2, sum(" + aggCol1 + " * " + aggCol2 + ") as squared12  from " + tableName + " where " + generateWhereClause(ranges, cols) + ";";
         return query;
     }
 
-    private static String generateWhereClause(List<Range<Float>> ranges, String... cols) {
+    private static String generateWhereClause(List<Range<Double>> ranges, String... cols) {
         String whereClause = "";
         int i = 0;
-        for (Range<Float> range : ranges) {
+        for (Range<Double> range : ranges) {
             String col = cols[i];
-            // Cast to FLOAT to match Valinor's float precision (avoids float vs double discrepancies)
-            whereClause += "CAST(" + col + " AS FLOAT) > CAST(" + range.lowerEndpoint() + " AS FLOAT) AND " +
-                           "CAST(" + col + " AS FLOAT) < CAST(" + range.upperEndpoint() + " AS FLOAT)";
+            // Use column directly — Valinor now uses double precision
+            whereClause += col + " > " + range.lowerEndpoint() + " AND " +
+                           col + " < " + range.upperEndpoint();
             if (i < ranges.size() - 1) {
                 whereClause += " AND ";
             }
@@ -280,7 +278,7 @@ public class SQLQueryGenerator {
         }
     }
 
-    public static String getSQLFilterQuery(String tableName, Filter filter, List<Range<Float>> ranges, String... cols) {
+    public static String getSQLFilterQuery(String tableName, Filter filter, List<Range<Double>> ranges, String... cols) {
         String query = "select ";
         query += "count(*) from " + tableName + " where " + generateWhereClause(ranges, cols);
         query += " AND col" + filter.getFilterColumn() + (filter.getFilterPredicate().getOperator().equals(FilterOperator.LESS_THAN) ? " < " : " > ")

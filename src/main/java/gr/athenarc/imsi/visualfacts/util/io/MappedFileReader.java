@@ -120,12 +120,12 @@ public class MappedFileReader implements Closeable {
         return mappedBytes.readPosition() >= fileSize;
     }
     
-    // Buffer for float parsing (avoids allocation per call)
-    private static final int MAX_FLOAT_CHARS = 32;
-    private final byte[] floatBuffer = new byte[MAX_FLOAT_CHARS];
+    // Buffer for double parsing (avoids allocation per call)
+    private static final int MAX_DOUBLE_CHARS = 32;
+    private final byte[] doubleBuffer = new byte[MAX_DOUBLE_CHARS];
     
     /**
-     * Extracts specific columns as floats directly from the mmap buffer.
+     * Extracts specific columns as doubles directly from the mmap buffer.
      * This is optimized for wide rows where you only need a few columns.
      * Stops scanning immediately after the last needed column.
      * 
@@ -134,11 +134,11 @@ public class MappedFileReader implements Closeable {
      * 
      * @param sortedColumnIndices column indices to extract (must be sorted ascending)
      * @param delimiter the column delimiter byte (e.g., '\t' or ',')
-     * @return float array with extracted values (NaN for missing/invalid values),
+     * @return double array with extracted values (NaN for missing/invalid values),
      *         indexed by position in sortedColumnIndices (not by original column index)
      */
-    public float[] extractFloats(int[] sortedColumnIndices, byte delimiter) {
-        float[] result = new float[sortedColumnIndices.length];
+    public double[] extractDoubles(int[] sortedColumnIndices, byte delimiter) {
+        double[] result = new double[sortedColumnIndices.length];
         
         if (sortedColumnIndices.length == 0 || mappedBytes.readPosition() >= fileSize) {
             return result;
@@ -156,8 +156,8 @@ public class MappedFileReader implements Closeable {
             if (b == delimiter || b == '\n' || b == '\r') {
                 // End of column
                 if (currentCol == nextTargetCol) {
-                    // This is a target column - parse the float
-                    result[nextTargetIdx] = parseFloatFromBytes(floatBuffer, 0, bufPos);
+                    // This is a target column - parse the double
+                    result[nextTargetIdx] = parseDoubleFromBytes(doubleBuffer, 0, bufPos);
                     nextTargetIdx++;
                     if (nextTargetIdx < sortedColumnIndices.length) {
                         nextTargetCol = sortedColumnIndices[nextTargetIdx];
@@ -175,8 +175,8 @@ public class MappedFileReader implements Closeable {
                 bufPos = 0;
             } else {
                 // Only buffer bytes for target columns
-                if (currentCol == nextTargetCol && bufPos < MAX_FLOAT_CHARS) {
-                    floatBuffer[bufPos++] = b;
+                if (currentCol == nextTargetCol && bufPos < MAX_DOUBLE_CHARS) {
+                    doubleBuffer[bufPos++] = b;
                 }
             }
         }
@@ -185,13 +185,13 @@ public class MappedFileReader implements Closeable {
     }
     
     /**
-     * Fast float parser for simple decimal numbers.
+     * Fast double parser for simple decimal numbers.
      * Handles: 123, -123, 123.456, -123.456
-     * Falls back to Float.parseFloat for scientific notation or edge cases.
+     * Falls back to Double.parseDouble for scientific notation or edge cases.
      */
-    private static float parseFloatFromBytes(byte[] buf, int offset, int len) {
+    private static double parseDoubleFromBytes(byte[] buf, int offset, int len) {
         if (len == 0) {
-            return Float.NaN;
+            return Double.NaN;
         }
         
         int pos = offset;
@@ -207,7 +207,7 @@ public class MappedFileReader implements Closeable {
         }
         
         if (pos >= end) {
-            return Float.NaN;
+            return Double.NaN;
         }
         
         // Parse integer part
@@ -232,9 +232,9 @@ public class MappedFileReader implements Closeable {
         // Check for scientific notation - fall back to standard parser
         if (pos < end && (buf[pos] == 'e' || buf[pos] == 'E')) {
             try {
-                return Float.parseFloat(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
+                return Double.parseDouble(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
             } catch (NumberFormatException e) {
-                return Float.NaN;
+                return Double.NaN;
             }
         }
         
@@ -242,14 +242,14 @@ public class MappedFileReader implements Closeable {
         if (pos != end) {
             // Unexpected characters - try standard parser
             try {
-                return Float.parseFloat(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
+                return Double.parseDouble(new String(buf, offset, len, java.nio.charset.StandardCharsets.US_ASCII));
             } catch (NumberFormatException e) {
-                return Float.NaN;
+                return Double.NaN;
             }
         }
         
         double result = intPart + fracPart;
-        return (float) (negative ? -result : result);
+        return negative ? -result : result;
     }
     
     @Override

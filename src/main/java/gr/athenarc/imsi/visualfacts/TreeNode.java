@@ -101,8 +101,8 @@ public class TreeNode {
 
     // ---- Indexed access ----
 
-    public float getX(int i) { return store.getX(start + i); }
-    public float getY(int i) { return store.getY(start + i); }
+    public double getX(int i) { return store.getX(start + i); }
+    public double getY(int i) { return store.getY(start + i); }
     public long getOffset(int i) { return store.getOffset(start + i); }
     public int getSize() { return size; }
     public int getStart() { return start; }

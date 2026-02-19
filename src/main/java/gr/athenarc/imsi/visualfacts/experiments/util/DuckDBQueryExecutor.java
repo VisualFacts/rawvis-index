@@ -294,8 +294,8 @@ public class DuckDBQueryExecutor {
         indexCreationTimeNanos = indexEndTime - indexStartTime;
     }
 
-    private List<Range<Float>> extractRangesFromQuery(Query query) {
-        List<Range<Float>> ranges = new ArrayList<>();
+    private List<Range<Double>> extractRangesFromQuery(Query query) {
+        List<Range<Double>> ranges = new ArrayList<>();
         Rectangle rectangle = query.getRect();
         if (rectangle != null) {
             ranges.add(rectangle.getXRange());
@@ -315,7 +315,7 @@ public class DuckDBQueryExecutor {
         }
 
         LOG.info("Executing query in {} mode", mode);
-        List<Range<Float>> ranges = extractRangesFromQuery(query);
+        List<Range<Double>> ranges = extractRangesFromQuery(query);
 
         // Determine column naming format based on actual dataset column count
         int columnCount = getDatasetColumnCount();
@@ -351,7 +351,7 @@ public class DuckDBQueryExecutor {
     /**
      * Version 1: Run query directly on CSV file
      */
-    private QueryResult executeQueryDirectCSV(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol,
+    private QueryResult executeQueryDirectCSV(List<Range<Double>> ranges, List<String> aggCols, String xCol, String yCol,
             EnumSet<AggregateType> aggregateTypes) throws Exception {
 
         String tableSrc = "read_csv_auto('" + csvPath + "', " + buildReadCsvOptions() + ")";
@@ -364,7 +364,7 @@ public class DuckDBQueryExecutor {
     /**
      * Version 2: Run query on pre-created table
      */
-    private QueryResult executeQueryWithTable(List<Range<Float>> ranges, List<String> aggCols, String xCol, String yCol,
+    private QueryResult executeQueryWithTable(List<Range<Double>> ranges, List<String> aggCols, String xCol, String yCol,
             EnumSet<AggregateType> aggregateTypes) throws Exception {
         String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
 
@@ -375,7 +375,7 @@ public class DuckDBQueryExecutor {
     /**
      * Version 3: Run query on table with spatial R-tree index
      */
-    private QueryResult executeQueryWithSpatialIndex(List<Range<Float>> ranges, List<String> aggCols, String xCol,
+    private QueryResult executeQueryWithSpatialIndex(List<Range<Double>> ranges, List<String> aggCols, String xCol,
             String yCol, EnumSet<AggregateType> aggregateTypes) throws Exception {
         String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes);
 

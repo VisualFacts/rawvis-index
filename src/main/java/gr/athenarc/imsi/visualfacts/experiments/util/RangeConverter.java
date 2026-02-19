@@ -4,10 +4,10 @@ import com.beust.jcommander.IStringConverter;
 import com.google.common.collect.Range;
 
 
-public class RangeConverter implements IStringConverter<Range<Float>> {
+public class RangeConverter implements IStringConverter<Range<Double>> {
 
     @Override
-    public Range<Float> convert(String s) {
+    public Range<Double> convert(String s) {
         return QueryUtils.convertToRange(s);
     }
 }

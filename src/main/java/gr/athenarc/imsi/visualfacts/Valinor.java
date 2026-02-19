@@ -29,9 +29,9 @@ import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
-import gr.athenarc.imsi.visualfacts.util.csv.CsvFloatRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.CsvDoubleRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
-import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvFloatRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
 
 /**
@@ -159,7 +159,7 @@ public class Valinor implements AutoCloseable {
                 selectedColumns,
                 schema.getHasHeader(),
                 schema.getDelimiter());
-        CsvFloatRowReader rowReader = new ZsvCsvFloatRowReader();
+        CsvDoubleRowReader rowReader = new ZsvCsvDoubleRowReader();
 
         objectsIndexed = 0;
         int objectsSkipped = 0;
@@ -188,7 +188,7 @@ public class Valinor implements AutoCloseable {
 
         try {
             rowReader.open(readerConfig);
-            float[] row;
+            double[] row;
 
             // Build tile index mapping for partition
             List leafTileList = grid.getLeafTiles();
@@ -209,7 +209,7 @@ public class Valinor implements AutoCloseable {
 
                 boolean shouldSkip = false;
                 for (int i = 0; i < filterCount; i++) {
-                    if (filterArray[i].test((double) row[filterPositions[i]])) {
+                    if (filterArray[i].test(row[filterPositions[i]])) {
                         shouldSkip = true;
                         break;
                     }
@@ -220,8 +220,8 @@ public class Valinor implements AutoCloseable {
                     continue;
                 }
 
-                float x = row[xPos];
-                float y = row[yPos];
+                double x = row[xPos];
+                double y = row[yPos];
 
                 if (!grid.getBounds().contains(x, y)) {
                     continue;
@@ -400,7 +400,7 @@ public class Valinor implements AutoCloseable {
             long fileOffset = pointIterator.nextOffset();
             try {
                 mappedFileReader.seek(fileOffset);
-                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
                 
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
@@ -408,10 +408,10 @@ public class Valinor implements AutoCloseable {
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    float value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Float.NaN;
+                    double value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Double.NaN;
                     
-                    if (!Float.isNaN(value)) {
+                    if (!Double.isNaN(value)) {
                         queryResults.adjustStats(null, measureCol, value);
                     }
                     
@@ -855,7 +855,7 @@ public class Valinor implements AutoCloseable {
             try {
                 mappedFileReader.seek(fileOffset);
                 
-                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
                 
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
@@ -863,9 +863,9 @@ public class Valinor implements AutoCloseable {
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    float value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Float.NaN;
-                    if (!Float.isNaN(value)) {
+                    double value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Double.NaN;
+                    if (!Double.isNaN(value)) {
                         queryNode.addSampleValue(measureCol, value);
                     }
                     // Progressive stats building for post-split children
@@ -892,7 +892,7 @@ public class Valinor implements AutoCloseable {
             try {
                 mappedFileReader.seek(fileOffset);
                 
-                float[] extractedValues = mappedFileReader.extractFloats(sortedMeasureCols, delimiterByte);
+                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
                 
                 QueryNode queryNode = pointIterator.getCurrentQueryNode();
                 TreeNode node = queryNode.getNode();
@@ -900,8 +900,8 @@ public class Valinor implements AutoCloseable {
                 int idx = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    float value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Float.NaN;
+                    double value = (extractedPos != null && extractedPos < extractedValues.length)
+                            ? extractedValues[extractedPos] : Double.NaN;
                     node.adjustStats(idx, schema.getMeasureCount(), value);
                     idx++;
                 }
@@ -915,8 +915,8 @@ public class Valinor implements AutoCloseable {
     // ==================== Shared Utilities ====================
 
     private ContainmentExaminer getContainmentExaminer(Tile tile, Rectangle query) {
-        Range<Float> queryXRange = query.getXRange();
-        Range<Float> queryYRange = query.getYRange();
+        Range<Double> queryXRange = query.getXRange();
+        Range<Double> queryYRange = query.getYRange();
         boolean checkX = !queryXRange.encloses(tile.getBounds().getXRange());
         boolean checkY = !queryYRange.encloses(tile.getBounds().getYRange());
 

@@ -10,23 +10,23 @@ import com.google.common.collect.Range;
 
 public class Rectangle implements Serializable {
 
-    private final Range<Float> xRange;
-    private final Range<Float> yRange;
+    private final Range<Double> xRange;
+    private final Range<Double> yRange;
 
-    public Rectangle(Range<Float> xRange, Range<Float> yRange) {
+    public Rectangle(Range<Double> xRange, Range<Double> yRange) {
         this.xRange = xRange;
         this.yRange = yRange;
     }
 
-    public Range<Float> getXRange() {
+    public Range<Double> getXRange() {
         return xRange;
     }
 
-    public Range<Float> getYRange() {
+    public Range<Double> getYRange() {
         return yRange;
     }
 
-    public boolean contains(float x, float y) {
+    public boolean contains(double x, double y) {
         return xRange.contains(x) && yRange.contains(y);
     }
 
@@ -47,16 +47,16 @@ public class Rectangle implements Serializable {
         return (yRange.lowerEndpoint() + yRange.upperEndpoint())/2d;
     }
 
-    public float getXSize() {
+    public double getXSize() {
         return xRange.upperEndpoint() - xRange.lowerEndpoint();
     }
 
-    public float getYSize() {
+    public double getYSize() {
         return yRange.upperEndpoint() - yRange.lowerEndpoint();
     }
 
     public List toList() {
-        List<Range<Float>> list = new ArrayList<>(2);
+        List<Range<Double>> list = new ArrayList<>(2);
         list.add(this.xRange);
         list.add(this.yRange);
         return list;
@@ -104,8 +104,8 @@ public class Rectangle implements Serializable {
             throw new IllegalArgumentException("Invalid rectangle format: " + str);
         }
         
-        Range<Float> xRange = parseRange(parts[0]);
-        Range<Float> yRange = parseRange(parts[1]);
+        Range<Double> xRange = parseRange(parts[0]);
+        Range<Double> yRange = parseRange(parts[1]);
         
         return new Rectangle(xRange, yRange);
     }
@@ -114,7 +114,7 @@ public class Rectangle implements Serializable {
      * Helper method to parse Range from string format.
      * Handles formats like "(1.0..2.0)", "[1.0..2.0]", "(1.0..2.0]", "[1.0..2.0)"
      */
-    private static Range<Float> parseRange(String rangeStr) {
+    private static Range<Double> parseRange(String rangeStr) {
         rangeStr = rangeStr.trim();
         
         boolean leftOpen = rangeStr.startsWith("(");
@@ -127,8 +127,8 @@ public class Rectangle implements Serializable {
             throw new IllegalArgumentException("Invalid range format: " + rangeStr);
         }
         
-        Float lower = Float.parseFloat(values[0]);
-        Float upper = Float.parseFloat(values[1]);
+        Double lower = Double.parseDouble(values[0]);
+        Double upper = Double.parseDouble(values[1]);
         
         if (leftOpen && rightOpen) {
             return Range.open(lower, upper);

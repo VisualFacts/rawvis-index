@@ -12,8 +12,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.Test;
 
-public class ZsvCsvFloatRowReaderTest {
-    private static final Logger LOG = LogManager.getLogger(ZsvCsvFloatRowReaderTest.class);
+public class ZsvCsvDoubleRowReaderTest {
+    private static final Logger LOG = LogManager.getLogger(ZsvCsvDoubleRowReaderTest.class);
 
     @Test
     void zsvReaderMatchesUnivocity() throws IOException {
@@ -29,13 +29,13 @@ public class ZsvCsvFloatRowReaderTest {
                 false,
                 ',');
 
-        try (CsvFloatRowReader zsvReader = new ZsvCsvFloatRowReader();
-                CsvFloatRowReader uni = new UnivocityCsvFloatRowReader()) {
+        try (CsvDoubleRowReader zsvReader = new ZsvCsvDoubleRowReader();
+                CsvDoubleRowReader uni = new UnivocityCsvDoubleRowReader()) {
             zsvReader.open(config);
             uni.open(config);
 
-            float[] zsvRow;
-            float[] uniRow;
+            double[] zsvRow;
+            double[] uniRow;
             long zsvOffset;
             long uniOffset;
             int rowCount = 0;
@@ -44,7 +44,7 @@ public class ZsvCsvFloatRowReaderTest {
                 uniRow = uni.nextRow();
                 zsvOffset = zsvReader.currentOffset();
                 uniOffset = uni.currentOffset();
-                assertArrayEquals(uniRow, zsvRow, 1e-6f, "Row mismatch at index " + rowCount);
+                assertArrayEquals(uniRow, zsvRow, 1e-10, "Row mismatch at index " + rowCount);
                 assertEquals(uniOffset, zsvOffset, "Offset mismatch at index " + rowCount);
                 if (rowCount % 1000 == 0) {
                     LOG.trace("Row " + rowCount + ": " + Arrays.toString(zsvRow) +

@@ -1,35 +1,35 @@
 package gr.athenarc.imsi.visualfacts.experiments.util;
 
-import com.google.common.collect.Range;
-
 import java.util.concurrent.ThreadLocalRandom;
+
+import com.google.common.collect.Range;
 
 
 public class RangeGenerator {
 
-    private Range<Float> valueRange;
+    private Range<Double> valueRange;
 
-    public RangeGenerator(Range<Float> valueRange) {
+    public RangeGenerator(Range<Double> valueRange) {
         this.valueRange = valueRange;
     }
 
-    public Range<Float>[] getEqualSizedRanges(int rangeCount, float totalSelectivity) {
-        Range<Float>[] ranges = new Range[rangeCount];
-        float rangeSize = (float) ((valueRange.upperEndpoint() - valueRange.lowerEndpoint()) * Math.pow(totalSelectivity, 1.0 / rangeCount));
-        float totalMax = valueRange.upperEndpoint() - rangeSize;
+    public Range<Double>[] getEqualSizedRanges(int rangeCount, double totalSelectivity) {
+        Range<Double>[] ranges = new Range[rangeCount];
+        double rangeSize = (valueRange.upperEndpoint() - valueRange.lowerEndpoint()) * Math.pow(totalSelectivity, 1.0 / rangeCount);
+        double totalMax = valueRange.upperEndpoint() - rangeSize;
         for (int i = 0; i < rangeCount; i++) {
-            float rangeMin = (float) ThreadLocalRandom.current().nextDouble(valueRange.lowerEndpoint(), totalMax);
-            float rangeMax = rangeMin + rangeSize;
+            double rangeMin = ThreadLocalRandom.current().nextDouble(valueRange.lowerEndpoint(), totalMax);
+            double rangeMax = rangeMin + rangeSize;
             ranges[i] = Range.open(rangeMin, rangeMax);
         }
         return ranges;
     }
 
-    public Range<Float> getValueRange() {
+    public Range<Double> getValueRange() {
         return valueRange;
     }
 
-    public void setValueRange(Range<Float> valueRange) {
+    public void setValueRange(Range<Double> valueRange) {
         this.valueRange = valueRange;
     }
 }

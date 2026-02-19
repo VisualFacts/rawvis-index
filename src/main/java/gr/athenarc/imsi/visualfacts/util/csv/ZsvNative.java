@@ -11,11 +11,11 @@ public final class ZsvNative {
 
     public static native void close(long handle);
 
-    public static native int nextBatchFloats(
+    public static native int nextBatchDoubles(
             long handle,
             int maxRows,
             ByteBuffer offsets8,
-            ByteBuffer valuesF4,
+            ByteBuffer valuesF8,
             ByteBuffer presentB1 // byte[maxRows * k]
     );
 

@@ -111,8 +111,8 @@ public class PhasedQuerySequenceGenerator {
     private Rectangle pan(Rectangle current, PhaseConfig phase, Direction direction, Random shiftRand) {
         int shift = shiftRand.nextInt(phase.getMaxShift() - phase.getMinShift() + 1) + phase.getMinShift();
 
-        Range<Float> xRange = current.getXRange();
-        Range<Float> yRange = current.getYRange();
+        Range<Double> xRange = current.getXRange();
+        Range<Double> yRange = current.getYRange();
 
         switch (direction) {
             case N: case NE: case NW:
@@ -153,19 +153,19 @@ public class PhasedQuerySequenceGenerator {
      * Formula: edge' = target + zoomFactor * (edge - target)
      */
     private Rectangle zoomToPoint(Rectangle current, PhaseConfig phase) {
-        float[] target = phase.getTargetPoint();
+        double[] target = phase.getTargetPoint();
         if (target == null) {
             throw new IllegalArgumentException("zoom_to_point phase requires a 'target' parameter (format: 'x,y')");
         }
 
-        float px = target[0];
-        float py = target[1];
-        float f = phase.getZoomFactor();
+        double px = target[0];
+        double py = target[1];
+        double f = phase.getZoomFactor();
 
-        float newXLow = px + f * (current.getXRange().lowerEndpoint() - px);
-        float newXHigh = px + f * (current.getXRange().upperEndpoint() - px);
-        float newYLow = py + f * (current.getYRange().lowerEndpoint() - py);
-        float newYHigh = py + f * (current.getYRange().upperEndpoint() - py);
+        double newXLow = px + f * (current.getXRange().lowerEndpoint() - px);
+        double newXHigh = px + f * (current.getXRange().upperEndpoint() - px);
+        double newYLow = py + f * (current.getYRange().lowerEndpoint() - py);
+        double newYHigh = py + f * (current.getYRange().upperEndpoint() - py);
 
         return new Rectangle(Range.open(newXLow, newXHigh), Range.open(newYLow, newYHigh));
     }
@@ -176,13 +176,13 @@ public class PhasedQuerySequenceGenerator {
      * With zoomFactor=2.0, the viewport doubles in size (center stays the same).
      */
     private Rectangle zoomOut(Rectangle current, PhaseConfig phase) {
-        float f = phase.getZoomFactor();
+        double f = phase.getZoomFactor();
 
-        float xMid = (current.getXRange().lowerEndpoint() + current.getXRange().upperEndpoint()) / 2f;
-        float yMid = (current.getYRange().lowerEndpoint() + current.getYRange().upperEndpoint()) / 2f;
+        double xMid = (current.getXRange().lowerEndpoint() + current.getXRange().upperEndpoint()) / 2.0;
+        double yMid = (current.getYRange().lowerEndpoint() + current.getYRange().upperEndpoint()) / 2.0;
 
-        float halfXSize = (current.getXRange().upperEndpoint() - current.getXRange().lowerEndpoint()) / 2f * f;
-        float halfYSize = (current.getYRange().upperEndpoint() - current.getYRange().lowerEndpoint()) / 2f * f;
+        double halfXSize = (current.getXRange().upperEndpoint() - current.getXRange().lowerEndpoint()) / 2.0 * f;
+        double halfYSize = (current.getYRange().upperEndpoint() - current.getYRange().lowerEndpoint()) / 2.0 * f;
 
         return new Rectangle(Range.open(xMid - halfXSize, xMid + halfXSize),
                 Range.open(yMid - halfYSize, yMid + halfYSize));
@@ -192,8 +192,8 @@ public class PhasedQuerySequenceGenerator {
      * Adjusts a range by shifting it by a percentage of its span.
      * Shift is in percent: shift=10 means move by 10% of the range width.
      */
-    private Range<Float> adjustRange(Range<Float> range, int shift) {
-        float interval = (range.upperEndpoint() - range.lowerEndpoint()) * shift / 100f;
+    private Range<Double> adjustRange(Range<Double> range, int shift) {
+        double interval = (range.upperEndpoint() - range.lowerEndpoint()) * shift / 100.0;
         return Range.open(range.lowerEndpoint() + interval, range.upperEndpoint() + interval);
     }
 
@@ -204,13 +204,13 @@ public class PhasedQuerySequenceGenerator {
     private Rectangle clamp(Rectangle rect, String boundsStr) {
         Rectangle bounds = QueryUtils.convertToRectangle(boundsStr);
 
-        float xLow = rect.getXRange().lowerEndpoint();
-        float xHigh = rect.getXRange().upperEndpoint();
-        float yLow = rect.getYRange().lowerEndpoint();
-        float yHigh = rect.getYRange().upperEndpoint();
+        double xLow = rect.getXRange().lowerEndpoint();
+        double xHigh = rect.getXRange().upperEndpoint();
+        double yLow = rect.getYRange().lowerEndpoint();
+        double yHigh = rect.getYRange().upperEndpoint();
 
-        float width = xHigh - xLow;
-        float height = yHigh - yLow;
+        double width = xHigh - xLow;
+        double height = yHigh - yLow;
 
         // Clamp X: shift the whole viewport if it exceeds bounds
         if (xLow < bounds.getXRange().lowerEndpoint()) {

@@ -41,7 +41,7 @@ public abstract class Tile {
         this.bounds = bounds;
     }
 
-    public abstract Tile getLeafTile(float x, float y);
+    public abstract Tile getLeafTile(double x, double y);
 
     public Rectangle getBounds() {
         return bounds;

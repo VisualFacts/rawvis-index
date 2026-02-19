@@ -21,7 +21,7 @@ import org.openjdk.jmh.annotations.Warmup;
 
 /**
  * Benchmarks comparing the Univocity-backed reader with the
- * Zsv-based custom CSV float row reader implementation.
+ * Zsv-based custom CSV double row reader implementation.
  * 
  * For cold disk measurements, run with:
  *   java -Dbenchmark.dropCaches=true -Dcsv.path=/path/to/file.csv -jar benchmarks.jar
@@ -116,23 +116,23 @@ public class CsvRowReaderBenchmark {
 
     @Benchmark
     public long benchmarkUnivocity(ReaderState state) throws IOException {
-        return runReader(new UnivocityCsvFloatRowReader(), state);
+        return runReader(new UnivocityCsvDoubleRowReader(), state);
     }
 
     @Benchmark
     public long benchmarkZsvReader(ReaderState state) throws IOException {
-        return runReader(new ZsvCsvFloatRowReader(), state);
+        return runReader(new ZsvCsvDoubleRowReader(), state);
     }
 
-    private long runReader(CsvFloatRowReader reader, ReaderState state) throws IOException {
+    private long runReader(CsvDoubleRowReader reader, ReaderState state) throws IOException {
         reader.open(state.config);
-        float[] row;
+        double[] row;
         double sum = 0;
         long rows = 0;
         try {
             while ((row = reader.nextRow()) != null) {
                 rows++;
-                for (float v : row) {
+                for (double v : row) {
                     sum += v;
                 }
             }
