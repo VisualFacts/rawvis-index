@@ -215,17 +215,15 @@ def _build_query(table, x_col, y_col, x_min, x_max, y_min, y_max, measure_cols, 
 
     select_parts = []
     for c in cols:
-        cast_c = f"CAST({c} AS FLOAT)"
         select_parts += [
-            f"sum({cast_c}) as sum_{c}",
-            f"avg({cast_c}) as avg_{c}",
+            f"sum({c}) as sum_{c}",
+            f"avg({c}) as avg_{c}",
         ]
 
-    # Cast x/y columns and bounds to FLOAT to match Java DuckDB queries
-    where = (f"CAST({x_col} AS FLOAT) > CAST({x_min} AS FLOAT) "
-             f"AND CAST({x_col} AS FLOAT) < CAST({x_max} AS FLOAT) "
-             f"AND CAST({y_col} AS FLOAT) > CAST({y_min} AS FLOAT) "
-             f"AND CAST({y_col} AS FLOAT) < CAST({y_max} AS FLOAT)")
+    where = (f"{x_col} > {x_min} "
+             f"AND {x_col} < {x_max} "
+             f"AND {y_col} > {y_min} "
+             f"AND {y_col} < {y_max}")
 
     if validation_filters:
         vf_conditions = _parse_validation_filters(validation_filters, col_count)
