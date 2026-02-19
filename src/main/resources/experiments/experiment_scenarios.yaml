@@ -95,6 +95,36 @@ datasets:
     bounds: "0:360,-9.67629:68.5575"
     objectCount: 40921983
     validationFilters: []
+  gaia_dr3:
+    csv: /data-nonraid/maroulis/data/gaia/gaia_dr3_benchmark.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0    # ra (Right Ascension, degrees)
+    yColumn: 1    # dec (Declination, degrees)
+    # Columns (0-indexed):
+    #   0=ra, 1=dec, 2=phot_g_mean_mag, 3=phot_bp_mean_mag, 4=phot_rp_mean_mag,
+    #   5=parallax, 6=pmra, 7=pmdec, 8=ruwe,
+    #   9=phot_g_mean_flux, 10=phot_g_mean_flux_error,
+    #   11=phot_bp_mean_flux, 12=phot_rp_mean_flux, 13=astrometric_excess_noise
+    # Measure column ordering: scientifically meaningful, no flux/mag redundancy.
+    # Distance-led: parallax first (high CV, most impactful Gaia measurement).
+    # 1-col:  parallax (distance — "how far are the stars?")
+    # 4-col:  + phot_g_mean_mag, pmra, pmdec (brightness + 6D phase space lite)
+    # 8-col:  + phot_bp_mean_mag, phot_rp_mean_mag, ruwe, astrometric_excess_noise
+    measureCols: [5, 2, 6, 7, 3, 4, 8, 13]
+    bounds: "0:360,-90:90"
+    objectCount: 328022175
+    validationFilters: []
+  gaia_dr3_test:
+    csv: /data-nonraid/maroulis/data/gaia/gaia_dr3_benchmark_test_10pct.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [5, 2, 6, 7, 3, 4, 8, 13]
+    bounds: "0:360,-90:90"
+    objectCount: 32802218
+    validationFilters: []
 scenarios:
   synth10_pan:
     dataset: synth10
@@ -170,6 +200,70 @@ scenarios:
       SW: 0.3
       W: 1.0
       NW: 0.3
+
+  sdss_10cols_pan:
+    dataset: sdss_10cols
+    q0:
+      rect: "180:190,-3:0"
+      filters: {}
+    minShift: 5
+    maxShift: 12
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 0.2
+      NE: 0.8
+      E: 3.0
+      SE: 0.8
+      S: 0.2
+      SW: 0.3
+      W: 1.0
+      NW: 0.3
+
+  # Gaia DR3 spatial benchmark (10% sample, 328M rows, 14 columns).
+  # Scenario: astronomer surveys the Galactic plane starting from the GC (RA≈266°, Dec≈-29°),
+  # scanning outward (NE in equatorial coords) to study stellar populations and dust structure.
+  # Viewport: 10° x 6° (~0.093% of full-sky area, ~4-5M stars per query).
+  # Directional bias ~3:1 (NE along plane vs W/S opposite).
+  gaia_dr3_pan:
+    dataset: gaia_dr3
+    q0:
+      rect: "261:271,-32:-26"
+      filters: {}
+    minShift: 5
+    maxShift: 12
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 2.0
+      E: 1.5
+      SE: 0.8
+      S: 0.5
+      SW: 0.7
+      W: 0.5
+      NW: 0.8
+
+  # Gaia DR3 10% test subset — for quick validation of NaN handling and correctness.
+  # Same query pattern as gaia_dr3_pan but on the 10% modular sample (32.8M rows).
+  gaia_dr3_test_pan:
+    dataset: gaia_dr3_test
+    q0:
+      rect: "261:271,-32:-26"
+      filters: {}
+    minShift: 5
+    maxShift: 12
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 2.0
+      E: 1.5
+      SE: 0.8
+      S: 0.5
+      SW: 0.7
+      W: 0.5
+      NW: 0.8
 
   # Realistic exploration: analyst investigates taxi pickups in Manhattan.
   # Landscape viewport (0.12 x 0.06 deg, ~16:10 aspect at this latitude).
