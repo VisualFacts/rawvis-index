@@ -12,3 +12,20 @@ native/build/
 experiments/**/*.log
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
+
+# Ignore Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Ignore virtual environments
+.venv/
+venv/
+env/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore Jupyter Notebook metadata
+*.nbconvert.ipynb
