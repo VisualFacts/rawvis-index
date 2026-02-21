@@ -201,7 +201,10 @@ public class Valinor implements AutoCloseable {
             // --- Phase 1: CSV scan → shared store + tileIds + per-tile counts + stats ---
             final int capacity = schema.getObjectCount();
             SharedPointStore store = new SharedPointStore(capacity);
-            int[] tileIds = new int[capacity];
+            if (numTiles > Short.MAX_VALUE) {
+                throw new IllegalStateException("Tile count " + numTiles + " exceeds short range; cannot use short[] tileIds");
+            }
+            short[] tileIds = new short[capacity];
             int validCount = 0;
 
             while ((row = rowReader.nextRow()) != null) {
@@ -230,7 +233,7 @@ public class Valinor implements AutoCloseable {
                 TreeNode node = leafTile.getOrCreateRoot();
 
                 store.set(validCount, x, y, rowOffset);
-                tileIds[validCount] = tileIndexMap.get(leafTile);
+                tileIds[validCount] = tileIndexMap.get(leafTile).shortValue();
                 validCount++;
 
                 node.incrementCount();

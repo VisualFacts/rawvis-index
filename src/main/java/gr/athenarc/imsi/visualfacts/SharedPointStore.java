@@ -54,12 +54,13 @@ public class SharedPointStore {
      * Stable: elements within each tile preserve their original CSV/file order,
      * so no subsequent sort-by-offset is needed.
      *
-     * @param tileIds   per-point tile ID (read-only during scatter)
+     * @param tileIds   per-point tile ID (read-only during scatter); short to save memory
+     *                   (safe because tile count at init = GRID_SIZE² ≤ 32767)
      * @param n         number of valid points (elements [0, n) are partitioned)
      * @param starts    prefix-sum array: starts[t] = first index for tile t
      * @param numTiles  number of distinct tiles
      */
-    public void partition(int[] tileIds, int n, int[] starts, int numTiles) {
+    public void partition(short[] tileIds, int n, int[] starts, int numTiles) {
         int[] cursors;
 
         // Pass 1: scatter xs
