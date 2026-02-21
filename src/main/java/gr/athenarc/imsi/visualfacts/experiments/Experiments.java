@@ -134,7 +134,7 @@ public class Experiments {
             }
 
             schema = experimentConfig.getSchemaForScenario(scenario);
-            
+
             // Apply numMeasures limit if specified
             if (numMeasures != null && numMeasures > 0) {
                 List<Integer> allMeasures = schema.getMeasureCols();
@@ -148,7 +148,7 @@ public class Experiments {
                     LOG.info("Limited measures to first {}: {}", numMeasures, limitedMeasures);
                 }
             }
-            
+
             LOG.info("Loaded scenario '{}' with dataset '{}'", scenario, scenarioConfig.getDataset());
 
         }
@@ -156,7 +156,8 @@ public class Experiments {
 
     /**
      * Validates that a scenario has been loaded.
-     * Call this at the start of any command that requires schema/scenario configuration.
+     * Call this at the start of any command that requires schema/scenario
+     * configuration.
      */
     private void requireScenario(String commandName) {
         if (scenario == null || scenario.isEmpty()) {
@@ -265,6 +266,7 @@ public class Experiments {
                                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
                         : null);
                 csvWriter.writeValuesToRow();
+                csvWriter.flush();
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
             }
         } finally {
@@ -305,7 +307,8 @@ public class Experiments {
             csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
                     "Leaf tiles",
                     "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
-                    "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)", "Confidence Interval",
+                    "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)",
+                    "Confidence Interval",
                     "Error Bound", "run");
 
             Stopwatch stopwatch;
@@ -477,6 +480,7 @@ public class Experiments {
                             .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
                             : null);
                     csvWriter.writeValuesToRow();
+                    csvWriter.flush();
                 } catch (Exception e) {
                     LOG.warn("Error executing query {}: {}", i, e.getMessage());
                     csvWriter.addValue(schema.getCsv());
@@ -489,6 +493,7 @@ public class Experiments {
                     csvWriter.addValue(-1);
                     csvWriter.addValue("ERROR: " + e.getMessage());
                     csvWriter.writeValuesToRow();
+                    csvWriter.flush();
                 }
             }
             executor.close();
