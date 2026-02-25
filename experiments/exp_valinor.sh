@@ -30,17 +30,19 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 # ---- Customizable parameters (override via env vars) ----
 
 # Approaches to run: "valinor_a" (full system) and/or "valinor_s" (sampling-only baseline)
-approaches=(${APPROACHES:-valinor_s})
+approaches=(${APPROACHES:-valinor_a})
 
 # List of scenarios to run
-scenarios=(${SCENARIOS:-taxi_zoom})
-# All scenarios: synth10_pan synth50_pan taxi_pan taxi_zoom sdss_100cols_pan
+scenarios=(${SCENARIOS:-synth10_500M_pan})
+# All scenarios: synth10_pan synth50_pan taxi_pan taxi_zoom sdss_100cols_pan gaia_dr3_pan
 
 # Error bounds to sweep
-error_bounds=(${ERROR_BOUNDS:-0.01 0.02 0.05 0.1})
+# error_bounds=(${ERROR_BOUNDS:-0 0.01 0.02 0.05 0.1})
+error_bounds=(${ERROR_BOUNDS:-0 0.05})
 
 # Number of measure columns to test
-num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
+# num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
+num_measures_list=(${NUM_MEASURES:-1})
 
 # Combination pruning: which measure counts get the full error bound sweep
 fixed_measures_for_error_bounds=(${FIXED_MEASURES_FOR_EB:-1 4})
@@ -49,7 +51,7 @@ fixed_measures_for_error_bounds=(${FIXED_MEASURES_FOR_EB:-1 4})
 fixed_error_bounds_for_measures=(${FIXED_EB_FOR_MEASURES:-0 0.01 0.05})
 
 # Number of runs
-num_runs=${NUM_RUNS:-2}
+num_runs=${NUM_RUNS:-1}
 
 # Start run index
 run_start=${RUN_START:-1}
@@ -117,7 +119,7 @@ do
                     echo "[$approach] Running scenario=$scenario mcols=$num_measures error=$error_bound run=$run..."
                     # Force cold disk reads for reproducible initialization timing
                     sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-                    java -Xmx16G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                    java -Xmx18G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                         -c timeApproximateQueries \
                         -scenario "$scenario" \
                         -configFile "$config_file" \

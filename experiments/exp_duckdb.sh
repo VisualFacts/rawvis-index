@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set DuckDB memory limit
-export DUCKDB_MEMORY_LIMIT=8GB
+export DUCKDB_MEMORY_LIMIT=12GB
 # Set DuckDB temporary directory
 export DUCKDB_TEMP_DIR=/data-nonraid/maroulis/data/.duckdb_tmp
 
@@ -11,19 +11,18 @@ LIBPATH="$SCRIPT_DIR/../native/build"
 config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 
-# List of scenarios to run
-# scenarios=("synth10_pan" "synth50_pan" "taxi_pan" "taxi_zoom")
-scenarios=("taxi_zoom")
+# List of scenarios to run (override via env var)
+scenarios=(${SCENARIOS:-synth10_pan synth50_pan taxi_pan taxi_zoom gaia_dr3_pan})
 
-# DuckDB execution modes
-modes=(table directCSV)
-# modes=(table directCSV spatialIndex)
+# DuckDB execution modes (override via env var)
+modes=(${MODES:-table})
+# Available modes: table directCSV spatialIndex
 
-# Define the number of measure columns to test (as integers)
-num_measures_list=(1 2 4 6 8)
+# Define the number of measure columns to test (override via env var)
+num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
 
-# Number of times to run each experiment
-num_runs=2
+# Number of times to run each experiment (override via env var)
+num_runs=${NUM_RUNS:-1}
 
 # Optional: start run index (e.g., RUN_START=3 ./exp_duckdb.sh to start at run 3)
 run_start=${RUN_START:-1}
@@ -48,7 +47,7 @@ do
                 echo "Running DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run..."
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-                java -Xmx16G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                java -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                     -c timeDuckDBQueries \
                     -scenario "$scenario" \
                     -configFile "$config_file" \

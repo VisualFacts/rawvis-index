@@ -11,7 +11,7 @@
 #   uv pip install "sqlglot==26.30.0"   # PilotDB breaks with sqlglot >= 28
 
 # Set DuckDB memory limit
-export DUCKDB_MEMORY_LIMIT=8GB
+export DUCKDB_MEMORY_LIMIT=12GB
 # Set DuckDB temporary directory
 export DUCKDB_TEMP_DIR=/data-nonraid/maroulis/data/.duckdb_tmp
 
@@ -23,7 +23,7 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 # ---- Customizable parameters (override via env vars) ----
 
 # List of scenarios to run
-scenarios=(${SCENARIOS:-synth10_pan synth50_pan taxi_pan sdss_100cols_pan})
+scenarios=(${SCENARIOS:-gaia_dr3_shuffled_pan})
 # All scenarios: synth10_pan synth50_pan taxi_pan taxi_zoom sdss_100cols_pan
 
 # Define the number of measure columns to test
@@ -39,7 +39,7 @@ fixed_measures_for_error_bounds=(${FIXED_MEASURES_FOR_EB:-1 4})
 fixed_error_bounds_for_measures=(${FIXED_EB_FOR_MEASURES:-0.01 0.05})
 
 # Number of runs
-num_runs=${NUM_RUNS:-2}
+num_runs=${NUM_RUNS:-1}
 
 # Start run index (e.g., RUN_START=3 ./exp_pilotdb.sh to start at run 3)
 run_start=${RUN_START:-1}
