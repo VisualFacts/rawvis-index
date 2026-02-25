@@ -767,6 +767,29 @@ public class Valinor implements AutoCloseable {
 
     // ==================== Confidence Interval Computation ====================
 
+    /**
+     * Computes the confidence interval for the SUM of {@code measureCol} across
+     * sampled nodes, combined with any already-known exact sums.
+     * <p>
+     * Uses the <b>null-as-zero</b> variance formulation: since
+     * {@code SUM(col)} = {@code SUM(COALESCE(col, 0))}, NULL values contribute
+     * 0 to the sum. By modelling the population as fully observed (with NULLs
+     * replaced by 0), we avoid the need to estimate a separate null-ratio and
+     * its variance. The CI correctly widens to account for null-rate uncertainty,
+     * which is especially important for columns with high null rates.
+     * <p>
+     * Formally, for a node with population size N, m sampled points (including
+     * NULLs), n non-null values with sum S and sum-of-squares Q:
+     * <ul>
+     *   <li>With-zeros sample mean: z̄ = S / m</li>
+     *   <li>With-zeros sample variance: s²_z = (Q − S²/m) / (m − 1)</li>
+     *   <li>SUM estimator: Ŝ = N · z̄</li>
+     *   <li>Variance with FPC: Var(Ŝ) = N² · (s²_z / m) · (1 − m/N)</li>
+     * </ul>
+     * The point estimate is identical to the previous formulation
+     * (N · nonNaNRatio · mean = N · S/m), but the variance now correctly
+     * accounts for the null-proportion uncertainty.
+     */
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
             double samplingRate, int measureCol) {
         double exactSum = 0;
@@ -782,36 +805,60 @@ public class Valinor implements AutoCloseable {
         double totalVariance = 0.0;
 
         for (QueryNode qnode : samplingNodes) {
-            int n = (int) qnode.getSampleStatsAcc(measureCol).count();
-            double N = qnode.getIntersectionCount();
-            int totalSampled = qnode.getSampledTracker().cardinality();
+            int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
+            double N = qnode.getIntersectionCount();                    // total population (null + non-null)
+            int m = qnode.getSampledTracker().cardinality();            // total sampled  (null + non-null)
 
-            // SHORT-CIRCUIT if we sampled 100% of that node's points
-            if (totalSampled >= (int) N) {
-                double nodeExactSum = qnode.getSampleStatsAcc(measureCol).sum();
+            // SHORT-CIRCUIT: if every point in the node has been read,
+            // the non-null sum in sampleStatsAcc is exact — no estimation needed.
+            if (m >= (int) N) {
+                double nodeExactSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
                 exactSum += nodeExactSum;
                 continue;
             }
-            if (n < 2) {
-                if (n == 1) {
-                    double singleValue = qnode.getSampleStatsAcc(measureCol).mean();
-                    int sampledCount = qnode.getSampledTracker().cardinality();
-                    double effectiveN = N * ((double) n / Math.max(sampledCount, 1));
-                    totalEstimate += effectiveN * singleValue;
-                } 
+
+            // With fewer than 2 total samples we cannot estimate variance.
+            // Add best-effort point estimate but no variance contribution.
+            if (m < 2) {
+                if (n > 0) {
+                    totalEstimate += N * qnode.getSampleStatsAcc(measureCol).sum() / m;
+                }
                 LOG.trace("Node with {} valid samples out of {} sampled (intersectionCount={})",
-                    n, qnode.getSampledTracker().cardinality(), (int) N);
+                    n, m, (int) N);
                 continue;
             }
 
-            double mean = qnode.getSampleStatsAcc(measureCol).mean();
-            double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
+            // --- Null-as-zero SUM CI ---
+            // S = sum of non-null sampled values (nulls contribute 0)
+            double sampleSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
 
-            double nonNaNRatio = (double) n / Math.max(totalSampled, 1);
-            double effectiveN = N * nonNaNRatio;
+            // Q = sum of squares of non-null values; derived from sample variance:
+            //   sampleVar = (Q - n·mean²) / (n-1)  =>  Q = (n-1)·sampleVar + n·mean²
+            double sumOfSquaresNonNull;
+            if (n >= 2) {
+                double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
+                double mean = qnode.getSampleStatsAcc(measureCol).mean();
+                sumOfSquaresNonNull = (n - 1) * stdev * stdev + n * mean * mean;
+            } else if (n == 1) {
+                double val = qnode.getSampleStatsAcc(measureCol).mean();
+                sumOfSquaresNonNull = val * val;
+            } else {
+                // n == 0: all sampled values were null → sum = 0, no variance
+                sumOfSquaresNonNull = 0.0;
+            }
 
-            double nodeEstimate = effectiveN * mean;
-            double nodeVariance = effectiveN * effectiveN * (stdev * stdev / n) * (1.0 - ((double) n / effectiveN));
+            // With-zeros sample variance: s²_z = (Q - S²/m) / (m - 1)
+            // This treats the (m - n) null samples as zeros, correctly inflating
+            // variance to reflect null-rate uncertainty.
+            double varWithZeros = (sumOfSquaresNonNull - sampleSum * sampleSum / m) / (m - 1);
+            if (varWithZeros < 0) varWithZeros = 0.0;  // guard against fp rounding
+
+            // SUM estimator: Ŝ = N · (S / m)
+            double nodeEstimate = N * sampleSum / m;
+
+            // Variance with finite population correction: Var(Ŝ) = N² · (s²_z / m) · (1 - m/N)
+            double fpc = 1.0 - m / N;
+            double nodeVariance = N * N * (varWithZeros / m) * fpc;
 
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
