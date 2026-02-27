@@ -32,7 +32,7 @@ import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvDoubleRowReader;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
-import gr.athenarc.imsi.visualfacts.util.io.MappedFileReader;
+import gr.athenarc.imsi.visualfacts.util.io.RandomAccessRowReader;
 
 /**
  * Unified Valinor index supporting both exact and approximate query modes.
@@ -49,7 +49,11 @@ public class Valinor implements AutoCloseable {
 
     private boolean isInitialized = false;
 
-    private MappedFileReader mappedFileReader;
+    // Pipelined batch reader — opened lazily on first query, reused for the lifetime of the index
+    private RandomAccessRowReader batchReader;
+
+    // Maximum row length (bytes) observed during init scan — used to size io_uring read buffers
+    private int maxRowLength;
 
     private Grid grid;
 
@@ -281,6 +285,10 @@ public class Valinor implements AutoCloseable {
 
             this.pointStore = store;
 
+            // Capture max row length before closing the reader (needs live JNI handle)
+            this.maxRowLength = (int) rowReader.maxRowLength();
+            LOG.info("Max row length observed during init: {} bytes", maxRowLength);
+
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV", e);
         } finally {
@@ -326,8 +334,8 @@ public class Valinor implements AutoCloseable {
         Rectangle rect = query.getRect();
         QueryResults queryResults = new QueryResults(query);
 
-        if (mappedFileReader == null) {
-            mappedFileReader = MappedFileReader.open(new File(schema.getCsv()));
+        if (batchReader == null) {
+            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength);
         }
 
         List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
@@ -383,49 +391,56 @@ public class Valinor implements AutoCloseable {
             }
         }
 
-        KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
-        int ioCount = 0;
-        
         // Prepare sorted measure column indices for fast extraction
         List<Integer> measureColsList = schema.getMeasureCols();
         int[] sortedMeasureCols = measureColsList.stream().mapToInt(Integer::intValue).sorted().toArray();
-        
+
         // Build mapping from original column index to position in sorted array
         Map<Integer, Integer> measureColToExtractedPos = new HashMap<>();
         for (int i = 0; i < sortedMeasureCols.length; i++) {
             measureColToExtractedPos.put(sortedMeasureCols[i], i);
         }
-        
-        byte delimiterByte = (byte) schema.getDelimiter().charValue();
-        
-        while (pointIterator.hasNext()) {
-            ioCount++;
-            long fileOffset = pointIterator.nextOffset();
-            try {
-                mappedFileReader.seek(fileOffset);
-                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
-                
-                QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                TreeNode node = queryNode.getNode();
 
-                int idx = 0;
+        byte delimiterByte = (byte) schema.getDelimiter().charValue();
+
+        // Read and process rows in fixed-size chunks to bound memory usage
+        KWayMergePointIterator pointIterator = new KWayMergePointIterator(rawIterators);
+        int chunkSize = RandomAccessRowReader.BATCH_SIZE;
+        long[]       offsets = new long[chunkSize];
+        QueryNode[]  nodes   = new QueryNode[chunkSize];
+        int ioCount = 0;
+        int measureCount = schema.getMeasureCount();
+
+        while (pointIterator.hasNext()) {
+            // Fill chunk from the sorted merge iterator
+            int n = 0;
+            while (n < chunkSize && pointIterator.hasNext()) {
+                offsets[n] = pointIterator.nextOffset();
+                nodes[n]   = pointIterator.getCurrentQueryNode();
+                n++;
+            }
+            int batchRows = batchReader.readBatch(offsets, n, sortedMeasureCols, delimiterByte);
+            ioCount += batchRows;
+
+            // Distribute parsed values to query results and node stats
+            for (int rowIdx = 0; rowIdx < batchRows; rowIdx++) {
+                QueryNode queryNode = nodes[rowIdx];
+                TreeNode  node      = queryNode.getNode();
+                int       idx       = 0;
                 for (Integer measureCol : measureColsList) {
-                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    double value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Double.NaN;
-                    
+                    Integer ep = measureColToExtractedPos.get(measureCol);
+                    double  value = Double.NaN;
+                    if (ep != null && batchReader.isPresent(rowIdx, ep)) {
+                        value = batchReader.getValue(rowIdx, ep);
+                    }
                     if (!Double.isNaN(value)) {
                         queryResults.adjustStats(null, measureCol, value);
                     }
-                    
-                    // Progressive stats building for post-split child nodes
                     if (queryNode.isFullyContained()) {
-                        node.adjustStats(idx, schema.getMeasureCount(), value);
+                        node.adjustStats(idx, measureCount, value);
                     }
                     idx++;
                 }
-            } catch (Exception e) {
-                LOG.debug("An unexpected exception occurred: ", e);
             }
         }
 
@@ -456,8 +471,8 @@ public class Valinor implements AutoCloseable {
 
         ApproximateQueryResults queryResults = new ApproximateQueryResults(query);
 
-        if (mappedFileReader == null) {
-            mappedFileReader = MappedFileReader.open(new File(schema.getCsv()));
+        if (batchReader == null) {
+            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength);
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 
@@ -552,8 +567,43 @@ public class Valinor implements AutoCloseable {
                     .map(queryNode -> new SamplingNodePointsIterator(queryNode, samplingRate.get()))
                     .collect(Collectors.toList()));
 
-            // Read the sampled points from the file in sorted order
-            ioCount += readFromFile(query, queryResults, sortedMeasureCols, measureColToExtractedPos, delimiterByte, pointIterator);
+            // Read and process sampled rows in fixed-size chunks
+            int chunkSize = RandomAccessRowReader.BATCH_SIZE;
+            long[]       offsets = new long[chunkSize];
+            QueryNode[]  nodes   = new QueryNode[chunkSize];
+            int measureCount = schema.getMeasureCount();
+
+            while (pointIterator.hasNext()) {
+                int n = 0;
+                while (n < chunkSize && pointIterator.hasNext()) {
+                    offsets[n] = pointIterator.nextOffset();
+                    nodes[n]   = pointIterator.getCurrentQueryNode();
+                    n++;
+                }
+                int batchRows = batchReader.readBatch(offsets, n, sortedMeasureCols, delimiterByte);
+                ioCount += batchRows;
+
+                // Distribute parsed values to per-node sample accumulators
+                for (int rowIdx = 0; rowIdx < batchRows; rowIdx++) {
+                    QueryNode queryNode = nodes[rowIdx];
+                    TreeNode  node      = queryNode.getNode();
+                    int       idx       = 0;
+                    for (Integer measureCol : measureColsList) {
+                        Integer ep = measureColToExtractedPos.get(measureCol);
+                        double  value = Double.NaN;
+                        if (ep != null && batchReader.isPresent(rowIdx, ep)) {
+                            value = batchReader.getValue(rowIdx, ep);
+                        }
+                        if (!Double.isNaN(value)) {
+                            queryNode.addSampleValue(measureCol, value);
+                        }
+                        if (!samplingOnly && queryNode.isFullyContained()) {
+                            node.adjustStats(idx, measureCount, value);
+                        }
+                        idx++;
+                    }
+                }
+            }
 
             // Calculate the confidence intervals for all measures
             for (Integer measureCol : query.getMeasureCols()) {
@@ -892,75 +942,7 @@ public class Valinor implements AutoCloseable {
         return (maxSum - minSum) / (maxSum + minSum);
     }
 
-    // ==================== File I/O ====================
 
-    private int readFromFile(Query query, QueryResults queryResults, int[] sortedMeasureCols,
-            Map<Integer, Integer> measureColToExtractedPos, byte delimiterByte,
-            KWayMergePointIterator pointIterator) {
-        int ioCount = 0;
-        List<Integer> measureColsList = schema.getMeasureCols();
-        while (pointIterator.hasNext()) {
-            ioCount++;
-            long fileOffset = pointIterator.nextOffset();
-            try {
-                mappedFileReader.seek(fileOffset);
-                
-                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
-                
-                QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                TreeNode node = queryNode.getNode();
-                
-                int idx = 0;
-                for (Integer measureCol : measureColsList) {
-                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    double value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Double.NaN;
-                    if (!Double.isNaN(value)) {
-                        queryNode.addSampleValue(measureCol, value);
-                    }
-                    // Progressive stats building for post-split children
-                    if (!samplingOnly && queryNode.isFullyContained()) {
-                        node.adjustStats(idx, schema.getMeasureCount(), value);
-                    }
-                    idx++;
-                }
-            } catch (Exception e) {
-                LOG.error("Error reading from file at offset " + fileOffset + ": " + e.getMessage(), e);
-            }
-        }
-        return ioCount;
-    }
-
-    private int readFullyContainedFromFile(Query query, QueryResults queryResults,
-            int[] sortedMeasureCols, Map<Integer, Integer> measureColToExtractedPos, 
-            byte delimiterByte, KWayMergePointIterator pointIterator) {
-        int ioCount = 0;
-        List<Integer> measureColsList = schema.getMeasureCols();
-        while (pointIterator.hasNext()) {
-            ioCount++;
-            long fileOffset = pointIterator.nextOffset();
-            try {
-                mappedFileReader.seek(fileOffset);
-                
-                double[] extractedValues = mappedFileReader.extractDoubles(sortedMeasureCols, delimiterByte);
-                
-                QueryNode queryNode = pointIterator.getCurrentQueryNode();
-                TreeNode node = queryNode.getNode();
-                
-                int idx = 0;
-                for (Integer measureCol : measureColsList) {
-                    Integer extractedPos = measureColToExtractedPos.get(measureCol);
-                    double value = (extractedPos != null && extractedPos < extractedValues.length)
-                            ? extractedValues[extractedPos] : Double.NaN;
-                    node.adjustStats(idx, schema.getMeasureCount(), value);
-                    idx++;
-                }
-            } catch (Exception e) {
-                LOG.error("Error reading from file at offset " + fileOffset + ": " + e.getMessage(), e);
-            }
-        }
-        return ioCount;
-    }
 
     // ==================== Shared Utilities ====================
 
@@ -1011,15 +993,10 @@ public class Valinor implements AutoCloseable {
     }
 
     @Override
-    public void close() {
-        if (mappedFileReader != null) {
-            try {
-                mappedFileReader.close();
-            } catch (IOException e) {
-                LOG.warn("Failed to close mappedFileReader", e);
-            } finally {
-                mappedFileReader = null;
-            }
+    public synchronized void close() {
+        if (batchReader != null) {
+            batchReader.close();
+            batchReader = null;
         }
     }
 }

@@ -163,6 +163,12 @@ public final class ZsvCsvDoubleRowReader implements CsvDoubleRowReader {
     }
 
     @Override
+    public long maxRowLength() {
+        if (handle == 0) return 0;
+        return ZsvNative.getMaxRowLength(handle);
+    }
+
+    @Override
     public void close() throws IOException {
         if (handle != 0) {
             try {

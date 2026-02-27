@@ -67,4 +67,9 @@ public class UnivocityCsvDoubleRowReader implements CsvDoubleRowReader {
             parser = null;
         }
     }
+
+    @Override
+    public long maxRowLength() {
+        throw new UnsupportedOperationException("Unimplemented method 'maxRowLength'");
+    }
 }
