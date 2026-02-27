@@ -1,9 +1,61 @@
 #!/bin/bash
 
-# Set DuckDB memory limit
-export DUCKDB_MEMORY_LIMIT=12GB
-# Set DuckDB temporary directory
-export DUCKDB_TEMP_DIR=/data-nonraid/maroulis/data/.duckdb_tmp
+# =============================================================================
+# DuckDB experiment runner
+#
+# ---- Memory constraint setup ----
+#
+# MEM_LIMIT — cgroup v2 hard cap on total physical memory (heap + native +
+#   page cache).  Must be the SAME value used for Valinor experiments so that
+#   both systems get an identical hardware budget.  How each system divides
+#   that budget (columnar buffer pool vs spatial index vs page cache) is part
+#   of the architectural comparison.
+#
+# DUCKDB_MEMORY_LIMIT — DuckDB's internal buffer pool size.  DuckDB allocates
+#   this via native malloc (off-heap), so it is outside JVM -Xmx but inside
+#   the cgroup cap.  Auto-computed as MEM_LIMIT − JVM_XMX − 2G (OS overhead),
+#   giving DuckDB the largest possible buffer pool within the cgroup — just as
+#   Valinor gets the largest possible page cache within its cgroup.  Override
+#   via the DUCKDB_MEMORY_LIMIT env var when needed.
+#
+#   At MEM_LIMIT=16G: buffer pool = 12GB (compressed taxi fits → near-zero I/O)
+#   At MEM_LIMIT=8G:  buffer pool = 4GB  (partial caching → some I/O)
+#
+#   If DuckDB's columnar compression lets it cache the entire dataset within
+#   its budget, that is a legitimate architectural advantage — the comparison
+#   is fair because both systems operate under the same total memory cap.
+#
+# JVM_XMX — Java heap cap for the DuckDB Java wrapper.  DuckDB's heavy
+#   lifting is in native memory, so the JVM heap only holds query result
+#   objects and the thin Java wrapper.  2G is sufficient for all datasets.
+#
+# drop_caches is system-wide and runs BEFORE the cgroup process starts,
+# ensuring a cold start.
+# =============================================================================
+
+# ---- Memory settings (override via env vars) ----
+# Cgroup cap — must match the value used in exp_valinor.sh
+MEM_LIMIT=${MEM_LIMIT:-16G}
+# JVM heap — thin wrapper, 2G is enough for all datasets
+JVM_XMX=${JVM_XMX:-2G}
+
+# Parse to numeric GB for auto-computation
+_mem_gb=${MEM_LIMIT%[Gg]}
+_jvm_gb=${JVM_XMX%[Gg]}
+
+# DuckDB buffer pool — auto-sized: MEM_LIMIT - JVM_XMX - 2G (OS overhead)
+_duck_gb=$(( _mem_gb - _jvm_gb - 2 ))
+(( _duck_gb < 1 )) && _duck_gb=1
+export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-${_duck_gb}GB}
+# DuckDB temporary directory for spills when buffer pool is full
+export DUCKDB_TEMP_DIR=${DUCKDB_TEMP_DIR:-/home/stavmars/data/.duckdb_tmp}
+
+echo "=== Memory budget (DuckDB) ==="
+echo "  Cgroup cap (MEM_LIMIT):       $MEM_LIMIT"
+echo "  JVM heap cap (JVM_XMX):       $JVM_XMX"
+echo "  DuckDB buffer pool:           $DUCKDB_MEMORY_LIMIT"
+echo "  OS/page cache headroom:       ~$(( _mem_gb - _jvm_gb - ${DUCKDB_MEMORY_LIMIT//[^0-9]/} ))G"
+echo "==============================="
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LIBPATH="$SCRIPT_DIR/../native/build"
@@ -13,6 +65,7 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 # List of scenarios to run (override via env var)
 scenarios=(${SCENARIOS:-synth10_pan synth50_pan taxi_pan taxi_zoom gaia_dr3_pan})
+scenarios=(${SCENARIOS:-taxi_zoom})
 
 # DuckDB execution modes (override via env var)
 modes=(${MODES:-table})
@@ -47,7 +100,8 @@ do
                 echo "Running DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run..."
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-                java -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
+                    java -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                     -c timeDuckDBQueries \
                     -scenario "$scenario" \
                     -configFile "$config_file" \
