@@ -267,13 +267,17 @@ public class Valinor implements AutoCloseable {
                 }
             }
 
-            // --- Phase 2: in-place partition by tile (cycle chasing) ---
+            // --- Phase 2: partition by tile ---
+            // Transfer tileIds ownership to the store so the spill path can free
+            // it before the final scatter (avoids G1 OOM on 500M+ row datasets).
+            store.takeTileIds(tileIds);
+            tileIds = null; // release caller's reference — store is sole owner now
+
             LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);
             long partStart = System.nanoTime();
-            store.partition(tileIds, validCount, starts, numTiles);
+            store.partition(validCount, starts, numTiles);
             LOG.info("Partition done in {:.3f} s".replace("{:.3f}", 
                     String.format("%.3f", (System.nanoTime() - partStart) / 1e9)));
-            tileIds = null; // free
 
             // --- Phase 3: wire tiles to shared store slices ---
             for (int t = 0; t < numTiles; t++) {
