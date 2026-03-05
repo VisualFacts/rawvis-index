@@ -173,10 +173,12 @@ public class DuckDBQueryExecutor {
 
             try (Statement stmt = connection.createStatement()) {
 
-                // Memory limit
+                // Memory limit — prefer DUCKDB_MEMORY_LIMIT env var (exported by exp_duckdb.sh);
+                // fall back to a safe default for plain `mvn test` runs.
                 String memoryLimit = System.getenv("DUCKDB_MEMORY_LIMIT");
                 if (memoryLimit == null || memoryLimit.isEmpty()) {
-                    memoryLimit = "8GB"; 
+                    memoryLimit = System.getProperty("duckdb.memory.limit", "4GB");
+                    LOG.info("DUCKDB_MEMORY_LIMIT not set; using default {}", memoryLimit);
                 }
                 stmt.execute("SET memory_limit = '" + memoryLimit + "'");
                 LOG.info("DuckDB memory_limit set to {}", memoryLimit);
