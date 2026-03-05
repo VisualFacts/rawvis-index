@@ -79,6 +79,15 @@ public class ScenarioRunnerTest {
         schema = experimentConfig.getSchemaForScenario(scenarioName);
         LOG.info("Loaded scenario '{}' with dataset, csv: {}", scenarioName, schema.getCsv());
 
+        // Skip the test gracefully if the CSV file does not exist (e.g. large
+        // datasets only present on experiment machines, not in CI).
+        String csvPath = schema.getCsv();
+        if (!csvPath.startsWith("classpath:")) {
+            java.io.File csvFile = new java.io.File(csvPath);
+            assumeTrue(csvFile.exists(),
+                    "Skipping: CSV file not found at " + csvPath + " (set scenario.config to a reachable dataset)");
+        }
+
 
         Rectangle q0Rect = scenarioConfig.getQ0().toRectangle();
         Map<Integer, String> q0Filters = scenarioConfig.getQ0().getFilters();

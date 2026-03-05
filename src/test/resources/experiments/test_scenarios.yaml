@@ -10,7 +10,7 @@ datasets:
     objectCount: 100000
     validationFilters: []
   test_synth10_10M:
-    csv: "/data-nonraid/maroulis/data/data_10_cols_10M.csv"
+    csv: "/home/smaroulis/data/data_10_cols_10M.csv"
     hasHeader: false
     delimiter: ','
     xColumn: 0
