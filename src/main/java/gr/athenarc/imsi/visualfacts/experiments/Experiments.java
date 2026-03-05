@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -221,11 +222,19 @@ public class Experiments {
 
             csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
             if (addHeader) {
-                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
-                        "Leaf tiles",
-                        "Overlapped tiles",
-                        "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result",
-                        "Query Result Sum");
+                if (measureMem) {
+                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                            "Leaf tiles",
+                            "Overlapped tiles",
+                            "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result",
+                            "Query Result Sum", "Index Mem (bytes)");
+                } else {
+                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                            "Leaf tiles",
+                            "Overlapped tiles",
+                            "Fully Contained Tiles", "Expanded nodes", "I/Os", "Time (sec)", "Query Result",
+                            "Query Result Sum");
+                }
             }
 
             Stopwatch stopwatch;
@@ -247,6 +256,13 @@ public class Experiments {
                 QueryResults queryResults = valinor.executeQuery(query);
                 stopwatch.stop();
 
+                long memUsedBytes = -1;
+                if (measureMem) {
+                    System.gc();
+                    System.gc();
+                    memUsedBytes = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+                }
+
                 csvWriter.addValue(schema.getCsv());
                 csvWriter.addValue(0);
                 csvWriter.addValue(initMode);
@@ -265,6 +281,9 @@ public class Experiments {
                         ? queryResults.getStats().get(null).entrySet().stream()
                                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
                         : null);
+                if (measureMem) {
+                    csvWriter.addValue(memUsedBytes);
+                }
                 csvWriter.writeValuesToRow();
                 csvWriter.flush();
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
@@ -304,12 +323,21 @@ public class Experiments {
         try {
             CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
             csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
-            csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
-                    "Leaf tiles",
-                    "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
-                    "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)",
-                    "Confidence Interval",
-                    "Error Bound", "run");
+            if (measureMem) {
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                        "Leaf tiles",
+                        "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
+                        "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)",
+                        "Confidence Interval",
+                        "Error Bound", "run", "Index Mem (bytes)");
+            } else {
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query", "indexUtil", "Tree Node Count",
+                        "Leaf tiles",
+                        "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
+                        "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "Expanded nodes", "I/Os", "Time (sec)",
+                        "Confidence Interval",
+                        "Error Bound", "run");
+            }
 
             Stopwatch stopwatch;
 
@@ -329,6 +357,13 @@ public class Experiments {
                 stopwatch = Stopwatch.createStarted();
                 ApproximateQueryResults queryResults = (ApproximateQueryResults) index.executeQuery(query);
                 stopwatch.stop();
+
+                long memUsedBytes = -1;
+                if (measureMem) {
+                    System.gc();
+                    System.gc();
+                    memUsedBytes = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+                }
 
                 csvWriter.addValue(schema.getCsv());
                 csvWriter.addValue(errorBound);
@@ -356,6 +391,9 @@ public class Experiments {
                         : "null");
                 csvWriter.addValue(queryResults.getErrorBounds());
                 csvWriter.addValue(run);
+                if (measureMem) {
+                    csvWriter.addValue(memUsedBytes);
+                }
                 csvWriter.writeValuesToRow();
                 csvWriter.flush();
                 LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
