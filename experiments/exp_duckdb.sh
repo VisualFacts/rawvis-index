@@ -48,7 +48,7 @@ _duck_gb=$(( _mem_gb - _jvm_gb - 2 ))
 (( _duck_gb < 1 )) && _duck_gb=1
 export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-${_duck_gb}GB}
 # DuckDB temporary directory for spills when buffer pool is full
-export DUCKDB_TEMP_DIR=${DUCKDB_TEMP_DIR:-/home/stavmars/data/.duckdb_tmp}
+export DUCKDB_TEMP_DIR=${DUCKDB_TEMP_DIR:-/data/smaroulis/.duckdb_tmp}
 
 echo "=== Memory budget (DuckDB) ==="
 echo "  Cgroup cap (MEM_LIMIT):       $MEM_LIMIT"
@@ -60,12 +60,16 @@ echo "==============================="
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LIBPATH="$SCRIPT_DIR/../native/build"
 
+# Explicitly use Java 21 (LTS)
+# Override via: JAVA=/path/to/java ./exp_duckdb.sh
+JAVA=${JAVA:-/usr/lib/jvm/java-21-openjdk-amd64/bin/java}
+
 config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 
 # List of scenarios to run (override via env var)
-scenarios=(${SCENARIOS:-synth10_pan synth50_pan taxi_pan taxi_zoom gaia_dr3_pan})
-scenarios=(${SCENARIOS:-taxi_zoom})
+scenarios=(${SCENARIOS:-gaia_dr3_pan})
+
 
 # DuckDB execution modes (override via env var)
 modes=(${MODES:-table})
@@ -86,7 +90,8 @@ do
     for scenario in "${scenarios[@]}"
     do
         # Create the directory for results for each mode and scenario
-        mode_results_dir="experiments/results/${scenario}/duckdb/${mode}/"
+        results_base=${RESULTS_BASE:-experiments/results}
+        mode_results_dir="${results_base}/${scenario}/duckdb/${mode}/"
         mkdir -p "$mode_results_dir"
         for num_measures in "${num_measures_list[@]}"
         do
@@ -101,7 +106,9 @@ do
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
                 sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
-                    java -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                    --setenv=DUCKDB_MEMORY_LIMIT="$DUCKDB_MEMORY_LIMIT" \
+                    --setenv=DUCKDB_TEMP_DIR="$DUCKDB_TEMP_DIR" \
+                    "$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                     -c timeDuckDBQueries \
                     -scenario "$scenario" \
                     -configFile "$config_file" \

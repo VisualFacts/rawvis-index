@@ -164,7 +164,7 @@
     </dependencies>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <javac.target>11</javac.target>
+        <javac.target>21</javac.target>
     </properties>
     <build>
         <plugins>

@@ -39,7 +39,8 @@
 #   Override for datasets whose index is unusually large or small:
 #     taxi   (158M rows): ~5.3GB steady → default 2/3 works at MEM_LIMIT≥12G
 #     synth10 (10M rows): ~0.4GB steady → JVM_XMX=2G
-#     gaia  (500M rows):  ~16GB steady → JVM_XMX=22G (raise MEM_LIMIT too)
+#     gaia  (328M rows):  ~8.5GB steady → JVM_XMX=12G at MEM_LIMIT=16G
+#     500M+ rows:         ~13GB peak during init → JVM_XMX=14G (partition spills to disk automatically)
 #   Sizing: (rows × 24 bytes [SharedPointStore]) + grid/tree overhead + 30% GC headroom
 #
 # drop_caches is system-wide (not per-cgroup) and runs BEFORE the process
@@ -49,6 +50,10 @@
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LIBPATH="$SCRIPT_DIR/../native/build"
+
+# Explicitly use Java 21 (LTS)
+# Override via: JAVA=/path/to/java ./exp_valinor.sh
+JAVA=${JAVA:-/usr/lib/jvm/java-21-openjdk-amd64/bin/java}
 
 config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
@@ -72,25 +77,27 @@ echo "  Page cache headroom:     ~$(( _mem_gb - _jvm_gb ))G"
 echo "==============================="
 
 # Approaches to run: "valinor_a" (full system) and/or "valinor_s" (sampling-only baseline)
-approaches=(${APPROACHES:-valinor_a})
+approaches=(${APPROACHES:-valinor_a valinor_s})
 
 # List of scenarios to run
-scenarios=(${SCENARIOS:-taxi_zoom})
-# All scenarios: synth10_pan synth50_pan taxi_pan taxi_zoom sdss_100cols_pan gaia_dr3_pan
+scenarios=(${SCENARIOS:-gaia_dr3_pan})
+# All scenarios: synth10_{50M,100M,200M,500M}_pan_sel1 synth10_100M_pan_sel{001,01,5,10}
+#                synth50_pan_sel1 taxi_pan taxi_zoom gaia_dr3_pan
 
 # Error bounds to sweep
-# error_bounds=(${ERROR_BOUNDS:-0 0.01 0.02 0.05 0.1})
-error_bounds=(${ERROR_BOUNDS:-0 0.05})
+error_bounds=(${ERROR_BOUNDS:-0 0.01 0.02 0.05 0.1})
 
 # Number of measure columns to test
-# num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
-num_measures_list=(${NUM_MEASURES:-1})
+num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
 
 # Combination pruning: which measure counts get the full error bound sweep
 fixed_measures_for_error_bounds=(${FIXED_MEASURES_FOR_EB:-1 4})
 
 # Combination pruning: which error bounds get the full measure count sweep
 fixed_error_bounds_for_measures=(${FIXED_EB_FOR_MEASURES:-0 0.01 0.05})
+
+# Parent results directory (override to write results to a different folder)
+results_base=${RESULTS_BASE:-experiments/results}
 
 # Number of runs
 num_runs=${NUM_RUNS:-1}
@@ -133,7 +140,7 @@ do
     do
         for scenario in "${scenarios[@]}"
         do
-            results_dir="experiments/results/${scenario}/${subdir}"
+            results_dir="${results_base}/${scenario}/${subdir}"
             mkdir -p "$results_dir"
             for num_measures in "${num_measures_list[@]}"
             do
@@ -162,7 +169,7 @@ do
                     # Force cold disk reads for reproducible initialization timing
                     sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
                     sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
-                        java -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                        "$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                         -c timeApproximateQueries \
                         -scenario "$scenario" \
                         -configFile "$config_file" \

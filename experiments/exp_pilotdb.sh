@@ -10,13 +10,33 @@
 #   uv pip install -e /tmp/PilotDB
 #   uv pip install "sqlglot==26.30.0"   # PilotDB breaks with sqlglot >= 28
 
-# Set DuckDB memory limit
-export DUCKDB_MEMORY_LIMIT=12GB
-# Set DuckDB temporary directory
-export DUCKDB_TEMP_DIR=/data-nonraid/maroulis/data/.duckdb_tmp
+# ---- Memory settings (override via env vars) ----
+# Cgroup cap — must match the value used in exp_valinor.sh / exp_duckdb.sh
+MEM_LIMIT=${MEM_LIMIT:-16G}
+
+# Parse to numeric GB for auto-computation
+_mem_gb=${MEM_LIMIT%[Gg]}
+
+# DuckDB buffer pool — same 12GB as in exp_duckdb.sh (16G cap - 4G overhead).
+# In exp_duckdb.sh the 4G covers JVM (2G) + OS (2G); here it covers
+# Python/PilotDB + OS.  Either way DuckDB gets the same budget.
+_duck_gb=$(( _mem_gb - 4 ))
+(( _duck_gb < 1 )) && _duck_gb=1
+export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-${_duck_gb}GB}
+# DuckDB temporary directory for spills when buffer pool is full
+export DUCKDB_TEMP_DIR=${DUCKDB_TEMP_DIR:-/data/smaroulis/.duckdb_tmp}
+
+echo "=== Memory budget (PilotDB) ==="
+echo "  Cgroup cap (MEM_LIMIT):       $MEM_LIMIT"
+echo "  DuckDB buffer pool:           $DUCKDB_MEMORY_LIMIT"
+echo "==============================="
+
+# Explicitly use Java 21 (LTS, same as exp_valinor.sh) for query generation
+JAVA=${JAVA:-/usr/lib/jvm/java-21-openjdk-amd64/bin/java}
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-LIBPATH="$SCRIPT_DIR/../native/build"
+PROJECT_ROOT=$(readlink -f "$SCRIPT_DIR/..")
+LIBPATH="$PROJECT_ROOT/native/build"
 
 config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
@@ -62,13 +82,14 @@ contains() {
 
 for scenario in "${scenarios[@]}"
 do
-    results_dir="experiments/results/${scenario}/pilotdb/"
+    results_base=${RESULTS_BASE:-experiments/results}
+    results_dir="${results_base}/${scenario}/pilotdb/"
     mkdir -p "$results_dir"
 
     generated_queries_file="${results_dir}queries_generated.txt"
     if [[ ! -f "$generated_queries_file" ]]; then
         echo "Generating query sequence for scenario $scenario..."
-        java -Xmx16G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+        "$JAVA" -Xmx16G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
             -c generateAndSaveQuerySequence \
             -scenario "$scenario" \
             -configFile "$config_file" \
@@ -85,7 +106,8 @@ for run in $(seq $run_start $run_end)
 do
     for scenario in "${scenarios[@]}"
     do
-        results_dir="experiments/results/${scenario}/pilotdb/"
+        results_base=${RESULTS_BASE:-experiments/results}
+        results_dir="${results_base}/${scenario}/pilotdb/"
         generated_queries_file="${results_dir}queries_generated.txt"
         if [[ ! -f "$generated_queries_file" ]]; then
             echo "No queries file for scenario $scenario. Skipping."
@@ -115,7 +137,11 @@ do
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 
-                .venv-pilotdb/bin/python ./experiments/run_pilotdb_queries.py \
+                sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
+                    --setenv=DUCKDB_MEMORY_LIMIT="$DUCKDB_MEMORY_LIMIT" \
+                    --setenv=DUCKDB_TEMP_DIR="$DUCKDB_TEMP_DIR" \
+                    --working-directory="$PROJECT_ROOT" \
+                    "$PROJECT_ROOT/.venv-pilotdb/bin/python" "$SCRIPT_DIR/run_pilotdb_queries.py" \
                     --queries-file "$generated_queries_file" \
                     --scenario "$scenario" \
                     --config-file "$config_file" \
