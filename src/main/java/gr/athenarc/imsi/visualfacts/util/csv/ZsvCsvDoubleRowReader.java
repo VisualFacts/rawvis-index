@@ -80,11 +80,22 @@ public final class ZsvCsvDoubleRowReader implements CsvDoubleRowReader {
 
         boolean skipHeader = config.isSkipHeader();
 
-        this.handle = ZsvNative.open(
-                config.getFile().getAbsolutePath(),
-                (byte) config.getDelimiter(),
-                skipHeader,
-                selectedCols);
+        if (config.isChunkBased()) {
+            // Chunk-based opening: start at a specific byte offset, stop at end offset.
+            // Header is never skipped — the offset is already past the header.
+            this.handle = ZsvNative.openAtOffset(
+                    config.getFile().getAbsolutePath(),
+                    (byte) config.getDelimiter(),
+                    config.getStartOffset(),
+                    config.getEndOffset(),
+                    selectedCols);
+        } else {
+            this.handle = ZsvNative.open(
+                    config.getFile().getAbsolutePath(),
+                    (byte) config.getDelimiter(),
+                    skipHeader,
+                    selectedCols);
+        }
 
         if (this.handle == 0) {
             cleanupState();

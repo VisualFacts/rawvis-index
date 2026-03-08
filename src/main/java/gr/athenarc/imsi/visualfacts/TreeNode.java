@@ -86,6 +86,23 @@ public class TreeNode {
         size++;
     }
 
+    /**
+     * Sets the point count directly (used by parallel scanner merge, which
+     * computes per-tile counts across all threads and applies them in bulk).
+     */
+    public void setSize(int count) {
+        this.size = count;
+    }
+
+    /**
+     * Bulk-sets pre-built statistics from the parallel scanner.
+     * Replaces any existing statsArray and statsPointCount.
+     */
+    public void setPrebuiltStats(StatsAccumulator[] stats, int[] pointCounts) {
+        this.statsArray = stats;
+        this.statsPointCount = pointCounts;
+    }
+
     // ---- Slice wiring (Phase 3) ----
 
     /**

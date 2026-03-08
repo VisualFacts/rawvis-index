@@ -1,8 +1,5 @@
 package gr.athenarc.imsi.visualfacts;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -10,6 +7,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * Shared backing store for point data (x, y, file-offset).
@@ -48,6 +48,17 @@ public class SharedPointStore {
         this.xs = new double[capacity];
         this.ys = new double[capacity];
         this.offsets = new long[capacity];
+    }
+
+    /**
+     * Creates a store by adopting pre-built arrays (used by parallel scanner).
+     * The caller MUST NOT retain references to the passed arrays.
+     */
+    public SharedPointStore(double[] xs, double[] ys, long[] offsets, int validCount) {
+        this.xs = xs;
+        this.ys = ys;
+        this.offsets = offsets;
+        this.capacity = validCount;
     }
 
     public int getCapacity() { return capacity; }

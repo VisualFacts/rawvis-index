@@ -9,6 +9,26 @@ public final class ZsvNative {
 
     public static native long open(String path, byte delimiter, boolean skipHeader, int[] selectedCols);
 
+    /**
+     * Opens a ZSV parser starting at a specific byte offset within the file.
+     * Used for parallel chunk-based CSV scanning. The parser will stop after
+     * consuming bytes up to {@code endOffset}. No header is skipped — the
+     * caller must ensure {@code startOffset} points past any header line.
+     * <p>
+     * Byte offsets reported by {@link #nextBatchDoubles} are absolute (adjusted
+     * by {@code startOffset}).
+     *
+     * @param path         absolute path to the CSV file
+     * @param delimiter    column delimiter byte
+     * @param startOffset  byte offset to start parsing from
+     * @param endOffset    exclusive end byte offset; -1 = read to EOF
+     * @param selectedCols zero-based column indices to extract
+     * @return opaque native handle, or 0 on failure (exception thrown)
+     */
+    public static native long openAtOffset(String path, byte delimiter,
+                                           long startOffset, long endOffset,
+                                           int[] selectedCols);
+
     public static native void close(long handle);
 
     /**

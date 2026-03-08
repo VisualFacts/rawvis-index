@@ -4,7 +4,6 @@ import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -29,9 +28,6 @@ import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.XYContainmentExaminer;
 import gr.athenarc.imsi.visualfacts.util.YContainmentExaminer;
-import gr.athenarc.imsi.visualfacts.util.csv.CsvDoubleRowReader;
-import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
-import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
 import gr.athenarc.imsi.visualfacts.util.io.RandomAccessRowReader;
 
 /**
@@ -157,20 +153,11 @@ public class Valinor implements AutoCloseable {
         for (int i = 0; i < selectedColumns.length; i++) {
             colIndexToRowPos.put(selectedColumns[i], i);
         }
-        CsvReaderConfig readerConfig = new CsvReaderConfig(
-                new File(schema.getCsv()),
-                Charset.forName("UTF-8"),
-                selectedColumns,
-                schema.getHasHeader(),
-                schema.getDelimiter());
-        CsvDoubleRowReader rowReader = new ZsvCsvDoubleRowReader();
 
         objectsIndexed = 0;
-        int objectsSkipped = 0;
 
         final int xPos = colIndexToRowPos.get(schema.getxColumn());
         final int yPos = colIndexToRowPos.get(schema.getyColumn());
-        final int logInterval = Math.max(1, schema.getObjectCount() / 10);
 
         List<Integer> measureCols = schema.getMeasureCols();
         final int measureCount = measureCols.size();
@@ -190,76 +177,75 @@ public class Valinor implements AutoCloseable {
             filterArray[i] = f;
         }
 
+        // Build tile index mapping for partition
+        List leafTileList = grid.getLeafTiles();
+        int numTiles = leafTileList.size();
+        if (numTiles > Short.MAX_VALUE) {
+            throw new IllegalStateException("Tile count " + numTiles + " exceeds short range; cannot use short[] tileIds");
+        }
+        IdentityHashMap<Tile, Integer> tileIndexMap = new IdentityHashMap<>(numTiles);
+        for (int t = 0; t < numTiles; t++) {
+            tileIndexMap.put((Tile) leafTileList.get(t), t);
+        }
+
+        final int capacity = schema.getObjectCount();
+        final int availableThreads = Runtime.getRuntime().availableProcessors();
+        final int scanThreads = Math.max(1, availableThreads);
+
         try {
-            rowReader.open(readerConfig);
-            double[] row;
+            // --- Phase 1: parallel CSV scan → merged arrays + per-tile counts/stats ---
+            long phase1Start = System.nanoTime();
 
-            // Build tile index mapping for partition
-            List leafTileList = grid.getLeafTiles();
-            int numTiles = leafTileList.size();
-            IdentityHashMap<Tile, Integer> tileIndexMap = new IdentityHashMap<>(numTiles);
+            ParallelCsvScanner scanner = new ParallelCsvScanner(
+                    new File(schema.getCsv()), schema.getDelimiter(), schema.getHasHeader(),
+                    selectedColumns, xPos, yPos,
+                    filterPositions, filterArray, measurePositions,
+                    grid.getBounds(), grid, tileIndexMap, numTiles,
+                    scanThreads, capacity);
+
+            ParallelCsvScanner.ScanResult scanResult = scanner.scan();
+
+            int validCount = scanResult.validCount;
+            objectsIndexed = validCount;
+            this.maxRowLength = (int) scanResult.maxRowLength;
+            LOG.info("Max row length observed during init: {} bytes", maxRowLength);
+
+            // Adopt the merged arrays into a SharedPointStore
+            SharedPointStore store = new SharedPointStore(
+                    scanResult.xs, scanResult.ys, scanResult.offsets, validCount);
+
+            // Wire per-tile counts and stats from the parallel scan into TreeNodes
             for (int t = 0; t < numTiles; t++) {
-                tileIndexMap.put((Tile) leafTileList.get(t), t);
-            }
+                int count = scanResult.tileCounts[t];
+                if (count > 0) {
+                    TreeNode node = ((Tile) leafTileList.get(t)).getOrCreateRoot();
+                    node.setSize(count);
 
-            // --- Phase 1: CSV scan → shared store + tileIds + per-tile counts + stats ---
-            final int capacity = schema.getObjectCount();
-            SharedPointStore store = new SharedPointStore(capacity);
-            if (numTiles > Short.MAX_VALUE) {
-                throw new IllegalStateException("Tile count " + numTiles + " exceeds short range; cannot use short[] tileIds");
-            }
-            short[] tileIds = new short[capacity];
-            int validCount = 0;
-
-            while ((row = rowReader.nextRow()) != null) {
-                long rowOffset = rowReader.currentOffset();
-
-                boolean shouldSkip = false;
-                for (int i = 0; i < filterCount; i++) {
-                    if (filterArray[i].test(row[filterPositions[i]])) {
-                        shouldSkip = true;
-                        break;
+                    // Set pre-built stats
+                    if (measureCount > 0) {
+                        node.setPrebuiltStats(scanResult.tileStats[t],
+                                scanResult.tileStatsPointCounts[t]);
                     }
                 }
-
-                if (shouldSkip) {
-                    objectsSkipped++;
-                    continue;
-                }
-
-                double x = row[xPos];
-                double y = row[yPos];
-
-                if (!grid.getBounds().contains(x, y)) {
-                    continue;
-                }
-                Tile leafTile = (Tile) grid.getLeafTile(x, y);
-                TreeNode node = leafTile.getOrCreateRoot();
-
-                store.set(validCount, x, y, rowOffset);
-                tileIds[validCount] = tileIndexMap.get(leafTile).shortValue();
-                validCount++;
-
-                node.incrementCount();
-
-                for (int i = 0; i < measureCount; i++) {
-                    if (measurePositions[i] < 0) continue;
-                    node.adjustStats(i, measureCount, row[measurePositions[i]]);
-                }
-
-                if (++objectsIndexed % logInterval == 0) {
-                    LOG.debug("Indexing object " + objectsIndexed);
-                }
-
             }
+
+            // --- Phase 1b: compute tileIds from merged xs/ys arrays ---
+            // This is a fast sequential pass over in-memory arrays (~1-2s for 500M rows).
+            long tileIdStart = System.nanoTime();
+            short[] tileIds = new short[validCount];
+            for (int i = 0; i < validCount; i++) {
+                Tile leafTile = (Tile) grid.getLeafTile(store.getX(i), store.getY(i));
+                tileIds[i] = tileIndexMap.get(leafTile).shortValue();
+            }
+            LOG.info("TileId assignment: {} points in {} s", validCount,
+                    String.format("%.3f", (System.nanoTime() - tileIdStart) / 1e9));
+
+            LOG.info("Phase 1 total (scan + merge + tileIds): {} s",
+                    String.format("%.3f", (System.nanoTime() - phase1Start) / 1e9));
 
             // --- Phase 1.5: compute prefix sums from per-tile counts ---
-            int[] counts = new int[numTiles];
+            int[] counts = scanResult.tileCounts;
             int[] starts = new int[numTiles];
-            for (int t = 0; t < numTiles; t++) {
-                TreeNode root = ((Tile) leafTileList.get(t)).getRoot();
-                counts[t] = root != null ? root.getSize() : 0;
-            }
             if (numTiles > 0) {
                 starts[0] = 0;
                 for (int t = 1; t < numTiles; t++) {
@@ -267,17 +253,21 @@ public class Valinor implements AutoCloseable {
                 }
             }
 
+            // Release scanner and large scan-result fields so GC can reclaim
+            // per-thread arrays and StatsAccumulators before partition allocates.
+            scanResult = null;
+            scanner = null;
+
             // --- Phase 2: partition by tile ---
-            // Transfer tileIds ownership to the store so the spill path can free
-            // it before the final scatter (avoids G1 OOM on 500M+ row datasets).
             store.takeTileIds(tileIds);
-            tileIds = null; // release caller's reference — store is sole owner now
+            tileIds = null;
+            System.gc();
 
             LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);
             long partStart = System.nanoTime();
             store.partition(validCount, starts, numTiles);
-            LOG.info("Partition done in {:.3f} s".replace("{:.3f}", 
-                    String.format("%.3f", (System.nanoTime() - partStart) / 1e9)));
+            LOG.info("Partition done in {} s",
+                    String.format("%.3f", (System.nanoTime() - partStart) / 1e9));
 
             // --- Phase 3: wire tiles to shared store slices ---
             for (int t = 0; t < numTiles; t++) {
@@ -289,24 +279,13 @@ public class Valinor implements AutoCloseable {
 
             this.pointStore = store;
 
-            // Capture max row length before closing the reader (needs live JNI handle)
-            this.maxRowLength = (int) rowReader.maxRowLength();
-            LOG.info("Max row length observed during init: {} bytes", maxRowLength);
-
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV", e);
-        } finally {
-            try {
-                rowReader.close();
-            } catch (IOException ignore) {
-            }
         }
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
-        LOG.debug("Total Skipped Objects: " + objectsSkipped);
         
         if (!isExactMode()) {
-            // Compute global stats by aggregating from all leaf tile nodes (needed for initial sampling rate)
             computeGlobalMeasureStats();
         }
         

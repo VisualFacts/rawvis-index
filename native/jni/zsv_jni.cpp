@@ -39,6 +39,9 @@ typedef struct
     long row_index;
     int eof;
     size_t max_row_len;   // largest row_length_raw_bytes seen during scan
+
+    int64_t start_offset; // absolute byte offset this reader started from (0 for full-file)
+    int64_t end_offset;   // exclusive end byte; -1 = read to EOF
 } reader_t;
 
 static reader_t *handle_to_reader(jlong handle)
@@ -131,6 +134,8 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
     r->skip_header = skipHeader ? 1 : 0;
     r->row_index = 0;
     r->eof = 0;
+    r->start_offset = 0;
+    r->end_offset   = -1; // full-file read
 
     jsize selCount = env->GetArrayLength(jselCols);
     if (selCount <= 0)
@@ -170,6 +175,117 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
     // NOTE: no_quotes=1 disables quoted CSV handling (fast, but not standard CSV).
     opts.no_quotes = 1;
 
+    opts.buff = NULL;
+    opts.buffsize = 0;
+    opts.max_columns = ZSV_MAX_COLS_DEFAULT;
+    opts.max_row_size = ZSV_ROW_MAX_SIZE_DEFAULT;
+
+    r->parser = zsv_new(&opts);
+    if (!r->parser)
+    {
+        free_reader(r);
+        throw_ioe(env, "zsv_new failed");
+        return 0;
+    }
+
+    return (jlong)(uintptr_t)r;
+}
+
+JNIEXPORT jlong JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_openAtOffset(
+    JNIEnv *env, jclass cls, jstring jpath, jbyte delimiter,
+    jlong jstartOffset, jlong jendOffset, jintArray jselCols)
+{
+    (void)cls;
+
+    if (!jpath || !jselCols)
+    {
+        throw_ioe(env, "openAtOffset(): path/selectedCols must not be null");
+        return 0;
+    }
+
+    const char *path = env->GetStringUTFChars(jpath, NULL);
+    if (!path)
+        return 0;
+
+    FILE *f = fopen(path, "rb");
+    env->ReleaseStringUTFChars(jpath, path);
+
+    if (!f)
+    {
+        throw_ioe(env, "openAtOffset(): failed to open CSV file");
+        return 0;
+    }
+
+    // Seek to the requested start offset
+    if (jstartOffset > 0)
+    {
+        if (fseeko(f, (off_t)jstartOffset, SEEK_SET) != 0)
+        {
+            fclose(f);
+            throw_ioe(env, "openAtOffset(): fseeko failed");
+            return 0;
+        }
+    }
+
+    // I/O optimizations
+    setvbuf(f, NULL, _IOFBF, 8 * 1024 * 1024);
+#ifdef __linux__
+    posix_fadvise(fileno(f), 0, 0, POSIX_FADV_SEQUENTIAL);
+#endif
+
+    reader_t *r = (reader_t *)calloc(1, sizeof(reader_t));
+    if (!r)
+    {
+        fclose(f);
+        jclass oom = env->FindClass("java/lang/OutOfMemoryError");
+        if (oom)
+            env->ThrowNew(oom, "Out of memory");
+        return 0;
+    }
+
+    r->f = f;
+    r->skip_header = 0; // chunks never have a header to skip
+    r->row_index = 0;
+    r->eof = 0;
+    r->start_offset = (int64_t)jstartOffset;
+    r->end_offset   = (int64_t)jendOffset;   // -1 = read to EOF
+
+    jsize selCount = env->GetArrayLength(jselCols);
+    if (selCount <= 0)
+    {
+        free_reader(r);
+        throw_ioe(env, "selectedCols must not be empty");
+        return 0;
+    }
+
+    r->sel_count = (int)selCount;
+    r->sel = (int *)malloc(sizeof(int) * (size_t)selCount);
+    if (!r->sel)
+    {
+        free_reader(r);
+        jclass oom = env->FindClass("java/lang/OutOfMemoryError");
+        if (oom)
+            env->ThrowNew(oom, "Out of memory");
+        return 0;
+    }
+
+    jint *tmp = env->GetIntArrayElements(jselCols, NULL);
+    if (!tmp)
+    {
+        free_reader(r);
+        throw_ioe(env, "Failed to read selectedCols");
+        return 0;
+    }
+    for (int i = 0; i < (int)selCount; i++)
+        r->sel[i] = tmp[i];
+    env->ReleaseIntArrayElements(jselCols, tmp, JNI_ABORT);
+
+    struct zsv_opts opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.stream = r->f;
+    opts.delimiter = (char)delimiter;
+    opts.no_quotes = 1;
     opts.buff = NULL;
     opts.buffsize = 0;
     opts.max_columns = ZSV_MAX_COLS_DEFAULT;
@@ -287,7 +403,21 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
 
             size_t cum = zsv_cum_scanned_length(r->parser);
             size_t row_len = zsv_row_length_raw_bytes(r->parser);
-            offsets[rowsRead] = (int64_t)(cum - row_len);
+
+            // Check end-of-chunk boundary using the ROW START position.
+            // (cum - row_len) = row's first byte, relative to this reader's start.
+            // end_offset = first byte of the NEXT chunk (= chunkStarts[t+1]).
+            // A row whose start is at or past that boundary belongs to the next
+            // reader, so we exclude it and stop.  This comparison is line-ending
+            // agnostic: it works identically for \n and \r\n because row_len
+            // (scanned_length - row_start) excludes the newline character(s).
+            if (r->end_offset > 0 && (int64_t)(cum - row_len) >= (r->end_offset - r->start_offset))
+            {
+                r->eof = 1;
+                break;  // exclude this row — it belongs to the next chunk
+            }
+
+            offsets[rowsRead] = r->start_offset + (int64_t)(cum - row_len);
             if (row_len > r->max_row_len) r->max_row_len = row_len;
 
             size_t cc = zsv_cell_count(r->parser);
