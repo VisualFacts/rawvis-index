@@ -35,6 +35,14 @@ public class SharedPointStore {
     private long[] offsets;
     private int capacity;
 
+    // Chunked storage — non-null between construction (from parallel scanner)
+    // and partition (which flattens chunks into contiguous arrays).
+    private boolean chunked;
+    private double[][] xsChunks;
+    private double[][] ysChunks;
+    private long[][] offsetsChunks;
+    private int[] chunkStarts; // prefix sum: chunkStarts[k] = sum of chunkSizes[0..k-1]
+
     /**
      * Tile IDs for partition — set via {@link #takeTileIds} before {@link #partition},
      * cleared internally after partition completes.  Holding tileIds as a field
@@ -61,11 +69,45 @@ public class SharedPointStore {
         this.capacity = validCount;
     }
 
+    /**
+     * Creates a store from chunked per-thread arrays (zero-copy adoption).
+     * The {@link #partition} call will flatten chunks into contiguous arrays.
+     * @param chunkSizes number of valid elements in each chunk
+     */
+    public SharedPointStore(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
+                            int[] chunkSizes, int totalSize) {
+        this.chunked = true;
+        this.xsChunks = xsChunks;
+        this.ysChunks = ysChunks;
+        this.offsetsChunks = offsetsChunks;
+        int numChunks = chunkSizes.length;
+        this.chunkStarts = new int[numChunks + 1];
+        for (int i = 0; i < numChunks; i++) {
+            chunkStarts[i + 1] = chunkStarts[i] + chunkSizes[i];
+        }
+        this.capacity = totalSize;
+    }
+
     public int getCapacity() { return capacity; }
 
-    public double getX(int i) { return xs[i]; }
-    public double getY(int i) { return ys[i]; }
-    public long getOffset(int i) { return offsets[i]; }
+    public double getX(int i) {
+        if (chunked) { int c = chunkFor(i); return xsChunks[c][i - chunkStarts[c]]; }
+        return xs[i];
+    }
+    public double getY(int i) {
+        if (chunked) { int c = chunkFor(i); return ysChunks[c][i - chunkStarts[c]]; }
+        return ys[i];
+    }
+    public long getOffset(int i) {
+        if (chunked) { int c = chunkFor(i); return offsetsChunks[c][i - chunkStarts[c]]; }
+        return offsets[i];
+    }
+
+    /** Finds the chunk containing the given global index via binary search on prefix sums. */
+    private int chunkFor(int globalIndex) {
+        int pos = Arrays.binarySearch(chunkStarts, globalIndex);
+        return pos >= 0 ? pos : -pos - 2;
+    }
 
     /** Writes a point at position {@code i} (used during Phase 1 sequential scan). */
     public void set(int i, double x, double y, long offset) {
@@ -118,9 +160,72 @@ public class SharedPointStore {
         this.tileIds = null; // no longer needed
     }
 
-    /** Pure in-memory partition — zero overhead, used when heap is sufficient. */
+    /** Dispatches to chunked or contiguous in-memory partition. */
     private void partitionInMemory(int n, int[] starts, int numTiles) {
         final short[] tid = this.tileIds;
+        if (chunked) {
+            partitionChunkedInMemory(n, starts, numTiles, tid);
+        } else {
+            partitionContiguousInMemory(n, starts, numTiles, tid);
+        }
+        this.capacity = n;
+    }
+
+    /** Scatter-partitions from chunked source arrays into contiguous target arrays. */
+    private void partitionChunkedInMemory(int n, int[] starts, int numTiles, short[] tid) {
+        final int numChunks = xsChunks.length;
+        int[] cursors;
+
+        // Pass 1: scatter xs from chunks
+        cursors = Arrays.copyOf(starts, numTiles);
+        double[] newXs = new double[n];
+        int gi = 0;
+        for (int c = 0; c < numChunks; c++) {
+            double[] cArr = xsChunks[c];
+            int cSize = chunkStarts[c + 1] - chunkStarts[c];
+            for (int j = 0; j < cSize; j++) {
+                newXs[cursors[tid[gi++]]++] = cArr[j];
+            }
+            xsChunks[c] = null; // free chunk for GC
+        }
+        this.xs = newXs;
+        this.xsChunks = null;
+
+        // Pass 2: scatter ys from chunks
+        cursors = Arrays.copyOf(starts, numTiles);
+        double[] newYs = new double[n];
+        gi = 0;
+        for (int c = 0; c < numChunks; c++) {
+            double[] cArr = ysChunks[c];
+            int cSize = chunkStarts[c + 1] - chunkStarts[c];
+            for (int j = 0; j < cSize; j++) {
+                newYs[cursors[tid[gi++]]++] = cArr[j];
+            }
+            ysChunks[c] = null;
+        }
+        this.ys = newYs;
+        this.ysChunks = null;
+
+        // Pass 3: scatter offsets from chunks
+        cursors = Arrays.copyOf(starts, numTiles);
+        long[] newOffsets = new long[n];
+        gi = 0;
+        for (int c = 0; c < numChunks; c++) {
+            long[] cArr = offsetsChunks[c];
+            int cSize = chunkStarts[c + 1] - chunkStarts[c];
+            for (int j = 0; j < cSize; j++) {
+                newOffsets[cursors[tid[gi++]]++] = cArr[j];
+            }
+            offsetsChunks[c] = null;
+        }
+        this.offsets = newOffsets;
+        this.offsetsChunks = null;
+        this.chunkStarts = null;
+        this.chunked = false;
+    }
+
+    /** Original contiguous scatter partition (used by legacy non-parallel path). */
+    private void partitionContiguousInMemory(int n, int[] starts, int numTiles, short[] tid) {
         int[] cursors;
 
         // Pass 1: scatter xs
@@ -129,7 +234,7 @@ public class SharedPointStore {
         for (int i = 0; i < n; i++) {
             newXs[cursors[tid[i]]++] = xs[i];
         }
-        this.xs = newXs; // old xs[] now unreachable
+        this.xs = newXs;
 
         // Pass 2: scatter ys
         cursors = Arrays.copyOf(starts, numTiles);
@@ -137,7 +242,7 @@ public class SharedPointStore {
         for (int i = 0; i < n; i++) {
             newYs[cursors[tid[i]]++] = ys[i];
         }
-        this.ys = newYs; // old ys[] now unreachable
+        this.ys = newYs;
 
         // Pass 3: scatter offsets
         cursors = Arrays.copyOf(starts, numTiles);
@@ -145,9 +250,7 @@ public class SharedPointStore {
         for (int i = 0; i < n; i++) {
             newOffsets[cursors[tid[i]]++] = offsets[i];
         }
-        this.offsets = newOffsets; // old offsets[] now unreachable
-
-        this.capacity = n;
+        this.offsets = newOffsets;
     }
 
     /**
@@ -182,16 +285,33 @@ public class SharedPointStore {
             long t0 = System.nanoTime();
 
             // Phase A: Spill each data array to its own file, GC between each.
-            spillDoubleArrayToFile(this.xs, n, tmpXs);
-            this.xs = null;
+            if (chunked) {
+                spillDoubleChunksToFile(this.xsChunks, this.chunkStarts, tmpXs);
+                this.xsChunks = null;
+            } else {
+                spillDoubleArrayToFile(this.xs, n, tmpXs);
+                this.xs = null;
+            }
             forceGC("xs");
 
-            spillDoubleArrayToFile(this.ys, n, tmpYs);
-            this.ys = null;
+            if (chunked) {
+                spillDoubleChunksToFile(this.ysChunks, this.chunkStarts, tmpYs);
+                this.ysChunks = null;
+            } else {
+                spillDoubleArrayToFile(this.ys, n, tmpYs);
+                this.ys = null;
+            }
             forceGC("ys");
 
-            spillLongArrayToFile(this.offsets, n, tmpOff);
-            this.offsets = null;
+            if (chunked) {
+                spillLongChunksToFile(this.offsetsChunks, this.chunkStarts, tmpOff);
+                this.offsetsChunks = null;
+                this.chunkStarts = null;
+                this.chunked = false;
+            } else {
+                spillLongArrayToFile(this.offsets, n, tmpOff);
+                this.offsets = null;
+            }
             forceGC("offsets");
 
             LOG.debug("Spilled all data arrays to disk in {} s",
@@ -263,6 +383,32 @@ public class SharedPointStore {
                 StandardOpenOption.WRITE, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
             writeLongsToChannel(ch, arr, len);
+        }
+    }
+
+    /** Writes chunked double arrays sequentially to a single file. */
+    private static void spillDoubleChunksToFile(double[][] chunks, int[] chunkStarts, Path file) throws IOException {
+        try (FileChannel ch = FileChannel.open(file,
+                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (int c = 0; c < chunks.length; c++) {
+                int cSize = chunkStarts[c + 1] - chunkStarts[c];
+                writeDoublesToChannel(ch, chunks[c], cSize);
+                chunks[c] = null; // free each chunk as we go
+            }
+        }
+    }
+
+    /** Writes chunked long arrays sequentially to a single file. */
+    private static void spillLongChunksToFile(long[][] chunks, int[] chunkStarts, Path file) throws IOException {
+        try (FileChannel ch = FileChannel.open(file,
+                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (int c = 0; c < chunks.length; c++) {
+                int cSize = chunkStarts[c + 1] - chunkStarts[c];
+                writeLongsToChannel(ch, chunks[c], cSize);
+                chunks[c] = null;
+            }
         }
     }
 

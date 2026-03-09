@@ -210,9 +210,10 @@ public class Valinor implements AutoCloseable {
             this.maxRowLength = (int) scanResult.maxRowLength;
             LOG.info("Max row length observed during init: {} bytes", maxRowLength);
 
-            // Adopt the merged arrays into a SharedPointStore
+            // Adopt scan chunks into a SharedPointStore (zero-copy, no merge)
             SharedPointStore store = new SharedPointStore(
-                    scanResult.xs, scanResult.ys, scanResult.offsets, validCount);
+                    scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
+                    scanResult.chunkSizes, validCount);
 
             // Wire per-tile counts and stats from the parallel scan into TreeNodes
             for (int t = 0; t < numTiles; t++) {

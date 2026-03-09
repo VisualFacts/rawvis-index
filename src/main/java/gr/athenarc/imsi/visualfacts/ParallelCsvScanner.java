@@ -92,9 +92,13 @@ public final class ParallelCsvScanner {
     // ======================================================================
 
     public static final class ScanResult {
-        public final double[] xs;
-        public final double[] ys;
-        public final long[] offsets;
+        /** Per-thread chunk arrays. For the disk path, this is a single chunk. */
+        public final double[][] xsChunks;
+        public final double[][] ysChunks;
+        public final long[][] offsetsChunks;
+        /** Number of valid elements in each chunk. */
+        public final int[] chunkSizes;
+
         public final int validCount;
         public final long maxRowLength;
 
@@ -110,12 +114,14 @@ public final class ParallelCsvScanner {
         /** Per-tile, per-measure processed point counts (includes NaN). */
         public final int[][] tileStatsPointCounts;
 
-        ScanResult(double[] xs, double[] ys, long[] offsets, int validCount,
-                   long maxRowLength, int[] tileCounts,
-                   StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts) {
-            this.xs = xs;
-            this.ys = ys;
-            this.offsets = offsets;
+        ScanResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
+                   int[] chunkSizes, int validCount, long maxRowLength,
+                   int[] tileCounts, StatsAccumulator[][] tileStats,
+                   int[][] tileStatsPointCounts) {
+            this.xsChunks = xsChunks;
+            this.ysChunks = ysChunks;
+            this.offsetsChunks = offsetsChunks;
+            this.chunkSizes = chunkSizes;
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
@@ -225,10 +231,12 @@ public final class ParallelCsvScanner {
         if (useDiskScan) {
             result = mergeDisk(results, totalValid, globalMaxRowLen);
         } else {
-            result = mergeInMemory(results, totalValid, globalMaxRowLen);
+            result = adoptChunks(results, totalValid, globalMaxRowLen);
         }
-        double mergeSec = (System.nanoTime() - t1) / 1e9;
-        LOG.info("Array merge complete in {} s", String.format("%.3f", mergeSec));
+        double adoptSec = (System.nanoTime() - t1) / 1e9;
+        LOG.info("Chunk {} complete in {} s",
+                useDiskScan ? "merge (disk)" : "adopt (zero-copy)",
+                String.format("%.3f", adoptSec));
 
         return result;
     }
@@ -401,8 +409,8 @@ public final class ParallelCsvScanner {
             }
 
             if (!useDisk) {
-                // Trim backing arrays to exact size so merge peak is
-                // predictable: 3×8×N (local) + 8×N (one global) = 32N.
+                // Trim backing arrays to exact size to minimize memory footprint.
+                // After adoption, these become chunks in SharedPointStore.
                 localXs.trim();
                 localYs.trim();
                 localOffsets.trim();
@@ -452,41 +460,38 @@ public final class ParallelCsvScanner {
     //  Merge: in-memory path
     // ======================================================================
 
-    private ScanResult mergeInMemory(ChunkResult[] results, int totalValid, long maxRowLen) {
-        // Merge xs: allocate global, copy each thread's data, free local
-        double[] globalXs = new double[totalValid];
-        int offset = 0;
-        for (ChunkResult cr : results) {
-            if (cr.validCount > 0) {
-                System.arraycopy(cr.localXs.elements(), 0, globalXs, offset, cr.validCount);
-            }
-            offset += cr.validCount;
-            cr.localXs = null; // release for GC
-        }
+    /**
+     * Adopts thread-local arrays as chunks (zero-copy).
+     * Each thread's trimmed backing array becomes one chunk in the result,
+     * avoiding the merge allocation that caused OOM on tight heaps.
+     * Peak memory stays at 24N (the arrays already held during scan).
+     */
+    private ScanResult adoptChunks(ChunkResult[] results, int totalValid, long maxRowLen) {
+        int numChunks = results.length;
+        double[][] xsChunks = new double[numChunks][];
+        double[][] ysChunks = new double[numChunks][];
+        long[][] offsetsChunks = new long[numChunks][];
+        int[] chunkSizes = new int[numChunks];
 
-        // Merge ys
-        double[] globalYs = new double[totalValid];
-        offset = 0;
-        for (ChunkResult cr : results) {
+        for (int i = 0; i < numChunks; i++) {
+            ChunkResult cr = results[i];
             if (cr.validCount > 0) {
-                System.arraycopy(cr.localYs.elements(), 0, globalYs, offset, cr.validCount);
+                xsChunks[i] = cr.localXs.elements();
+                ysChunks[i] = cr.localYs.elements();
+                offsetsChunks[i] = cr.localOffsets.elements();
+            } else {
+                xsChunks[i] = new double[0];
+                ysChunks[i] = new double[0];
+                offsetsChunks[i] = new long[0];
             }
-            offset += cr.validCount;
+            chunkSizes[i] = cr.validCount;
+            cr.localXs = null;
             cr.localYs = null;
-        }
-
-        // Merge offsets
-        long[] globalOffsets = new long[totalValid];
-        offset = 0;
-        for (ChunkResult cr : results) {
-            if (cr.validCount > 0) {
-                System.arraycopy(cr.localOffsets.elements(), 0, globalOffsets, offset, cr.validCount);
-            }
-            offset += cr.validCount;
             cr.localOffsets = null;
         }
 
-        return buildResult(globalXs, globalYs, globalOffsets, totalValid, maxRowLen, results);
+        return buildResult(xsChunks, ysChunks, offsetsChunks, chunkSizes,
+                totalValid, maxRowLen, results);
     }
 
     // ======================================================================
@@ -531,7 +536,10 @@ public final class ParallelCsvScanner {
                 cr.tmpOffsets = null;
             }
 
-            return buildResult(globalXs, globalYs, globalOffsets, totalValid, maxRowLen, results);
+            return buildResult(
+                    new double[][] { globalXs }, new double[][] { globalYs },
+                    new long[][] { globalOffsets }, new int[] { totalValid },
+                    totalValid, maxRowLen, results);
         } finally {
             // Cleanup any remaining temp files on error
             for (ChunkResult cr : results) {
@@ -546,8 +554,8 @@ public final class ParallelCsvScanner {
     //  Merge: combine per-tile counts and stats
     // ======================================================================
 
-    private ScanResult buildResult(double[] xs, double[] ys, long[] offsets,
-                                   int totalValid, long maxRowLen,
+    private ScanResult buildResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
+                                   int[] chunkSizes, int totalValid, long maxRowLen,
                                    ChunkResult[] results) {
         // Merge per-tile counts
         int[] globalCounts = new int[numTiles];
@@ -576,8 +584,8 @@ public final class ParallelCsvScanner {
             }
         }
 
-        return new ScanResult(xs, ys, offsets, totalValid, maxRowLen,
-                globalCounts, globalStats, globalPointCounts);
+        return new ScanResult(xsChunks, ysChunks, offsetsChunks, chunkSizes,
+                totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts);
     }
 
     // ======================================================================
