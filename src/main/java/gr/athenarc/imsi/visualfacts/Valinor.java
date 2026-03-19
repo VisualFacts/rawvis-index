@@ -493,7 +493,7 @@ public class Valinor implements AutoCloseable {
 
                 if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
-                } else if (node.getSize() > THRESHOLD) {
+                } else if (!isFullyContained && node.getSize() > THRESHOLD) {
                     leafTile.split();
                     leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
