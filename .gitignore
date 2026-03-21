@@ -19,7 +19,7 @@ __pycache__/
 *.pyo
 
 # Ignore virtual environments
-.venv/
+.venv*/
 venv/
 env/
 
@@ -29,3 +29,6 @@ Thumbs.db
 
 # Ignore Jupyter Notebook metadata
 *.nbconvert.ipynb
+
+# Ignore PDF files (e.g., generated charts)
+*.pdf
