@@ -16,7 +16,6 @@ import gr.athenarc.imsi.visualfacts.query.Query;
 public class Grid extends Tile {
 
     private static final Logger LOG = LogManager.getLogger(Grid.class);
-    List<CategoricalColumn> categoricalColumns;
     InitializationPolicy initializationPolicy;
     private Tile[][] tiles;
     private Range<Double>[] xRanges;
@@ -28,10 +27,9 @@ public class Grid extends Tile {
     // private RangeMap<Float, Integer> xRangeMap = TreeRangeMap.create();
     // private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
 
-    public Grid(InitializationPolicy initializationPolicy, Rectangle bounds, List<CategoricalColumn> categoricalColumns,
+    public Grid(InitializationPolicy initializationPolicy, Rectangle bounds,
             int gridSize) {
         super(bounds);
-        this.categoricalColumns = categoricalColumns;
         this.gridSize = gridSize;
         this.initializationPolicy = initializationPolicy;
     }
@@ -57,7 +55,7 @@ public class Grid extends Tile {
                     splitSize = initializationPolicy.computeSplitSize(rect);
                 }
                 if (splitSize > 1) {
-                    Grid subGrid = new Grid(null, rect, categoricalColumns, splitSize);
+                    Grid subGrid = new Grid(null, rect, splitSize);
                     subGrid.split();
                     tiles[i][j] = subGrid;
                     // LOG.debug("Initial split of tile " + colTileRange + rowTileRange + " : " +
@@ -86,7 +84,7 @@ public class Grid extends Tile {
         return subranges;
     }
 
-    private Integer getRowIndex(double y) {
+    private int getRowIndex(double y) {
         // return yRangeMap.get(y);
 
         double yMin = this.bounds.getYRange().lowerEndpoint();
@@ -100,7 +98,7 @@ public class Grid extends Tile {
         return i;
     }
 
-    private Integer getColIndex(double x) {
+    private int getColIndex(double x) {
         // return xRangeMap.get(x);
 
         double xMin = this.bounds.getXRange().lowerEndpoint();
@@ -220,13 +218,12 @@ public class Grid extends Tile {
     }
 
     /**
-     * Routes to the leaf tile for (x,y) and returns its root TreeNode
-     * (creating it if needed), without adding any point data.
+     * Routes to the leaf tile for (x,y).
      * Used in two-phase init: phase 1 counts, phase 2 inserts.
      */
-    public TreeNode getOrCreateLeafRoot(double x, double y) {
+    public Tile getLeafTileChecked(double x, double y) {
         if (this.bounds.contains(x, y)) {
-            return this.getLeafTile(x, y).getOrCreateRoot();
+            return this.getLeafTile(x, y);
         }
         return null;
     }
@@ -293,4 +290,5 @@ public class Grid extends Tile {
         }
         return depth;
     }
+
 }

@@ -21,6 +21,7 @@ import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.shorts.ShortArrayList;
 
 /**
  * Parallel CSV scanner that divides a file into byte-range chunks and parses
@@ -96,6 +97,8 @@ public final class ParallelCsvScanner {
         public final double[][] xsChunks;
         public final double[][] ysChunks;
         public final long[][] offsetsChunks;
+        /** Per-thread tile ID chunks — parallel to xs/ys/offsets chunks. */
+        public final short[][] tileIdChunks;
         /** Number of valid elements in each chunk. */
         public final int[] chunkSizes;
 
@@ -115,12 +118,14 @@ public final class ParallelCsvScanner {
         public final int[][] tileStatsPointCounts;
 
         ScanResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
+                   short[][] tileIdChunks,
                    int[] chunkSizes, int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats,
                    int[][] tileStatsPointCounts) {
             this.xsChunks = xsChunks;
             this.ysChunks = ysChunks;
             this.offsetsChunks = offsetsChunks;
+            this.tileIdChunks = tileIdChunks;
             this.chunkSizes = chunkSizes;
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
@@ -139,11 +144,13 @@ public final class ParallelCsvScanner {
         DoubleArrayList localXs;
         DoubleArrayList localYs;
         LongArrayList localOffsets;
+        ShortArrayList localTileIds;
 
         // These are used in the disk path; null in the in-memory path.
         Path tmpXs;
         Path tmpYs;
         Path tmpOffsets;
+        Path tmpTileIds;
 
         int validCount;
         long maxRowLength;
@@ -305,22 +312,27 @@ public final class ParallelCsvScanner {
         DoubleArrayList localYs = null;
         LongArrayList localOffsets = null;
 
-        FileChannel chXs = null, chYs = null, chOff = null;
+        FileChannel chXs = null, chYs = null, chOff = null, chTid = null;
         ByteBuffer spillBuf = null;
 
         try {
+            ShortArrayList localTileIds = null;
+
             if (useDisk) {
                 cr.tmpXs = Files.createTempFile("par_xs_" + threadIdx + "_", ".bin");
                 cr.tmpYs = Files.createTempFile("par_ys_" + threadIdx + "_", ".bin");
                 cr.tmpOffsets = Files.createTempFile("par_off_" + threadIdx + "_", ".bin");
+                cr.tmpTileIds = Files.createTempFile("par_tid_" + threadIdx + "_", ".bin");
                 chXs = FileChannel.open(cr.tmpXs, StandardOpenOption.WRITE);
                 chYs = FileChannel.open(cr.tmpYs, StandardOpenOption.WRITE);
                 chOff = FileChannel.open(cr.tmpOffsets, StandardOpenOption.WRITE);
+                chTid = FileChannel.open(cr.tmpTileIds, StandardOpenOption.WRITE);
                 spillBuf = ByteBuffer.allocate(SPILL_BUF).order(ByteOrder.nativeOrder());
             } else {
                 localXs = new DoubleArrayList(estimatedRows);
                 localYs = new DoubleArrayList(estimatedRows);
                 localOffsets = new LongArrayList(estimatedRows);
+                localTileIds = new ShortArrayList(estimatedRows);
             }
 
             // Open the chunk reader
@@ -380,20 +392,22 @@ public final class ParallelCsvScanner {
                         }
                     }
 
-                    // Store x, y, offset
+                    // Store x, y, offset, tileId
                     if (useDisk) {
                         // Write to spill buffer, flush when full
-                        if (spillBuf.remaining() < 24) { // 8+8+8 bytes
-                            flushSpillBuffers(spillBuf, chXs, chYs, chOff, validCount);
+                        if (spillBuf.remaining() < 26) { // 8+8+8+2 bytes
+                            flushSpillBuffers(spillBuf, chXs, chYs, chOff, chTid, validCount);
                             spillBuf.clear();
                         }
                         spillBuf.putDouble(x);
                         spillBuf.putDouble(y);
                         spillBuf.putLong(offset);
+                        spillBuf.putShort((short) tileIdx);
                     } else {
                         localXs.add(x);
                         localYs.add(y);
                         localOffsets.add(offset);
+                        localTileIds.add((short) tileIdx);
                     }
 
                     validCount++;
@@ -401,7 +415,7 @@ public final class ParallelCsvScanner {
 
                 // Flush remaining spill data
                 if (useDisk && spillBuf.position() > 0) {
-                    flushSpillBuffers(spillBuf, chXs, chYs, chOff, validCount);
+                    flushSpillBuffers(spillBuf, chXs, chYs, chOff, chTid, validCount);
                 }
 
                 cr.validCount = validCount;
@@ -414,14 +428,17 @@ public final class ParallelCsvScanner {
                 localXs.trim();
                 localYs.trim();
                 localOffsets.trim();
+                localTileIds.trim();
                 cr.localXs = localXs;
                 cr.localYs = localYs;
                 cr.localOffsets = localOffsets;
+                cr.localTileIds = localTileIds;
             }
 
         } catch (Throwable t) {
             cr.error = t;
         } finally {
+            closeQuietly(chTid);
             closeQuietly(chXs);
             closeQuietly(chYs);
             closeQuietly(chOff);
@@ -436,24 +453,29 @@ public final class ParallelCsvScanner {
      */
     private static void flushSpillBuffers(ByteBuffer interleaved,
                                           FileChannel chXs, FileChannel chYs,
-                                          FileChannel chOff, int rowsSoFar) throws IOException {
+                                          FileChannel chOff, FileChannel chTid,
+                                          int rowsSoFar) throws IOException {
         interleaved.flip();
-        int rows = interleaved.remaining() / 24;
+        int rows = interleaved.remaining() / 26; // 8+8+8+2 bytes per row
         // De-interleave into per-attribute temp buffers
         ByteBuffer bXs = ByteBuffer.allocate(rows * 8).order(ByteOrder.nativeOrder());
         ByteBuffer bYs = ByteBuffer.allocate(rows * 8).order(ByteOrder.nativeOrder());
         ByteBuffer bOff = ByteBuffer.allocate(rows * 8).order(ByteOrder.nativeOrder());
+        ByteBuffer bTid = ByteBuffer.allocate(rows * 2).order(ByteOrder.nativeOrder());
         for (int i = 0; i < rows; i++) {
             bXs.putDouble(interleaved.getDouble());
             bYs.putDouble(interleaved.getDouble());
             bOff.putLong(interleaved.getLong());
+            bTid.putShort(interleaved.getShort());
         }
         bXs.flip();
         bYs.flip();
         bOff.flip();
+        bTid.flip();
         while (bXs.hasRemaining()) chXs.write(bXs);
         while (bYs.hasRemaining()) chYs.write(bYs);
         while (bOff.hasRemaining()) chOff.write(bOff);
+        while (bTid.hasRemaining()) chTid.write(bTid);
     }
 
     // ======================================================================
@@ -471,6 +493,7 @@ public final class ParallelCsvScanner {
         double[][] xsChunks = new double[numChunks][];
         double[][] ysChunks = new double[numChunks][];
         long[][] offsetsChunks = new long[numChunks][];
+        short[][] tileIdChunks = new short[numChunks][];
         int[] chunkSizes = new int[numChunks];
 
         for (int i = 0; i < numChunks; i++) {
@@ -479,18 +502,21 @@ public final class ParallelCsvScanner {
                 xsChunks[i] = cr.localXs.elements();
                 ysChunks[i] = cr.localYs.elements();
                 offsetsChunks[i] = cr.localOffsets.elements();
+                tileIdChunks[i] = cr.localTileIds.elements();
             } else {
                 xsChunks[i] = new double[0];
                 ysChunks[i] = new double[0];
                 offsetsChunks[i] = new long[0];
+                tileIdChunks[i] = new short[0];
             }
             chunkSizes[i] = cr.validCount;
             cr.localXs = null;
             cr.localYs = null;
             cr.localOffsets = null;
+            cr.localTileIds = null;
         }
 
-        return buildResult(xsChunks, ysChunks, offsetsChunks, chunkSizes,
+        return buildResult(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
                 totalValid, maxRowLen, results);
     }
 
@@ -536,9 +562,22 @@ public final class ParallelCsvScanner {
                 cr.tmpOffsets = null;
             }
 
+            // Merge tileIds from disk
+            short[] globalTileIds = new short[totalValid];
+            offset = 0;
+            for (ChunkResult cr : results) {
+                if (cr.validCount > 0) {
+                    readShortsFromFile(cr.tmpTileIds, globalTileIds, offset, cr.validCount);
+                }
+                offset += cr.validCount;
+                safeDelete(cr.tmpTileIds);
+                cr.tmpTileIds = null;
+            }
+
             return buildResult(
                     new double[][] { globalXs }, new double[][] { globalYs },
-                    new long[][] { globalOffsets }, new int[] { totalValid },
+                    new long[][] { globalOffsets }, new short[][] { globalTileIds },
+                    new int[] { totalValid },
                     totalValid, maxRowLen, results);
         } finally {
             // Cleanup any remaining temp files on error
@@ -546,6 +585,7 @@ public final class ParallelCsvScanner {
                 safeDelete(cr.tmpXs);
                 safeDelete(cr.tmpYs);
                 safeDelete(cr.tmpOffsets);
+                safeDelete(cr.tmpTileIds);
             }
         }
     }
@@ -555,6 +595,7 @@ public final class ParallelCsvScanner {
     // ======================================================================
 
     private ScanResult buildResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
+                                   short[][] tileIdChunks,
                                    int[] chunkSizes, int totalValid, long maxRowLen,
                                    ChunkResult[] results) {
         // Merge per-tile counts
@@ -584,7 +625,7 @@ public final class ParallelCsvScanner {
             }
         }
 
-        return new ScanResult(xsChunks, ysChunks, offsetsChunks, chunkSizes,
+        return new ScanResult(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
                 totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts);
     }
 
@@ -632,6 +673,28 @@ public final class ParallelCsvScanner {
                 buf.flip();
                 while (buf.remaining() >= 8) {
                     dest[pos++] = buf.getLong();
+                }
+                remaining -= toRead;
+            }
+        }
+    }
+
+    private static void readShortsFromFile(Path path, short[] dest, int destOffset, int count) throws IOException {
+        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
+            ByteBuffer buf = ByteBuffer.allocate(Math.min(SPILL_BUF, count * 2)).order(ByteOrder.nativeOrder());
+            int remaining = count;
+            int pos = destOffset;
+            while (remaining > 0) {
+                buf.clear();
+                int toRead = Math.min(remaining, buf.capacity() / 2);
+                buf.limit(toRead * 2);
+                while (buf.hasRemaining()) {
+                    int n = ch.read(buf);
+                    if (n < 0) break;
+                }
+                buf.flip();
+                while (buf.remaining() >= 2) {
+                    dest[pos++] = buf.getShort();
                 }
                 remaining -= toRead;
             }

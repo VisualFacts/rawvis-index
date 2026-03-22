@@ -95,7 +95,7 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
 
     @Override
     protected long peekOffset() {
-        long offset = queryNode.getNode().getOffset(currentIndex);
+        long offset = queryNode.getTile().getOffset(currentIndex);
         // Move to next selected sample for the next advance call
         int consumed = currentIndex;
         currentIndex = selectedSamples.nextSetBit(currentIndex + 1);

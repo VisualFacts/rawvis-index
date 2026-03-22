@@ -29,8 +29,6 @@ public class QueryResults {
 
     private int tileCount;
 
-    private int expandedNodeCount;
-
     private int ioCount;
 
     public QueryResults(Query query) {
@@ -120,14 +118,6 @@ public class QueryResults {
         this.ioCount = ioCount;
     }
 
-    public int getExpandedNodeCount() {
-        return expandedNodeCount;
-    }
-
-    public void setExpandedNodeCount(int expandedNodeCount) {
-        this.expandedNodeCount = expandedNodeCount;
-    }
-
     public List<double[]> getPoints() {
         return points;
     }
@@ -153,7 +143,6 @@ public class QueryResults {
                 ", points=" + points +
                 ", fullyContainedTileCount=" + fullyContainedTileCount +
                 ", tileCount=" + tileCount +
-                ", expandedNodeCount=" + expandedNodeCount +
                 ", ioCount=" + ioCount +
                 '}';
     }

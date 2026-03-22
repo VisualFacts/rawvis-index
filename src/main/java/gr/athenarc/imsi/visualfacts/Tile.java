@@ -1,13 +1,9 @@
 package gr.athenarc.imsi.visualfacts;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -24,14 +20,22 @@ public abstract class Tile {
 
     protected Rectangle bounds;
 
-    protected TreeNode root;
-    List<CategoricalColumn> categoricalColumns;
+    // ---- Point data ----
+    // References a slice [start, start+size) of a SharedPointStore.
+    // During Phase 1 (counting), store is null and only size is used (via incrementCount/setSize).
+    // After Phase 3 (wiring), store is set and getX/getY/getOffset delegate to it.
+    private SharedPointStore store;
+    private int start;
+    private int size;
+
+    private StatsAccumulator[] statsArray;
+    private int[] statsPointCount; // per-measure count of processed points (incl. NaN)
+    private BitSet sampledTracker;
 
     /**
      * Frozen stats from a tile that has been split. These are exact aggregate
-     * statistics captured before the split destroyed the root node.
-     * Only set when ALL measures had complete stats (count == pointCount)
-     * and the root had no categorical children.
+     * statistics captured before the split destroyed the point data.
+     * Only set when ALL measures had complete stats (count == pointCount).
      */
     private Stats[] frozenStats;
     private int frozenPointCount;
@@ -46,22 +50,6 @@ public abstract class Tile {
     public Rectangle getBounds() {
         return bounds;
     }
-
-    public TreeNode getRoot() {
-        return root;
-    }
-
-    /**
-     * Returns the root TreeNode for this tile, creating it if needed.
-     * For non-categorical path only (categorical columns not currently used).
-     */
-    public TreeNode getOrCreateRoot() {
-        if (root == null) {
-            root = new TreeNode((short) 0);
-        }
-        return root;
-    }
-
 
     public abstract List getLeafTiles();
 
@@ -80,129 +68,166 @@ public abstract class Tile {
 
     public abstract int getLeafTileCount();
 
+    // ---- Point data methods ----
+
+    public void adjustStats(int measureIndex, int measureCount, double value) {
+        if (statsPointCount == null) {
+            statsPointCount = new int[measureCount];
+        }
+        statsPointCount[measureIndex]++;
+
+        if (Double.isNaN(value)) return;
+        if (statsArray == null) {
+            statsArray = new StatsAccumulator[measureCount];
+        }
+        StatsAccumulator stats = statsArray[measureIndex];
+        if (stats == null) {
+            stats = new StatsAccumulator();
+            statsArray[measureIndex] = stats;
+        }
+        stats.add(value);
+    }
+
+    /**
+     * Checks if this tile has complete statistics for a specific measure.
+     *
+     * @param measureIndex the measure to check statistics for
+     * @return {@code true} if every point has been processed for this measure
+     */
+    public boolean hasStats(int measureIndex) {
+        if (size == 0 || statsPointCount == null) {
+            return false;
+        }
+        if (measureIndex < 0 || measureIndex >= statsPointCount.length) {
+            return false;
+        }
+        return statsPointCount[measureIndex] == size;
+    }
+
+    /** Phase 1: just count, no array allocation. */
+    public void incrementCount() {
+        size++;
+    }
+
+    /**
+     * Sets the point count directly (used by parallel scanner merge, which
+     * computes per-tile counts across all threads and applies them in bulk).
+     */
+    public void setSize(int count) {
+        this.size = count;
+    }
+
+    /**
+     * Bulk-sets pre-built statistics from the parallel scanner.
+     * Replaces any existing statsArray and statsPointCount.
+     */
+    public void setPrebuiltStats(StatsAccumulator[] stats, int[] pointCounts) {
+        this.statsArray = stats;
+        this.statsPointCount = pointCounts;
+    }
+
+    /**
+     * Wires this tile to a slice of the shared point store.
+     * Called after the global partition (or sub-partition during split)
+     * has placed this tile's points at contiguous positions [start, start+size).
+     */
+    public void setSlice(SharedPointStore store, int start, int size) {
+        this.store = store;
+        this.start = start;
+        this.size = size;
+    }
+
+    // ---- Indexed access ----
+
+    public double getX(int i) { return store.getX(start + i); }
+    public double getY(int i) { return store.getY(start + i); }
+    public long getOffset(int i) { return store.getOffset(start + i); }
+    public int getSize() { return size; }
+    public int getStart() { return start; }
+    public SharedPointStore getStore() { return store; }
+
+    /** Returns true if this tile has point data wired to a shared store. */
+    public boolean hasPoints() { return store != null && size > 0; }
+
+    public StatsAccumulator getStats(int measureIndex) {
+        if (statsArray == null || measureIndex < 0 || measureIndex >= statsArray.length) {
+            return null;
+        }
+        return statsArray[measureIndex];
+    }
+
+    public StatsAccumulator[] getStatsArray() {
+        return statsArray;
+    }
+
+    public int[] getStatsPointCount() {
+        return statsPointCount;
+    }
+
+    public BitSet getSampledTracker() {
+        return sampledTracker;
+    }
+
+    public void setSampledTracker(BitSet sampledTracker) {
+        this.sampledTracker = sampledTracker;
+    }
+
+    /**
+     * Clears point data when this tile becomes a non-leaf (after split).
+     * The parent's points have been sub-partitioned into children.
+     */
+    public void clearPointData() {
+        store = null;
+        start = 0;
+        size = 0;
+        statsArray = null;
+        statsPointCount = null;
+    }
+
+    // ---- Query node creation ----
+
+    /**
+     * Returns a single QueryNode wrapping this tile for the given query.
+     */
     public List<QueryNode> getQueryNodes(Query query, ContainmentExaminer containmentExaminer, Schema schema) {
-        //we keep the old list of attrs in case node nodes match the query in this tile so that we dont expand trees unnecessarily
-        List<CategoricalColumn> oldCatAttrs = categoricalColumns;
-
-        categoricalColumns = categoricalColumns == null || categoricalColumns.isEmpty() ? new ArrayList<>() : new ArrayList<>(categoricalColumns);
-        Set<Integer> treeAttrIndexes = categoricalColumns.stream().map(CategoricalColumn::getIndex).collect(Collectors.toSet());
-
-        //we check if the tree's categorical attributes lack any of the attrs included in the query
-        Set<Integer> queryAttrs = new HashSet<>(query.getCategoricalFilters().keySet());
-
-        if (query.getGroupByCols() != null) {
-            queryAttrs.addAll(query.getGroupByCols());
-        }
-        List<CategoricalColumn> unknownQueryAttrs = queryAttrs.stream().filter(attr -> !treeAttrIndexes.contains(attr))
-                .map(attrIndex -> schema.getCategoricalColumn(attrIndex))
-                .sorted(Comparator.comparingInt(CategoricalColumn::getCardinality)).collect(Collectors.toList());
-
-        categoricalColumns.addAll(unknownQueryAttrs);
         List<QueryNode> queryNodes = new ArrayList<>();
-        if (root != null) {
-            List<Short> pattern = categoricalColumns.stream().map(categoricalColumn -> {
-                String filterValue = query.getCategoricalFilters().get(categoricalColumn.getIndex());
-                return filterValue == null ? null : categoricalColumn.getValueKey(filterValue);
-            }).collect(Collectors.toList());
-            queryNodes = getQueryNodesRec(query, queryNodes, containmentExaminer, root, pattern, 0, new Short[categoricalColumns.size()], schema);
-        }
-
-        if (queryNodes.isEmpty()) {
-            categoricalColumns = oldCatAttrs;
+        if (hasPoints()) {
+            queryNodes.add(new QueryNode(this, containmentExaminer, query, schema));
         }
         return queryNodes;
     }
 
-
-    private List<QueryNode> getQueryNodesRec(Query query, List<QueryNode> list, ContainmentExaminer containmentExaminer, TreeNode node, List<Short> pattern, int level, Short[] values, Schema schema) {
-        // we are at a leaf node
-        if (node.getChildren() == null || node.getChildren().isEmpty()) {
-            Map<Integer, Short> groupByValues = new HashMap<>();
-            if (query.getGroupByCols() != null && !query.getGroupByCols().isEmpty()) {
-                for (int i = 0; i < level; i++) {
-                    CategoricalColumn categoricalColumn = categoricalColumns.get(i);
-                    if (query.getGroupByCols().contains(categoricalColumn.getIndex())) {
-                        groupByValues.put(categoricalColumn.getIndex(), values[i]);
-                    }
-                }
-            }
-            list.add(new QueryNode(node, this, containmentExaminer, groupByValues, getUnknownAttrs(level), query, schema));
-            return list;
-        }
-
-        Short label = pattern.get(level);
-
-        // no filter set for current categorical
-        if (label == null) {
-            for (TreeNode child : node.getChildren()) {
-                values[level] = child.getLabel();
-                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values, schema);
-            }
-        } else {
-            TreeNode child = node.getChild(label);
-            if (child != null) {
-                values[level] = child.getLabel();
-                getQueryNodesRec(query, list, containmentExaminer, child, pattern, level + 1, values, schema);
-            }
-        }
-        return list;
-    }
-
-    private List<CategoricalColumn> getUnknownAttrs(int level) {
-        return new ArrayList<>(categoricalColumns.subList(level, categoricalColumns.size()));
-    }
-
-    public List<CategoricalColumn> getCategoricalColumns() {
-        return categoricalColumns;
-    }
-
-    public void setCategoricalColumns(List<CategoricalColumn> categoricalColumns) {
-        this.categoricalColumns = categoricalColumns;
-    }
+    // ---- Frozen stats (for split short-circuit) ----
 
     /**
-     * Freezes the current root node's complete stats before splitting.
+     * Freezes the current tile's complete stats before splitting.
      * Only freezes when:
-     * - root exists with non-null points
-     * - root has NO categorical children (categorical attributes formally unsupported)
+     * - tile has point data
      * - ALL measures have complete stats (count == point count)
      *
      * This enables short-circuiting subtree traversal for future queries
      * that fully contain this tile.
      */
     public void freezeStats() {
-        if (root == null || !root.hasPoints()) return;
+        if (!hasPoints()) return;
 
-        // Categorical trees: root has children representing categorical attribute branches.
-        // Freezing stats for categorical trees is not supported — categorical query
-        // processing is currently disabled. When categorical support is re-enabled,
-        // this method should be extended to aggregate stats across categorical leaves.
-        if (root.getChildren() != null && !root.getChildren().isEmpty()) {
-            LOG.trace("Skipping stats freeze for tile with categorical tree: {}", bounds);
-            return;
-        }
+        if (statsPointCount == null || statsPointCount.length == 0) return;
 
-        int[] processedCounts = root.getStatsPointCount();
-        StatsAccumulator[] nodeStats = root.getStatsArray();
-        if (processedCounts == null || processedCounts.length == 0) return;
-
-        int pointCount = root.getSize();
-        int measureCount = processedCounts.length;
+        int pointCount = size;
+        int measureCount = statsPointCount.length;
         Stats[] candidate = new Stats[measureCount];
         for (int i = 0; i < measureCount; i++) {
-            if (processedCounts[i] != pointCount) {
+            if (statsPointCount[i] != pointCount) {
                 return; // Not all points processed for this measure — don't freeze
             }
-            // nodeStats[i] may be null if ALL points were NaN for this measure.
-            // That's still a valid frozen state (count=0).
-            candidate[i] = (nodeStats != null && i < nodeStats.length && nodeStats[i] != null)
-                    ? nodeStats[i].snapshot()
+            candidate[i] = (statsArray != null && i < statsArray.length && statsArray[i] != null)
+                    ? statsArray[i].snapshot()
                     : Stats.of(); // empty stats: count=0, sum=0
         }
         frozenStats = candidate;
         frozenPointCount = pointCount;
         LOG.trace("Froze exact stats for tile {} ({} points, {} measures)",
-                bounds, pointCount, nodeStats.length);
+                bounds, pointCount, statsPointCount.length);
     }
 
     /**
@@ -232,8 +257,8 @@ public abstract class Tile {
     public String toString() {
         return "Tile{" +
                 "bounds=" + bounds +
-                ", root=" + root +
-                ", categoricalColumns=" + categoricalColumns +
+                ", size=" + size +
+                ", stats=" + Arrays.toString(statsArray) +
                 ", frozenStats=" + (frozenStats != null ? "yes(" + frozenPointCount + " pts)" : "no") +
                 '}';
     }

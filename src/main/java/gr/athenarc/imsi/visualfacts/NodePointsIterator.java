@@ -28,7 +28,7 @@ public class NodePointsIterator extends AbstractNodePointIterator {
 
     @Override
     protected long peekOffset() {
-        return queryNode.getNode().getOffset(currentIndex);
+        return queryNode.getTile().getOffset(currentIndex);
     }
 
     public QueryNode getQueryNode() {

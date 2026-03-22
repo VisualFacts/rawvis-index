@@ -20,7 +20,7 @@ import org.apache.logging.log4j.Logger;
  *   <li>Phase 1 (CSV scan): points written sequentially via {@link #set(int, double, double, long)}</li>
  *   <li>Phase 1.5: prefix-sums computed from per-tile counts</li>
  *   <li>Phase 2 ({@link #partition}): per-array sequential scatter (stable, cache-friendly)</li>
- *   <li>Phase 3: each tile wired to its slice via {@link TreeNode#setSlice}</li>
+ *   <li>Phase 3: each tile wired to its slice via {@link Tile#setSlice}</li>
  * </ol>
  */
 public class SharedPointStore {
@@ -44,7 +44,8 @@ public class SharedPointStore {
     private int[] chunkStarts; // prefix sum: chunkStarts[k] = sum of chunkSizes[0..k-1]
 
     /**
-     * Tile IDs for partition — set via {@link #takeTileIds} before {@link #partition},
+     * Tile IDs for partition — set via constructor (from scan) or
+     * {@link #takeTileIds} before {@link #partition},
      * cleared internally after partition completes.  Holding tileIds as a field
      * (rather than a method parameter) allows the spill path to null and GC the
      * 1 GB array before the final scatter pass, staying under G1's reserve limit.
@@ -75,7 +76,7 @@ public class SharedPointStore {
      * @param chunkSizes number of valid elements in each chunk
      */
     public SharedPointStore(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
-                            int[] chunkSizes, int totalSize) {
+                            short[][] tileIdChunks, int[] chunkSizes, int totalSize) {
         this.chunked = true;
         this.xsChunks = xsChunks;
         this.ysChunks = ysChunks;
@@ -86,6 +87,14 @@ public class SharedPointStore {
             chunkStarts[i + 1] = chunkStarts[i] + chunkSizes[i];
         }
         this.capacity = totalSize;
+
+        // Flatten tileIdChunks into contiguous array (only 2 bytes/point)
+        this.tileIds = new short[totalSize];
+        int pos = 0;
+        for (int c = 0; c < numChunks; c++) {
+            System.arraycopy(tileIdChunks[c], 0, this.tileIds, pos, chunkSizes[c]);
+            pos += chunkSizes[c];
+        }
     }
 
     public int getCapacity() { return capacity; }

@@ -2,7 +2,6 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.util.BitSet;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
@@ -15,11 +14,8 @@ import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
 
 public class QueryNode {
     private static final Logger LOG = LogManager.getLogger(QueryNode.class);
-    private Map<Integer, Short> groupByValues;
-    private TreeNode node;
     private Tile tile;
     private ContainmentExaminer containmentExaminer;
-    private List<CategoricalColumn> unknownCatAttrs;
     private Schema schema;
 
     public int intersectionCount = 0;
@@ -31,13 +27,9 @@ public class QueryNode {
     private Map<Integer, StatsAccumulator> sampleStatsAccumulators;
     private BitSet sampledTracker;
 
-    public QueryNode(TreeNode node, Tile tile, ContainmentExaminer containmentExaminer,
-            Map<Integer, Short> groupByValues, List<CategoricalColumn> unknownCatAttrs, Query query, Schema schema) {
-        this.groupByValues = groupByValues;
-        this.node = node;
+    public QueryNode(Tile tile, ContainmentExaminer containmentExaminer, Query query, Schema schema) {
         this.tile = tile;
         this.containmentExaminer = containmentExaminer;
-        this.unknownCatAttrs = unknownCatAttrs;
         this.schema = schema;
 
         // Initialize StatsAccumulators for each measure
@@ -46,29 +38,29 @@ public class QueryNode {
             this.sampleStatsAccumulators.put(measure, new StatsAccumulator());
         }
 
-        // Initialize BitSet with the size of points in the node
-        if (node.getSampledTracker() != null && containmentExaminer == null) {
-            // Add stats for each measure from the node's stats
+        // Initialize BitSet with the size of points in the tile
+        if (tile.getSampledTracker() != null && containmentExaminer == null) {
+            // Add stats for each measure from the tile's stats
             for (Integer measure : query.getMeasureCols()) {
-                StatsAccumulator nodeStats = node.getStats(schema.getMeasureIndex(measure));
-                if (nodeStats != null) {
+                StatsAccumulator tileStats = tile.getStats(schema.getMeasureIndex(measure));
+                if (tileStats != null) {
                     StatsAccumulator accumulator = sampleStatsAccumulators.get(measure);
-                    accumulator.addAll(nodeStats.snapshot());
+                    accumulator.addAll(tileStats.snapshot());
                 }
             }
-            this.sampledTracker = node.getSampledTracker();
+            this.sampledTracker = tile.getSampledTracker();
         } else {
-            this.sampledTracker = new BitSet(node.getSize());
+            this.sampledTracker = new BitSet(tile.getSize());
         }
         computeQueryIntersection();
     }
 
     /**
-     * Iterates over the points in the node, checks against the containment
+     * Iterates over the points in the tile, checks against the containment
      * examiner, and sets up the BitSet marking points inside the query.
      */
     private void computeQueryIntersection() {
-        int size = node.getSize();
+        int size = tile.getSize();
         queryPointsBitSet = new BitSet(size);
 
         // If the tile is fully contained, all points belong to the query
@@ -81,7 +73,7 @@ public class QueryNode {
         // Otherwise, check containment for each point using flat array access
         intersectionCount = 0;
         for (int i = 0; i < size; i++) {
-            if (containmentExaminer.contains(node.getX(i), node.getY(i))) {
+            if (containmentExaminer.contains(tile.getX(i), tile.getY(i))) {
                 queryPointsBitSet.set(i);
                 intersectionCount++;
             }
@@ -91,13 +83,6 @@ public class QueryNode {
     public void addSampleValue(int measureCol, double value) {
         sampleStatsAccumulators.get(measureCol).add(value);
     }
-    public Map<Integer, Short> getGroupByValues() {
-        return groupByValues;
-    }
-
-    public TreeNode getNode() {
-        return node;
-    }
 
     public Tile getTile() {
         return tile;
@@ -105,10 +90,6 @@ public class QueryNode {
 
     public ContainmentExaminer getContainmentExaminer() {
         return containmentExaminer;
-    }
-
-    public List<CategoricalColumn> getUnknownCatAttrs() {
-        return unknownCatAttrs;
     }
 
     public boolean isFullyContained() {
@@ -129,7 +110,7 @@ public class QueryNode {
 
     @Override
     public String toString() {
-        return "QueryNode [node=" + node + ", tile=" + tile + ", containmentExaminer=" + containmentExaminer
+        return "QueryNode [tile=" + tile + ", containmentExaminer=" + containmentExaminer
                 + ", intersectionCount=" + intersectionCount + ", queryPointsBitSet=" + queryPointsBitSet
                 + ", sampleStatsAccumulators=" + sampleStatsAccumulators
                 + ", sampledTracker=" + sampledTracker + "]";

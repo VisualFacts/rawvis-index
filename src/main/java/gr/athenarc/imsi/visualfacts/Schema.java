@@ -1,10 +1,8 @@
 package gr.athenarc.imsi.visualfacts;
 
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import com.univocity.parsers.csv.CsvParserSettings;
 
@@ -16,7 +14,6 @@ public class Schema {
     private List<Integer> measureCols;
     private final Map<Integer, Integer> measureColToIndex = new HashMap<>();
     private final Rectangle bounds;
-    private final Map<Integer, CategoricalColumn> categoricalColumns = new HashMap();
     private Character delimiter = ',';
     private int objectCount;
     private String nullstr;
@@ -54,11 +51,6 @@ public class Schema {
         return delimiter;
     }
 
-    public Short getColValue(String[] parsedRow, int col) {
-        String rawValue = parsedRow[col];
-        return categoricalColumns.get(col).getValueKey(rawValue);
-    }
-
     public Rectangle getBounds() {
         return bounds;
     }
@@ -89,20 +81,6 @@ public class Schema {
 
     public int getMeasureCount() {
         return measureCols.size();
-    }
-
-    public List<CategoricalColumn> getCategoricalColumns() {
-        return categoricalColumns.values().stream().sorted(Comparator.comparingInt(CategoricalColumn::getIndex)).collect(Collectors.toList());
-    }
-
-    public void setCategoricalColumns(List<CategoricalColumn> categoricalCols) {
-        for (CategoricalColumn categoricalColumn : categoricalCols) {
-            categoricalColumns.put(categoricalColumn.getIndex(), categoricalColumn);
-        }
-    }
-
-    public CategoricalColumn getCategoricalColumn(int colIndex) {
-        return categoricalColumns.get(colIndex);
     }
 
     public int getObjectCount() {
@@ -140,7 +118,6 @@ public class Schema {
                 ", yColumn=" + yColumn +
                 ", measureCols=" + measureCols +
                 ", bounds=" + bounds +
-                ", categoricalColumns=" + categoricalColumns +
                 ", delimiter=" + delimiter +
                 ", objectCount=" + objectCount +
                 '}';

@@ -15,6 +15,8 @@ import java.util.stream.Collectors;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import org.openjdk.jol.info.GraphLayout;
+
 import com.google.common.collect.Range;
 import com.google.common.math.Stats;
 import com.google.common.math.StatsAccumulator;
@@ -57,8 +59,6 @@ public class Valinor implements AutoCloseable {
 
     private SharedPointStore pointStore;
 
-    private String sort = "asc";
-
     private InitializationPolicy initializationPolicy;
 
     private int objectsIndexed = 0;
@@ -70,69 +70,94 @@ public class Valinor implements AutoCloseable {
      * - No frozen stats short-circuit
      * - No FC+Stats (complete leaf stats) reuse
      * - No sampledTracker persistence across queries
-     * - No TreeNode stats updates during sampling
+     * - No tile stats updates during sampling
      * This mode implements the VALINOR-S baseline: plain incremental sampling
      * over the VALINOR spatial index without precomputed aggregate metadata.
      */
     private boolean samplingOnly = false;
 
+    /**
+     * Grid initialization mode.
+     * <ul>
+     *   <li>{@code null} — uniform grid: a regular GRID_SIZE×GRID_SIZE grid
+     *       with no sub-tiling bias.</li>
+     *   <li>{@code "queryBiased"} — query-biased grid: uses
+     *       {@link InitializationPolicy} to place denser sub-tiles near the
+     *       initial query (q0) region based on a 2D normal distribution.</li>
+     * </ul>
+     */
+    private String initMode;
+
     // Global statistics per measure column, computed during initialization (approximate mode only)
     private StatsAccumulator[] globalMeasureStats;
 
+    // Init timing breakdown (phase name → seconds)
+    private java.util.LinkedHashMap<String, Double> initTimingBreakdown;
+
+    /** Valid values for {@link #initMode}. */
+    public static final String INIT_MODE_QUERY_BIASED = "queryBiased";
+
     /**
-     * Creates a Valinor index in exact mode.
+     * Creates a Valinor index in exact mode with a uniform grid.
      */
     public Valinor(Schema schema) {
-        this.schema = schema;
-        this.errorThreshold = 0;
+        this(schema, 0, false, null);
     }
 
     /**
      * Creates a Valinor index. If errorThreshold &gt; 0, runs in approximate mode
      * with adaptive sampling. If errorThreshold &lt;= 0, runs in exact mode.
+     * Uses a uniform grid.
      */
     public Valinor(Schema schema, double errorThreshold) {
-        this.schema = schema;
-        this.errorThreshold = errorThreshold;
+        this(schema, errorThreshold, false, null);
     }
 
     /**
-     * Creates a Valinor index in approximate mode with optional sampling-only baseline.
+     * Creates a Valinor index.
+     *
+     * @param schema         dataset schema
+     * @param errorThreshold if &gt; 0, approximate mode; otherwise exact mode
+     * @param samplingOnly   if true, disables aggregate metadata reuse (VALINOR-S)
+     * @param initMode       grid initialization mode: {@code null} for uniform,
+     *                       {@code "queryBiased"} for query-biased sub-tiling.
+     *                       Any other value throws {@link IllegalArgumentException}.
      */
-    public Valinor(Schema schema, double errorThreshold, boolean samplingOnly) {
+    public Valinor(Schema schema, double errorThreshold, boolean samplingOnly, String initMode) {
         this.schema = schema;
         this.errorThreshold = errorThreshold;
         this.samplingOnly = samplingOnly;
+        if (initMode != null && !INIT_MODE_QUERY_BIASED.equalsIgnoreCase(initMode)) {
+            throw new IllegalArgumentException(
+                    "Unknown initMode '" + initMode + "'. Valid values: null (uniform), '" + INIT_MODE_QUERY_BIASED + "'");
+        }
+        this.initMode = initMode;
     }
 
     public boolean isExactMode() {
         return errorThreshold <= 0;
     }
 
+    public String getInitMode() {
+        return initMode;
+    }
+
     public void generateGrid(Query q0) {
         if (isInitialized)
             throw new IllegalStateException("The index is already initialized");
 
-        if (q0 != null) {
-            initializationPolicy = InitializationPolicy.getInitializationPolicy("valinor", q0,
-                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema, null, null);
-            initializationPolicy.setSort(sort);
+        if (q0 != null && INIT_MODE_QUERY_BIASED.equalsIgnoreCase(initMode)) {
+            initializationPolicy = new InitializationPolicy(q0,
+                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema);
         }
         LOG.debug("Generating initial grid with size " + GRID_SIZE + "x" + GRID_SIZE);
-        grid = new Grid(initializationPolicy, schema.getBounds(), schema.getCategoricalColumns(), GRID_SIZE);
+        grid = new Grid(initializationPolicy, schema.getBounds(), GRID_SIZE);
         grid.split();
-        if (initializationPolicy != null) {
-            initializationPolicy.initTileTreeCategoricalAttrs(grid.getLeafTiles());
-        }
     }
 
     public QueryResults initialize(Query q0) {
+        long initOverallStart = System.nanoTime();
         generateGrid(q0);
-
-        List<CategoricalColumn> categoricalColumns = schema.getCategoricalColumns();
-
-        List<Integer> catColIndexes = categoricalColumns.stream().mapToInt(CategoricalColumn::getIndex).boxed()
-                .collect(Collectors.toList());
 
         List<DataValidationFilter> validationFilters = schema.getValidationFilters();
 
@@ -140,7 +165,6 @@ public class Valinor implements AutoCloseable {
 
         colIndexes.add(schema.getxColumn());
         colIndexes.add(schema.getyColumn());
-        colIndexes.addAll(catColIndexes);
         validationFilters.forEach(filter -> colIndexes.add(filter.getFilterColumn()));
 
         colIndexes.addAll(schema.getMeasureCols());
@@ -204,6 +228,7 @@ public class Valinor implements AutoCloseable {
                     scanThreads, capacity);
 
             ParallelCsvScanner.ScanResult scanResult = scanner.scan();
+            long scanEndNanos = System.nanoTime();
 
             int validCount = scanResult.validCount;
             objectsIndexed = validCount;
@@ -213,36 +238,28 @@ public class Valinor implements AutoCloseable {
             // Adopt scan chunks into a SharedPointStore (zero-copy, no merge)
             SharedPointStore store = new SharedPointStore(
                     scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
-                    scanResult.chunkSizes, validCount);
+                    scanResult.tileIdChunks, scanResult.chunkSizes, validCount);
 
-            // Wire per-tile counts and stats from the parallel scan into TreeNodes
+            // Wire per-tile counts and stats from the parallel scan into tiles
             for (int t = 0; t < numTiles; t++) {
                 int count = scanResult.tileCounts[t];
                 if (count > 0) {
-                    TreeNode node = ((Tile) leafTileList.get(t)).getOrCreateRoot();
-                    node.setSize(count);
+                    Tile tile = (Tile) leafTileList.get(t);
+                    tile.setSize(count);
 
                     // Set pre-built stats
                     if (measureCount > 0) {
-                        node.setPrebuiltStats(scanResult.tileStats[t],
+                        tile.setPrebuiltStats(scanResult.tileStats[t],
                                 scanResult.tileStatsPointCounts[t]);
                     }
                 }
             }
 
-            // --- Phase 1b: compute tileIds from merged xs/ys arrays ---
-            // This is a fast sequential pass over in-memory arrays (~1-2s for 500M rows).
-            long tileIdStart = System.nanoTime();
-            short[] tileIds = new short[validCount];
-            for (int i = 0; i < validCount; i++) {
-                Tile leafTile = (Tile) grid.getLeafTile(store.getX(i), store.getY(i));
-                tileIds[i] = tileIndexMap.get(leafTile).shortValue();
-            }
-            LOG.info("TileId assignment: {} points in {} s", validCount,
-                    String.format("%.3f", (System.nanoTime() - tileIdStart) / 1e9));
+            // --- Phase 1b removed: tileIds are now computed during scan ---
+            long tileIdEndNanos = System.nanoTime();
 
-            LOG.info("Phase 1 total (scan + merge + tileIds): {} s",
-                    String.format("%.3f", (System.nanoTime() - phase1Start) / 1e9));
+            LOG.info("Phase 1 total (scan + merge): {} s",
+                    String.format("%.3f", (tileIdEndNanos - phase1Start) / 1e9));
 
             // --- Phase 1.5: compute prefix sums from per-tile counts ---
             int[] counts = scanResult.tileCounts;
@@ -260,25 +277,34 @@ public class Valinor implements AutoCloseable {
             scanner = null;
 
             // --- Phase 2: partition by tile ---
-            store.takeTileIds(tileIds);
-            tileIds = null;
+            // tileIds already set in store constructor
             System.gc();
 
             LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);
             long partStart = System.nanoTime();
             store.partition(validCount, starts, numTiles);
+            long partEndNanos = System.nanoTime();
             LOG.info("Partition done in {} s",
-                    String.format("%.3f", (System.nanoTime() - partStart) / 1e9));
+                    String.format("%.3f", (partEndNanos - partStart) / 1e9));
 
             // --- Phase 3: wire tiles to shared store slices ---
+            long wireStart = System.nanoTime();
             for (int t = 0; t < numTiles; t++) {
-                TreeNode root = ((Tile) leafTileList.get(t)).getRoot();
-                if (root != null && counts[t] > 0) {
-                    root.setSlice(store, starts[t], counts[t]);
+                Tile tile = (Tile) leafTileList.get(t);
+                if (tile.getSize() > 0) {
+                    tile.setSlice(store, starts[t], counts[t]);
                 }
             }
+            long wireEndNanos = System.nanoTime();
 
             this.pointStore = store;
+
+            // Record init timing breakdown
+            initTimingBreakdown = new java.util.LinkedHashMap<>();
+            initTimingBreakdown.put("scan", (scanEndNanos - phase1Start) / 1e9);
+            initTimingBreakdown.put("tileIdAssignment", (tileIdEndNanos - scanEndNanos) / 1e9);
+            initTimingBreakdown.put("partition", (partEndNanos - partStart) / 1e9);
+            initTimingBreakdown.put("wire", (wireEndNanos - wireStart) / 1e9);
 
         } catch (IOException e) {
             throw new RuntimeException("Unable to read CSV", e);
@@ -287,7 +313,16 @@ public class Valinor implements AutoCloseable {
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
         
         if (!isExactMode()) {
+            long globalStatsStart = System.nanoTime();
             computeGlobalMeasureStats();
+            if (initTimingBreakdown != null) {
+                initTimingBreakdown.put("globalStats", (System.nanoTime() - globalStatsStart) / 1e9);
+            }
+        }
+        
+        // Record total init time
+        if (initTimingBreakdown != null) {
+            initTimingBreakdown.put("total", (System.nanoTime() - initOverallStart) / 1e9);
         }
         
         if (isExactMode()) {
@@ -299,6 +334,15 @@ public class Valinor implements AutoCloseable {
 
     public int getObjectsIndexed() {
         return objectsIndexed;
+    }
+
+    /**
+     * Returns the init timing breakdown as a map of phase name to seconds.
+     * Keys: "scan", "tileIdAssignment", "partition", "wire", "globalStats" (AQP only), "total".
+     * Returns null if the index has not been initialized.
+     */
+    public java.util.LinkedHashMap<String, Double> getInitTimingBreakdown() {
+        return initTimingBreakdown;
     }
 
     public synchronized QueryResults executeQuery(Query query) throws IOException {
@@ -347,11 +391,11 @@ public class Valinor implements AutoCloseable {
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             int count = 0;
             for (QueryNode queryNode : queryNodes) {
-                TreeNode node = queryNode.getNode();
+                Tile qnTile = queryNode.getTile();
                 if ((!isFullyContained
-                        || query.getMeasureCols().stream().anyMatch(mc -> !node.hasStats(schema.getMeasureIndex(mc))))
-                        && node.hasPoints()) {
-                    count += node.getSize();
+                        || query.getMeasureCols().stream().anyMatch(mc -> !qnTile.hasStats(schema.getMeasureIndex(mc))))
+                        && qnTile.hasPoints()) {
+                    count += qnTile.getSize();
                 }
             }
 
@@ -363,11 +407,11 @@ public class Valinor implements AutoCloseable {
             }
 
             for (QueryNode queryNode : queryNodes) {
-                TreeNode node = queryNode.getNode();
-                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
+                Tile qnTile = queryNode.getTile();
+                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
                     query.getMeasureCols().forEach(measureCol -> {
                         queryResults.adjustStats(null, measureCol,
-                                queryNode.getNode().getStats(schema.getMeasureIndex(measureCol)).snapshot());
+                                queryNode.getTile().getStats(schema.getMeasureIndex(measureCol)).snapshot());
                     });
                 } else {
                     rawIterators.add(new NodePointsIterator(queryNode));
@@ -406,10 +450,10 @@ public class Valinor implements AutoCloseable {
             int batchRows = batchReader.readBatch(offsets, n, sortedMeasureCols, delimiterByte);
             ioCount += batchRows;
 
-            // Distribute parsed values to query results and node stats
+            // Distribute parsed values to query results and tile stats
             for (int rowIdx = 0; rowIdx < batchRows; rowIdx++) {
                 QueryNode queryNode = nodes[rowIdx];
-                TreeNode  node      = queryNode.getNode();
+                Tile      qnTile    = queryNode.getTile();
                 int       idx       = 0;
                 for (Integer measureCol : measureColsList) {
                     Integer ep = measureColToExtractedPos.get(measureCol);
@@ -421,7 +465,7 @@ public class Valinor implements AutoCloseable {
                         queryResults.adjustStats(null, measureCol, value);
                     }
                     if (queryNode.isFullyContained()) {
-                        node.adjustStats(idx, measureCount, value);
+                        qnTile.adjustStats(idx, measureCount, value);
                     }
                     idx++;
                 }
@@ -486,14 +530,14 @@ public class Valinor implements AutoCloseable {
 
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             for (QueryNode queryNode : queryNodes) {
-                TreeNode node = queryNode.getNode();
-                if (node.getSize() == 0) {
+                Tile qnTile = queryNode.getTile();
+                if (qnTile.getSize() == 0) {
                     continue;
                 }
 
-                if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> node.hasStats(schema.getMeasureIndex(mc)))) {
+                if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
-                } else if (!isFullyContained && node.getSize() > THRESHOLD) {
+                } else if (!isFullyContained && qnTile.getSize() > THRESHOLD) {
                     leafTile.split();
                     leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
@@ -516,7 +560,7 @@ public class Valinor implements AutoCloseable {
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
             query.getMeasureCols().forEach(measureCol -> {
                 queryResults.adjustStats(null, measureCol,
-                        queryNode.getNode().getStats(schema.getMeasureIndex(measureCol)).snapshot());
+                        queryNode.getTile().getStats(schema.getMeasureIndex(measureCol)).snapshot());
             });
             nonRawNodes.add(queryNode);
         }
@@ -567,10 +611,10 @@ public class Valinor implements AutoCloseable {
                 int batchRows = batchReader.readBatch(offsets, n, sortedMeasureCols, delimiterByte);
                 ioCount += batchRows;
 
-                // Distribute parsed values to per-node sample accumulators
+                // Distribute parsed values to per-tile sample accumulators
                 for (int rowIdx = 0; rowIdx < batchRows; rowIdx++) {
                     QueryNode queryNode = nodes[rowIdx];
-                    TreeNode  node      = queryNode.getNode();
+                    Tile      qnTile    = queryNode.getTile();
                     int       idx       = 0;
                     for (Integer measureCol : measureColsList) {
                         Integer ep = measureColToExtractedPos.get(measureCol);
@@ -582,7 +626,7 @@ public class Valinor implements AutoCloseable {
                             queryNode.addSampleValue(measureCol, value);
                         }
                         if (!samplingOnly && queryNode.isFullyContained()) {
-                            node.adjustStats(idx, measureCount, value);
+                            qnTile.adjustStats(idx, measureCount, value);
                         }
                         idx++;
                     }
@@ -626,7 +670,7 @@ public class Valinor implements AutoCloseable {
         // Persist sampledTracker for future queries
         if (!samplingOnly) {
             fullyContainedNodesWithoutStats.forEach(queryNode -> {
-                queryNode.getNode().setSampledTracker(queryNode.getSampledTracker());
+                queryNode.getTile().setSampledTracker(queryNode.getSampledTracker());
             });
         }
 
@@ -729,9 +773,8 @@ public class Valinor implements AutoCloseable {
         
         for (Object tileObj : grid.getLeafTiles()) {
             Tile tile = (Tile) tileObj;
-            TreeNode root = tile.getRoot();
-            if (root != null) {
-                aggregateNodeStats(root, measureCount);
+            if (tile.hasPoints()) {
+                aggregateTileStats(tile, measureCount);
             }
         }
         
@@ -746,20 +789,15 @@ public class Valinor implements AutoCloseable {
     }
     
     /**
-     * Recursively aggregates stats from a TreeNode and all its children.
+     * Aggregates stats from a Tile into global stats.
      */
-    private void aggregateNodeStats(TreeNode node, int measureCount) {
-        if (node.hasPoints()) {
+    private void aggregateTileStats(Tile tile, int measureCount) {
+        if (tile.hasPoints()) {
             for (int i = 0; i < measureCount; i++) {
-                StatsAccumulator nodeStats = node.getStats(i);
-                if (nodeStats != null && nodeStats.count() > 0) {
-                    globalMeasureStats[i].addAll(nodeStats.snapshot());
+                StatsAccumulator tileStats = tile.getStats(i);
+                if (tileStats != null && tileStats.count() > 0) {
+                    globalMeasureStats[i].addAll(tileStats.snapshot());
                 }
-            }
-        }
-        if (node.getChildren() != null) {
-            for (TreeNode child : node.getChildren()) {
-                aggregateNodeStats(child, measureCount);
             }
         }
     }
@@ -955,6 +993,28 @@ public class Valinor implements AutoCloseable {
         return grid.getMaxDepth();
     }
 
+    // ==================== Memory Measurement ====================
+
+    /**
+     * Measures the deep (retained) heap size of the index using JOL
+     * (Java Object Layout). Traverses the full object graph reachable from
+     * the grid, point store, and global measure stats, deduplicating shared
+     * references automatically.
+     *
+     * @return deep size in bytes, or -1 if the index has not been initialized
+     */
+    public long measureDeepSizeBytes() {
+        if (!isInitialized || grid == null) return -1;
+
+        // Measure all core index components in a single graph traversal.
+        // GraphLayout deduplicates shared references (e.g., SharedPointStore
+        // referenced by both pointStore field and every tile's store field).
+        if (globalMeasureStats != null) {
+            return GraphLayout.parseInstance(grid, pointStore, globalMeasureStats).totalSize();
+        }
+        return GraphLayout.parseInstance(grid, pointStore).totalSize();
+    }
+
     @Override
     public String toString() {
         return grid.printTiles();
@@ -966,14 +1026,6 @@ public class Valinor implements AutoCloseable {
 
     public boolean isInitialized() {
         return isInitialized;
-    }
-
-    public double getTotalUtil() {
-        return initializationPolicy.computeTotalUtil(grid.getLeafTiles());
-    }
-
-    public void setSort(String sort) {
-        this.sort = sort;
     }
 
     @Override

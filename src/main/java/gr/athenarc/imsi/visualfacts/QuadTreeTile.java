@@ -95,22 +95,17 @@ public class QuadTreeTile extends Tile {
                     yMiddle, BoundType.CLOSED);
             Range rangeTop = Range.range(yMiddle, BoundType.OPEN, yRange.upperEndpoint(), yRange.upperBoundType());
             this.topLeft = new QuadTreeTile(new Rectangle(rangeLeft, rangeTop));
-            this.topLeft.setCategoricalColumns(this.getCategoricalColumns());
             this.topRight = new QuadTreeTile(new Rectangle(rangeRight, rangeTop));
-            this.topRight.setCategoricalColumns(this.getCategoricalColumns());
             this.bottomLeft = new QuadTreeTile(new Rectangle(rangeLeft, rangeBottom));
-            this.bottomLeft.setCategoricalColumns(this.getCategoricalColumns());
             this.bottomRight = new QuadTreeTile(new Rectangle(rangeRight, rangeBottom));
-            this.bottomRight.setCategoricalColumns(this.getCategoricalColumns());
 
-            // Freeze exact stats before destroying the root node.
+            // Freeze exact stats before destroying the point data.
             this.freezeStats();
 
             // Sub-partition parent's slice into 4 quadrant sub-slices in-place.
-            TreeNode src = this.root;
-            SharedPointStore store = src.getStore();
-            int parentStart = src.getStart();
-            int n = src.getSize();
+            SharedPointStore store = this.getStore();
+            int parentStart = this.getStart();
+            int n = this.getSize();
 
             // Count per quadrant and assign quadrant IDs
             int[] counts = new int[4]; // 0=BL, 1=TL, 2=BR, 3=TR
@@ -136,12 +131,11 @@ public class QuadTreeTile extends Tile {
             QuadTreeTile[] quads = { this.bottomLeft, this.topLeft, this.bottomRight, this.topRight };
             for (int q = 0; q < 4; q++) {
                 if (counts[q] > 0) {
-                    TreeNode childRoot = quads[q].getOrCreateRoot();
-                    childRoot.setSlice(store, subStarts[q], counts[q]);
+                    quads[q].setSlice(store, subStarts[q], counts[q]);
                 }
             }
 
-            this.root = null;
+            this.clearPointData();
         } catch (IllegalArgumentException e){
             LOG.debug(e);
             LOG.debug("Unable to split");
@@ -186,4 +180,5 @@ public class QuadTreeTile extends Tile {
         depth = Integer.max(depth, bottomRight.getMaxDepth() + 1);
         return depth;
     }
+
 }

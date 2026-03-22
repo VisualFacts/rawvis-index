@@ -113,7 +113,7 @@ java -Xmx16G -jar ./target/experiments.jar -c timeQueries -csv synth10.csv -boun
 
 -maxShift *Max shift in the query sequence*
 
--initMode *The initialization mode to use (e.g. BINN)*
+-initMode *Grid initialization mode: null/omit for uniform grid, "queryBiased" for denser sub-tiles near q0*
 
 -binCount *Number of bins for BINN method*
 

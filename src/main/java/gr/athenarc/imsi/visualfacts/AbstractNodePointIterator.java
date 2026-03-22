@@ -1,7 +1,7 @@
 package gr.athenarc.imsi.visualfacts;
 
 /**
- * Abstract iterator over points in a TreeNode. Subclasses implement
+ * Abstract iterator over points in a Tile. Subclasses implement
  * {@link #advance()} to move to the next point. The current point's
  * file offset is available via {@link #getCurrentOffset()}.
 */

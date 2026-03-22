@@ -14,12 +14,6 @@ public final class IndexConfig {
 
     public static char DELIMITER = PROPERTIES_CONFIG.getString("DELIMITER", ",").charAt(0);
 
-
-    public static double FILTER_SCORE = PROPERTIES_CONFIG.getDouble("FILTER_SCORE", 0.5d);
-    public static double GROUP_BY_SCORE = PROPERTIES_CONFIG.getDouble("GROUP_BY_SCORE", 0.4d);
-    public static double DEFAULT_SCORE = PROPERTIES_CONFIG.getDouble("DEFAULT_SCORE", 0.1d);
-
-
     private static PropertiesConfiguration loadPropertiesConfig() {
         try {
             return new PropertiesConfiguration("config.properties");
