@@ -34,14 +34,13 @@
 #   page cache.
 #
 # JVM_XMX — Java heap ceiling (-Xmx).  This is NOT a reservation; the JVM
-#   only consumes physical pages as objects are allocated.  Auto-computed as
-#   2/3 of MEM_LIMIT by default — leaving ~1/3 for page cache and OS overhead.
-#   Override for datasets whose index is unusually large or small:
-#     taxi   (158M rows): ~5.3GB steady → default 2/3 works at MEM_LIMIT≥12G
-#     synth10 (10M rows): ~0.4GB steady → JVM_XMX=2G
-#     gaia  (328M rows):  ~8.5GB steady → JVM_XMX=12G at MEM_LIMIT=16G
-#     500M+ rows:         ~13GB peak during init → JVM_XMX=14G (partition spills to disk automatically)
-#   Sizing: (rows × 24 bytes [SharedPointStore]) + grid/tree overhead + 30% GC headroom
+#   only commits physical pages as objects are allocated.
+#   Set to MEM_LIMIT - 2G by default, leaving ~2 GB for OS + page cache.
+#   Since -Xms is unset, G1 grows on demand and shrinks back via
+#   -XX:MaxHeapFreeRatio=30 after post-init System.gc().
+#   Actual committed heap tracks live data: small datasets (~1 GB live) only
+#   commit ~2 GB regardless of the 14G ceiling.
+#   Sizing: rows × 24 bytes [SharedPointStore] steady; × 34 peak during partition.
 #
 # drop_caches is system-wide (not per-cgroup) and runs BEFORE the process
 # enters the cgroup, ensuring a cold start.  The cgroup then limits how much
@@ -65,9 +64,9 @@ MEM_LIMIT=${MEM_LIMIT:-16G}
 # Parse MEM_LIMIT to numeric GB for auto-computation
 _mem_gb=${MEM_LIMIT%[Gg]}
 
-# JVM heap cap — defaults to 2/3 of MEM_LIMIT.  Override for specific datasets
-# (see header for per-dataset sizing guidance).
-JVM_XMX=${JVM_XMX:-$(( _mem_gb * 2 / 3 ))G}
+# JVM heap cap — defaults to MEM_LIMIT - 2G.  The JVM only commits what it
+# needs; G1 shrinks back after init via MaxHeapFreeRatio=30.
+JVM_XMX=${JVM_XMX:-$(( _mem_gb - 2 ))G}
 _jvm_gb=${JVM_XMX%[Gg]}
 
 echo "=== Memory budget (Valinor) ==="
@@ -169,11 +168,12 @@ do
                     # Force cold disk reads for reproducible initialization timing
                     sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
                     sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
-                        "$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                        "$JAVA" -Xmx"$JVM_XMX" -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 \
+                        -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
                         -c timeApproximateQueries \
                         -scenario "$scenario" \
                         -configFile "$config_file" \
-                        -initMode valinor \
+                        -initMode queryBiased \
                         -numMeasures $num_measures \
                         -errorBound $error_bound \
                         -run $run \

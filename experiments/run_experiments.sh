@@ -5,15 +5,11 @@
 # Each block calls exp_valinor.sh or exp_duckdb.sh with env-var overrides.
 #
 # All experiments run under a fixed 16 GB cgroup cap (MEM_LIMIT=16G).
-# Only JVM_XMX varies per dataset to fit the SharedPointStore (rows × 24 B):
-#   50M  rows →  1.2 GB steady → JVM_XMX=4G   (leaves ~12G page cache)
-#   100M rows →  2.4 GB steady → JVM_XMX=6G   (leaves ~10G page cache)
-#   165M rows →  4.0 GB steady → JVM_XMX=8G   (leaves ~8G  page cache)
-#   200M rows →  4.8 GB steady → JVM_XMX=8G   (leaves ~8G  page cache)
-#   328M rows →  8.5 GB steady → JVM_XMX=12G  (leaves ~4G  page cache)
-#   500M rows → 12.0 GB peak   → JVM_XMX=14G  (partition spills to disk)
-#
-# DuckDB: JVM_XMX=2G (thin wrapper), buffer pool auto-sized by exp_duckdb.sh.
+# JVM_XMX defaults to MEM_LIMIT - 2G (=14G) for all datasets.
+# -Xmx is a ceiling, not a reservation: the JVM only commits pages as needed.
+# After init, -XX:MaxHeapFreeRatio=30 + System.gc() shrinks committed heap
+# back to ~live-data size, freeing memory for page cache during queries.
+# Datasets ≤ 328M rows fit in-memory; 500M+ spill partition to disk automatically.
 #
 # Sweep design:
 #   Pivot (synth10_100M_pan_sel1) + real datasets → full error_bound × num_measures sweep
@@ -22,8 +18,9 @@
 # Parameters (all via env vars):
 #   RESULTS_BASE — directory for results (default: experiments/results)
 #   METHODS      — space-separated list of methods to run
-#                  (default: "valinor duckdb pilotdb")
-#                  Use METHODS="valinor" to run only Valinor, etc.
+#                  (default: "valinor_a valinor_s duckdb pilotdb")
+#                  Use METHODS="valinor_a" to run only VALINOR-A,
+#                  METHODS="valinor_a valinor_s" for both Valinor variants, etc.
 #   NUM_RUNS     — total number of runs (default: 3)
 #   RUN_START    — first run index (default: 1)
 #
@@ -32,8 +29,8 @@
 # more runs incrementally.
 #
 # Usage:
-#   # Re-run only Valinor to a new results folder:
-#   RESULTS_BASE=experiments/results_v2 METHODS="valinor" \
+#   # Re-run only VALINOR-A to a new results folder:
+#   RESULTS_BASE=experiments/results_v2 METHODS="valinor_a" \
 #     nohup ./experiments/run_experiments.sh >> experiments/run_experiments.log 2>&1 &
 #
 #   # Run only run 1 for all configs:
@@ -53,7 +50,7 @@ export MEM_LIMIT=16G
 
 # ---- Configurable parameters ----
 export RESULTS_BASE=${RESULTS_BASE:-experiments/results}
-METHODS=(${METHODS:-valinor duckdb pilotdb})
+METHODS=(${METHODS:-valinor_a valinor_s duckdb pilotdb})
 _total_runs=${NUM_RUNS:-3}
 _run_start=${RUN_START:-1}
 _run_end=$((_run_start + _total_runs - 1))
@@ -77,6 +74,20 @@ should_run() {
     return 1
 }
 
+# Build the APPROACHES string from whichever valinor variants are in METHODS.
+# Returns false (1) if neither valinor_a nor valinor_s is selected.
+valinor_approaches() {
+    local apps=""
+    should_run valinor_a && apps="$apps valinor_a"
+    should_run valinor_s && apps="$apps valinor_s"
+    apps="${apps# }"  # trim leading space
+    if [[ -z "$apps" ]]; then
+        return 1
+    fi
+    echo "$apps"
+    return 0
+}
+
 echo "===== Experiment runner ====="
 echo "  RESULTS_BASE: $RESULTS_BASE"
 echo "  METHODS:      ${METHODS[*]}"
@@ -94,13 +105,12 @@ for run in $(seq $_run_start $_run_end); do
     # =============================================================================
     # Block 1 — Pivot: synth10 100M, 1% selectivity — full error_bound × num_measures sweep
     # =============================================================================
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 1: synth10 100M sel1 pivot (Valinor — full sweep) [run $run] ====="
-        JVM_XMX=6G \
         SCENARIOS="synth10_100M_pan_sel1" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 1b: synth10 100M sel1 pivot (DuckDB) [run $run] ====="
@@ -117,15 +127,14 @@ for run in $(seq $_run_start $_run_end); do
     # =============================================================================
     # Block 2 — Selectivity axis: non-pivot selectivities (fixed measures & error bounds)
     # =============================================================================
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 2: synth10 100M selectivity sweep, non-pivot (Valinor) [run $run] ====="
-        JVM_XMX=6G \
         SCENARIOS="synth10_100M_pan_sel001 synth10_100M_pan_sel01 synth10_100M_pan_sel5 synth10_100M_pan_sel10" \
         NUM_MEASURES="$SWEEP_NUM_MEASURES" \
         ERROR_BOUNDS="$SWEEP_ERROR_BOUNDS" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 2b: synth10 100M selectivity sweep, non-pivot (DuckDB) [run $run] ====="
@@ -145,15 +154,14 @@ for run in $(seq $_run_start $_run_end); do
     # =============================================================================
     # Block 3 — Scalability axis: 1% selectivity, non-pivot sizes (fixed measures & error bounds)
     # =============================================================================
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 3a: synth10 50M (Valinor) [run $run] ====="
-        JVM_XMX=4G \
         SCENARIOS="synth10_50M_pan_sel1" \
         NUM_MEASURES="$SWEEP_NUM_MEASURES" \
         ERROR_BOUNDS="$SWEEP_ERROR_BOUNDS" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 3a: synth10 50M (DuckDB) [run $run] ====="
@@ -172,15 +180,14 @@ for run in $(seq $_run_start $_run_end); do
 
     # synth10_100M_pan_sel1 is the pivot — already ran in Block 1
 
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 3b: synth10 200M (Valinor) [run $run] ====="
-        JVM_XMX=8G \
         SCENARIOS="synth10_200M_pan_sel1" \
         NUM_MEASURES="$SWEEP_NUM_MEASURES" \
         ERROR_BOUNDS="$SWEEP_ERROR_BOUNDS" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 3b: synth10 200M (DuckDB) [run $run] ====="
@@ -197,15 +204,14 @@ for run in $(seq $_run_start $_run_end); do
         run_pilotdb
     fi
 
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 3c: synth10 500M (Valinor) [run $run] ====="
-        JVM_XMX=14G \
         SCENARIOS="synth10_500M_pan_sel1" \
         NUM_MEASURES="$SWEEP_NUM_MEASURES" \
         ERROR_BOUNDS="$SWEEP_ERROR_BOUNDS" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 3c: synth10 500M (DuckDB) [run $run] ====="
@@ -225,13 +231,12 @@ for run in $(seq $_run_start $_run_end); do
     # =============================================================================
     # Block 4 — Taxi (165M rows): real-world dataset — full sweep
     # =============================================================================
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 4: taxi (Valinor — full sweep) [run $run] ====="
-        JVM_XMX=8G \
         SCENARIOS="taxi_pan taxi_zoom" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 4b: taxi (DuckDB) [run $run] ====="
@@ -248,13 +253,12 @@ for run in $(seq $_run_start $_run_end); do
     # =============================================================================
     # Block 5 — Gaia DR3 (328M rows): real-world dataset — full sweep
     # =============================================================================
-    if should_run valinor; then
+    _va=$(valinor_approaches) && {
         echo "===== Block 5: gaia DR3 (Valinor — full sweep) [run $run] ====="
-        JVM_XMX=12G \
         SCENARIOS="gaia_dr3_pan" \
-        APPROACHES="valinor_a valinor_s" \
+        APPROACHES="$_va" \
         run_valinor
-    fi
+    }
 
     if should_run duckdb; then
         echo "===== Block 5: gaia DR3 (DuckDB) [run $run] ====="
