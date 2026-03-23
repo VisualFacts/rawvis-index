@@ -256,10 +256,9 @@ public class Valinor implements AutoCloseable {
             }
 
             // --- Phase 1b removed: tileIds are now computed during scan ---
-            long tileIdEndNanos = System.nanoTime();
 
             LOG.info("Phase 1 total (scan + merge): {} s",
-                    String.format("%.3f", (tileIdEndNanos - phase1Start) / 1e9));
+                    String.format("%.3f", (System.nanoTime() - phase1Start) / 1e9));
 
             // --- Phase 1.5: compute prefix sums from per-tile counts ---
             int[] counts = scanResult.tileCounts;
@@ -302,8 +301,9 @@ public class Valinor implements AutoCloseable {
             // Record init timing breakdown
             initTimingBreakdown = new java.util.LinkedHashMap<>();
             initTimingBreakdown.put("scan", (scanEndNanos - phase1Start) / 1e9);
-            initTimingBreakdown.put("tileIdAssignment", (tileIdEndNanos - scanEndNanos) / 1e9);
+            initTimingBreakdown.put("setup", (partStart - scanEndNanos) / 1e9);
             initTimingBreakdown.put("partition", (partEndNanos - partStart) / 1e9);
+            initTimingBreakdown.put("partitionSpill", store.didPartitionSpill() ? 1.0 : 0.0);
             initTimingBreakdown.put("wire", (wireEndNanos - wireStart) / 1e9);
 
         } catch (IOException e) {
@@ -311,7 +311,24 @@ public class Valinor implements AutoCloseable {
         }
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
-        
+
+        // Release transient partition memory back to the OS.
+        // G1GC uncommits empty regions below -Xmx when -Xms is unset,
+        // making those pages available for page cache during queries.
+        {
+            Runtime rt = Runtime.getRuntime();
+            long committedBefore = rt.totalMemory();
+            System.gc();
+            long committedAfter = rt.totalMemory();
+            long usedAfter = committedAfter - rt.freeMemory();
+            LOG.info("Post-init GC: committed {} MB → {} MB (freed {} MB to OS), live {} MB",
+                    committedBefore / (1024L * 1024), committedAfter / (1024L * 1024),
+                    (committedBefore - committedAfter) / (1024L * 1024),
+                    usedAfter / (1024L * 1024));
+            initTimingBreakdown.put("heapCommittedMB", (double) (committedAfter / (1024L * 1024)));
+            initTimingBreakdown.put("heapLiveMB", (double) (usedAfter / (1024L * 1024)));
+        }
+
         if (!isExactMode()) {
             long globalStatsStart = System.nanoTime();
             computeGlobalMeasureStats();
@@ -338,7 +355,7 @@ public class Valinor implements AutoCloseable {
 
     /**
      * Returns the init timing breakdown as a map of phase name to seconds.
-     * Keys: "scan", "tileIdAssignment", "partition", "wire", "globalStats" (AQP only), "total".
+     * Keys: "scan", "setup", "partition", "wire", "globalStats" (AQP only), "total".
      * Returns null if the index has not been initialized.
      */
     public java.util.LinkedHashMap<String, Double> getInitTimingBreakdown() {

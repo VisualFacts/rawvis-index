@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.stream.IntStream;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -51,6 +52,11 @@ public class SharedPointStore {
      * 1 GB array before the final scatter pass, staying under G1's reserve limit.
      */
     private short[] tileIds;
+
+    /** Whether the most recent {@link #partition} call used disk-spill. */
+    private boolean partitionSpilled;
+
+    public boolean didPartitionSpill() { return partitionSpilled; }
 
     public SharedPointStore(int capacity) {
         this.capacity = capacity;
@@ -163,8 +169,10 @@ public class SharedPointStore {
                     String.format("%.1f", peakInMemory / (1024.0 * 1024 * 1024)),
                     String.format("%.1f", maxHeap / (1024.0 * 1024 * 1024)));
             partitionWithSpill(n, starts, numTiles);
+            partitionSpilled = true;
         } else {
             partitionInMemory(n, starts, numTiles);
+            partitionSpilled = false;
         }
         this.tileIds = null; // no longer needed
     }
@@ -180,57 +188,89 @@ public class SharedPointStore {
         this.capacity = n;
     }
 
-    /** Scatter-partitions from chunked source arrays into contiguous target arrays. */
+    /**
+     * Parallel histogram scatter: partitions chunked source arrays into
+     * contiguous target arrays using all available cores.
+     * <p>
+     * 1. Compute per-chunk tile counts (sequential scan of tileIds).<br>
+     * 2. Prefix-sum to derive per-chunk per-tile write positions (disjoint).<br>
+     * 3. Parallel scatter: each chunk writes to its own disjoint ranges
+     *    — no synchronization, bit-identical output to a sequential scatter.
+     */
     private void partitionChunkedInMemory(int n, int[] starts, int numTiles, short[] tid) {
         final int numChunks = xsChunks.length;
-        int[] cursors;
 
-        // Pass 1: scatter xs from chunks
-        cursors = Arrays.copyOf(starts, numTiles);
-        double[] newXs = new double[n];
-        int gi = 0;
+        // Step 1: per-chunk tile counts (sequential — tileIds fits in cache)
+        int[][] chunkTileCounts = new int[numChunks][numTiles];
         for (int c = 0; c < numChunks; c++) {
-            double[] cArr = xsChunks[c];
-            int cSize = chunkStarts[c + 1] - chunkStarts[c];
+            int cStart = chunkStarts[c];
+            int cSize = chunkStarts[c + 1] - cStart;
+            int[] counts = chunkTileCounts[c];
             for (int j = 0; j < cSize; j++) {
-                newXs[cursors[tid[gi++]]++] = cArr[j];
+                counts[tid[cStart + j]]++;
             }
-            xsChunks[c] = null; // free chunk for GC
         }
-        this.xs = newXs;
+
+        // Step 2: per-chunk per-tile starting cursors (prefix sum across chunks)
+        int[][] chunkTileStarts = new int[numChunks][numTiles];
+        for (int t = 0; t < numTiles; t++) {
+            chunkTileStarts[0][t] = starts[t];
+            for (int c = 1; c < numChunks; c++) {
+                chunkTileStarts[c][t] = chunkTileStarts[c - 1][t] + chunkTileCounts[c - 1][t];
+            }
+        }
+
+        // Steps 3a-c: scatter each array via a separate method call so that
+        // the source-chunks parameter drops off the stack when the method
+        // returns, making the old chunks truly unreachable for G1 to collect
+        // before the next pass allocates its destination array.
+        // Without this, lambda-captured locals (xsRef, ysRef) keep 8N bytes
+        // each alive across passes, inflating peak from 34N to 50N.
+        this.xs = scatterDoubleChunksParallel(this.xsChunks, n, numChunks,
+                chunkTileStarts, this.chunkStarts, tid);
         this.xsChunks = null;
 
-        // Pass 2: scatter ys from chunks
-        cursors = Arrays.copyOf(starts, numTiles);
-        double[] newYs = new double[n];
-        gi = 0;
-        for (int c = 0; c < numChunks; c++) {
-            double[] cArr = ysChunks[c];
-            int cSize = chunkStarts[c + 1] - chunkStarts[c];
-            for (int j = 0; j < cSize; j++) {
-                newYs[cursors[tid[gi++]]++] = cArr[j];
-            }
-            ysChunks[c] = null;
-        }
-        this.ys = newYs;
+        this.ys = scatterDoubleChunksParallel(this.ysChunks, n, numChunks,
+                chunkTileStarts, this.chunkStarts, tid);
         this.ysChunks = null;
 
-        // Pass 3: scatter offsets from chunks
-        cursors = Arrays.copyOf(starts, numTiles);
-        long[] newOffsets = new long[n];
-        gi = 0;
-        for (int c = 0; c < numChunks; c++) {
-            long[] cArr = offsetsChunks[c];
-            int cSize = chunkStarts[c + 1] - chunkStarts[c];
-            for (int j = 0; j < cSize; j++) {
-                newOffsets[cursors[tid[gi++]]++] = cArr[j];
-            }
-            offsetsChunks[c] = null;
-        }
-        this.offsets = newOffsets;
+        this.offsets = scatterLongChunksParallel(this.offsetsChunks, n, numChunks,
+                chunkTileStarts, this.chunkStarts, tid);
         this.offsetsChunks = null;
         this.chunkStarts = null;
         this.chunked = false;
+    }
+
+    /** Parallel scatter of chunked double arrays into a flat partitioned array. */
+    private static double[] scatterDoubleChunksParallel(double[][] srcChunks, int n,
+            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, short[] tid) {
+        double[] dest = new double[n];
+        IntStream.range(0, numChunks).parallel().forEach(c -> {
+            int[] cursors = chunkTileStarts[c].clone();
+            double[] cArr = srcChunks[c];
+            int cStart = chunkStarts[c];
+            int cSize = chunkStarts[c + 1] - cStart;
+            for (int j = 0; j < cSize; j++) {
+                dest[cursors[tid[cStart + j]]++] = cArr[j];
+            }
+        });
+        return dest;
+    }
+
+    /** Parallel scatter of chunked long arrays into a flat partitioned array. */
+    private static long[] scatterLongChunksParallel(long[][] srcChunks, int n,
+            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, short[] tid) {
+        long[] dest = new long[n];
+        IntStream.range(0, numChunks).parallel().forEach(c -> {
+            int[] cursors = chunkTileStarts[c].clone();
+            long[] cArr = srcChunks[c];
+            int cStart = chunkStarts[c];
+            int cSize = chunkStarts[c + 1] - cStart;
+            for (int j = 0; j < cSize; j++) {
+                dest[cursors[tid[cStart + j]]++] = cArr[j];
+            }
+        });
+        return dest;
     }
 
     /** Original contiguous scatter partition (used by legacy non-parallel path). */
