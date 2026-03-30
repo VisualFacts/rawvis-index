@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -22,6 +23,7 @@ import com.google.common.base.Stopwatch;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
 
+import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.Valinor;
@@ -486,8 +488,26 @@ public class Experiments {
             String xColStr = String.format("%02d", schema.getxColumn());
             String yColStr = String.format("%02d", schema.getyColumn());
             // Create DuckDB executor with the appropriate mode and validation filters
-            DuckDBQueryExecutor executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
-                    "column" + yColStr, schema.getValidationFilters(), schema.getNullstr());
+            DuckDBQueryExecutor executor;
+            if (mode == DuckDBQueryExecutor.ExecutionMode.TABLE_PROJECTED) {
+                // Collect all column indices needed: x, y, measures, validation filter columns
+                TreeSet<Integer> neededCols = new TreeSet<>();
+                neededCols.add(schema.getxColumn());
+                neededCols.add(schema.getyColumn());
+                neededCols.addAll(schema.getMeasureCols());
+                if (schema.getValidationFilters() != null) {
+                    for (DataValidationFilter f : schema.getValidationFilters()) {
+                        neededCols.add(f.getFilterColumn());
+                    }
+                }
+                LOG.info("TABLE_PROJECTED: projecting {} columns: {}", neededCols.size(), neededCols);
+                executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
+                        "column" + yColStr, schema.getValidationFilters(), schema.getNullstr(),
+                        new ArrayList<>(neededCols));
+            } else {
+                executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
+                        "column" + yColStr, schema.getValidationFilters(), schema.getNullstr());
+            }
 
             // Log initialization timing metrics
             long tableCreationTimeMs = executor.getTableCreationTimeNanos() / 1_000_000;
@@ -549,11 +569,13 @@ public class Experiments {
                 return DuckDBQueryExecutor.ExecutionMode.DIRECT_CSV;
             case "table":
                 return DuckDBQueryExecutor.ExecutionMode.TABLE;
+            case "tableProjected":
+                return DuckDBQueryExecutor.ExecutionMode.TABLE_PROJECTED;
             case "spatialIndex":
                 return DuckDBQueryExecutor.ExecutionMode.SPATIAL_INDEX;
             default:
                 throw new IllegalArgumentException(
-                        "Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, spatialIndex");
+                        "Invalid duckDbMode: " + mode + ". Valid modes are: directCSV, table, tableProjected, spatialIndex");
         }
     }
 

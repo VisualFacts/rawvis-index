@@ -121,6 +121,7 @@ public class DuckDBQueryExecutor {
     public enum ExecutionMode {
         DIRECT_CSV,
         TABLE,
+        TABLE_PROJECTED,
         SPATIAL_INDEX
     }
 
@@ -136,6 +137,8 @@ public class DuckDBQueryExecutor {
     private Integer datasetColumnCount = null; // Cache the dataset column count
     private List<DataValidationFilter> validationFilters = null; // Optional validation filters
     private String nullstr = null; // Optional null string for CSV parsing
+    private List<Integer> projectedColumns = null; // Column indices to project (TABLE_PROJECTED mode)
+    private int originalCsvColumnCount = -1; // Original CSV column count for naming consistency
 
     public DuckDBQueryExecutor(String csvPath) throws Exception {
         this.csvPath = csvPath;
@@ -153,12 +156,24 @@ public class DuckDBQueryExecutor {
 
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
                                List<DataValidationFilter> validationFilters, String nullstr) throws Exception {
+        this(csvPath, mode, xCol, yCol, validationFilters, nullstr, null);
+    }
+
+    /**
+     * Constructor with projected columns support for TABLE_PROJECTED mode.
+     * @param projectedColumns sorted list of column indices to include in the projected table;
+     *                         ignored for other modes
+     */
+    public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
+                               List<DataValidationFilter> validationFilters, String nullstr,
+                               List<Integer> projectedColumns) throws Exception {
         this.csvPath = csvPath;
         this.mode = mode;
         this.xCol = xCol;
         this.yCol = yCol;
         this.validationFilters = validationFilters;
         this.nullstr = nullstr;
+        this.projectedColumns = projectedColumns;
         if (validationFilters != null && !validationFilters.isEmpty()) {
             LOG.info("DuckDB executor initialized with {} validation filters", validationFilters.size());
         }
@@ -219,6 +234,10 @@ public class DuckDBQueryExecutor {
                     LOG.info("Table mode: creating table from CSV");
                     createTableFromCSV();
                     break;
+                case TABLE_PROJECTED:
+                    LOG.info("Table projected mode: creating table with only needed columns");
+                    createProjectedTableFromCSV();
+                    break;
                 case SPATIAL_INDEX:
                     LOG.info("Spatial Index mode: creating table with geometry and R-tree index");
                     createTableWithSpatialIndex();
@@ -259,6 +278,44 @@ public class DuckDBQueryExecutor {
         long endTime = System.nanoTime();
         tableCreationTimeNanos = endTime - startTime;
         LOG.info("Table creation time: {} s", tableCreationTimeNanos / 1_000_000_000.0);
+    }
+
+    /**
+     * Creates a table with only the columns needed for the experiment scenario.
+     * Column names match the full-table naming convention so that queries are identical.
+     */
+    private void createProjectedTableFromCSV() throws Exception {
+        if (projectedColumns == null || projectedColumns.isEmpty()) {
+            throw new IllegalStateException("TABLE_PROJECTED mode requires projectedColumns to be set");
+        }
+
+        // Determine original CSV column count for consistent naming
+        originalCsvColumnCount = getCSVColumnCount();
+        boolean useTwoDigit = originalCsvColumnCount > 10;
+
+        long startTime = System.nanoTime();
+        try (Statement stmt = connection.createStatement()) {
+            StringBuilder selectCols = new StringBuilder();
+            String sep = "";
+            for (int colIdx : projectedColumns) {
+                String colName = useTwoDigit
+                        ? "column" + String.format("%02d", colIdx)
+                        : "column" + colIdx;
+                selectCols.append(sep).append(colName);
+                sep = ", ";
+            }
+
+            String createTableQuery = String.format(
+                    "CREATE TABLE %s AS SELECT %s FROM read_csv_auto('%s', %s);",
+                    tableName, selectCols.toString(), csvPath, buildReadCsvOptions());
+            LOG.info("Creating projected table from CSV: {}", createTableQuery);
+            stmt.execute(createTableQuery);
+            LOG.info("Projected table {} created with {} of {} columns",
+                    tableName, projectedColumns.size(), originalCsvColumnCount);
+        }
+        long endTime = System.nanoTime();
+        tableCreationTimeNanos = endTime - startTime;
+        LOG.info("Projected table creation time: {} s", tableCreationTimeNanos / 1_000_000_000.0);
     }
 
     private void createTableWithSpatialIndex() throws Exception {
@@ -342,6 +399,7 @@ public class DuckDBQueryExecutor {
             case DIRECT_CSV:
                 return executeQueryDirectCSV(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
             case TABLE:
+            case TABLE_PROJECTED:
                 return executeQueryWithTable(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
             case SPATIAL_INDEX:
                 return executeQueryWithSpatialIndex(ranges, measureColsString, formattedXCol, formattedYCol, aggregateTypes);
@@ -508,7 +566,10 @@ public class DuckDBQueryExecutor {
         }
 
         try {
-            if (mode == ExecutionMode.DIRECT_CSV) {
+            if (mode == ExecutionMode.TABLE_PROJECTED && originalCsvColumnCount > 0) {
+                // Use original CSV column count so column naming matches the full-table convention
+                datasetColumnCount = originalCsvColumnCount;
+            } else if (mode == ExecutionMode.DIRECT_CSV) {
                 // For direct CSV, we need to count columns from the CSV file
                 datasetColumnCount = getCSVColumnCount();
             } else {
