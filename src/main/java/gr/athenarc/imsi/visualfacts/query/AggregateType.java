@@ -42,4 +42,9 @@ public enum AggregateType {
      * Stats needed for variance/stddev calculation (count, sum, sum_of_squares).
      */
     public static final EnumSet<AggregateType> VARIANCE_STATS = EnumSet.of(COUNT, SUM, SUM_OF_SQUARES);
+
+    /**
+     * PilotDB-compatible aggregates (only linear aggregates that support error bounds).
+     */
+    public static final EnumSet<AggregateType> PILOTDB = EnumSet.of(SUM, AVG);
 }

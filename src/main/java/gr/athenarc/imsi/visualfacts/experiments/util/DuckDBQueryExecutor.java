@@ -137,6 +137,7 @@ public class DuckDBQueryExecutor {
     private Integer datasetColumnCount = null; // Cache the dataset column count
     private List<DataValidationFilter> validationFilters = null; // Optional validation filters
     private String nullstr = null; // Optional null string for CSV parsing
+    private boolean hasHeader = false; // Whether the CSV file has a header row
     private List<Integer> projectedColumns = null; // Column indices to project (TABLE_PROJECTED mode)
     private int originalCsvColumnCount = -1; // Original CSV column count for naming consistency
 
@@ -156,23 +157,25 @@ public class DuckDBQueryExecutor {
 
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
                                List<DataValidationFilter> validationFilters, String nullstr) throws Exception {
-        this(csvPath, mode, xCol, yCol, validationFilters, nullstr, null);
+        this(csvPath, mode, xCol, yCol, validationFilters, nullstr, false, null);
     }
 
     /**
      * Constructor with projected columns support for TABLE_PROJECTED mode.
+     * @param hasHeader whether the CSV file has a header row
      * @param projectedColumns sorted list of column indices to include in the projected table;
      *                         ignored for other modes
      */
     public DuckDBQueryExecutor(String csvPath, ExecutionMode mode, String xCol, String yCol, 
                                List<DataValidationFilter> validationFilters, String nullstr,
-                               List<Integer> projectedColumns) throws Exception {
+                               boolean hasHeader, List<Integer> projectedColumns) throws Exception {
         this.csvPath = csvPath;
         this.mode = mode;
         this.xCol = xCol;
         this.yCol = yCol;
         this.validationFilters = validationFilters;
         this.nullstr = nullstr;
+        this.hasHeader = hasHeader;
         this.projectedColumns = projectedColumns;
         if (validationFilters != null && !validationFilters.isEmpty()) {
             LOG.info("DuckDB executor initialized with {} validation filters", validationFilters.size());
@@ -254,23 +257,15 @@ public class DuckDBQueryExecutor {
     }
 
 
-    /**
-     * Builds the read_csv_auto options string, including nullstr if configured.
-     */
     private String buildReadCsvOptions() {
-        StringBuilder opts = new StringBuilder("ignore_errors = true");
-        if (nullstr != null && !nullstr.isEmpty()) {
-            opts.append(", nullstr = '").append(nullstr).append("'");
-        }
-        return opts.toString();
+        return DuckDBSQLQueryGenerator.buildReadCsvOptions(hasHeader, nullstr);
     }
 
     private void createTableFromCSV() throws Exception {
         long startTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
-            String createTableQuery = String.format(
-                    "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', %s);",
-                    tableName, csvPath, buildReadCsvOptions());
+            String createTableQuery = DuckDBSQLQueryGenerator.buildCreateTableSQL(
+                    tableName, csvPath, buildReadCsvOptions(), validationFilters, true);
             LOG.info("Creating table from CSV: {}", createTableQuery);
             stmt.execute(createTableQuery);
             LOG.info("Table {} created successfully", tableName);
@@ -295,19 +290,9 @@ public class DuckDBQueryExecutor {
 
         long startTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
-            StringBuilder selectCols = new StringBuilder();
-            String sep = "";
-            for (int colIdx : projectedColumns) {
-                String colName = useTwoDigit
-                        ? "column" + String.format("%02d", colIdx)
-                        : "column" + colIdx;
-                selectCols.append(sep).append(colName);
-                sep = ", ";
-            }
-
-            String createTableQuery = String.format(
-                    "CREATE TABLE %s AS SELECT %s FROM read_csv_auto('%s', %s);",
-                    tableName, selectCols.toString(), csvPath, buildReadCsvOptions());
+            String createTableQuery = DuckDBSQLQueryGenerator.buildCreateProjectedTableSQL(
+                    tableName, csvPath, buildReadCsvOptions(), validationFilters, useTwoDigit,
+                    projectedColumns);
             LOG.info("Creating projected table from CSV: {}", createTableQuery);
             stmt.execute(createTableQuery);
             LOG.info("Projected table {} created with {} of {} columns",
@@ -328,9 +313,8 @@ public class DuckDBQueryExecutor {
             LOG.info("SPATIAL extension loaded");
 
             // Create table from CSV with geometry column in a single statement
-            String createTableWithGeomQuery = String.format(
-                    "CREATE TABLE %s AS SELECT *, ST_Point(%s::DOUBLE, %s::DOUBLE) AS geometry FROM read_csv_auto('%s', %s);",
-                    tableName, xCol, yCol, csvPath, buildReadCsvOptions());
+            String createTableWithGeomQuery = DuckDBSQLQueryGenerator.buildCreateSpatialTableSQL(
+                    tableName, csvPath, buildReadCsvOptions(), validationFilters, true, xCol, yCol);
             LOG.info("Creating table from CSV with geometry column: {}", createTableWithGeomQuery);
             stmt.execute(createTableWithGeomQuery);
             LOG.info("Table {} created with geometry column", tableName);
@@ -341,13 +325,10 @@ public class DuckDBQueryExecutor {
         long indexStartTime = System.nanoTime();
         try (Statement stmt = connection.createStatement()) {
             // Create R-tree spatial index on the geometry column
-            String indexName = "spatial_index_" + tableName;
-            String createIndexQuery = String.format(
-                    "CREATE INDEX %s ON %s USING RTREE (geometry);",
-                    indexName, tableName);
+            String createIndexQuery = DuckDBSQLQueryGenerator.buildCreateSpatialIndexSQL(tableName);
             LOG.info("Creating R-tree spatial index on geometry column: {}", createIndexQuery);
             stmt.execute(createIndexQuery);
-            LOG.info("Spatial index {} created successfully", indexName);
+            LOG.info("Spatial index on {} created successfully", tableName);
         }
         long indexEndTime = System.nanoTime();
         indexCreationTimeNanos = indexEndTime - indexStartTime;
@@ -389,8 +370,8 @@ public class DuckDBQueryExecutor {
         }).collect(Collectors.toList());
 
         // Format xCol and yCol with the same naming convention
-        String formattedXCol = formatColumnName(xCol, useTwoDigitFormat);
-        String formattedYCol = formatColumnName(yCol, useTwoDigitFormat);
+        String formattedXCol = DuckDBSQLQueryGenerator.formatColumnName(xCol, useTwoDigitFormat);
+        String formattedYCol = DuckDBSQLQueryGenerator.formatColumnName(yCol, useTwoDigitFormat);
 
         // Get aggregate types from query (defaults to ALL if not set)
         EnumSet<AggregateType> aggregateTypes = query.getAggregateTypes();
@@ -426,7 +407,7 @@ public class DuckDBQueryExecutor {
      */
     private QueryResult executeQueryWithTable(List<Range<Double>> ranges, List<String> aggCols, String xCol, String yCol,
             EnumSet<AggregateType> aggregateTypes) throws Exception {
-        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes, xCol, yCol);
+        String query = SQLQueryGenerator.getSQLUniAggQuery(tableName, ranges, aggCols, null, aggregateTypes, xCol, yCol);
 
         LOG.trace("Executing table query: {}", query);
         return executeQueryWithTiming(query);
@@ -437,7 +418,7 @@ public class DuckDBQueryExecutor {
      */
     private QueryResult executeQueryWithSpatialIndex(List<Range<Double>> ranges, List<String> aggCols, String xCol,
             String yCol, EnumSet<AggregateType> aggregateTypes) throws Exception {
-        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, validationFilters, aggregateTypes);
+        String query = SQLQueryGenerator.getDuckDBSQLSpatialUniAggQuery(tableName, ranges, aggCols, null, aggregateTypes);
 
         LOG.trace("Executing spatial index query: {}", query);
         return executeQueryWithTiming(query);
@@ -529,30 +510,7 @@ public class DuckDBQueryExecutor {
         return count > 0 ? sum / count : 0.0;
     }
 
-    /**
-     * Format a column name (or column index) with the appropriate naming
-     * convention.
-     * Converts strings like "0", "1", "column0" to "column0" or "column00" format.
-     */
-    private String formatColumnName(String colName, boolean useTwoDigitFormat) {
-        // Extract the numeric part if it's just a number or already formatted
-        String numberPart = colName;
-        if (colName.startsWith("column")) {
-            numberPart = colName.substring(6);
-        }
 
-        try {
-            int colIndex = Integer.parseInt(numberPart);
-            if (useTwoDigitFormat) {
-                return "column" + String.format("%02d", colIndex);
-            } else {
-                return "column" + colIndex;
-            }
-        } catch (NumberFormatException e) {
-            LOG.debug("Could not parse column index from: {}, using as-is", colName);
-            return colName; // Return original if parsing fails
-        }
-    }
 
     /**
      * Get the column count of the dataset.
@@ -616,6 +574,20 @@ public class DuckDBQueryExecutor {
             int columnCount = rs.getMetaData().getColumnCount();
             LOG.debug("CSV has {} columns", columnCount);
             return columnCount;
+        }
+    }
+
+    /**
+     * Get the number of columns in a CSV file using a temporary DuckDB connection.
+     * Useful for determining column naming format without creating a full executor.
+     */
+    public static int getCSVColumnCountForFile(String csvPath, String readCsvOptions) throws Exception {
+        Class.forName("org.duckdb.DuckDBDriver");
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb::memory:");
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     String.format("SELECT * FROM read_csv_auto('%s', %s) LIMIT 0;", csvPath, readCsvOptions))) {
+            return rs.getMetaData().getColumnCount();
         }
     }
 

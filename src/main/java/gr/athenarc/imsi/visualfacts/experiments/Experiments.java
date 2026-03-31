@@ -20,6 +20,7 @@ import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Stopwatch;
+import com.google.common.collect.Range;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
 
@@ -32,9 +33,12 @@ import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
+import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBSQLQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.PhasedQuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.SQLQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
+import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
@@ -191,6 +195,9 @@ public class Experiments {
                 break;
             case "generateAndSaveQuerySequence":
                 generateAndSaveQuerySequence();
+                break;
+            case "generatePilotDBSqlFile":
+                generatePilotDBSqlFile();
                 break;
             case "synth10":
                 generator = new SyntheticDatasetGenerator(100000000, 10, Arrays.asList(2, 3, 4, 5, 6, 7), 10, outFile);
@@ -503,10 +510,11 @@ public class Experiments {
                 LOG.info("TABLE_PROJECTED: projecting {} columns: {}", neededCols.size(), neededCols);
                 executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
                         "column" + yColStr, schema.getValidationFilters(), schema.getNullstr(),
-                        new ArrayList<>(neededCols));
+                        schema.getHasHeader(), new ArrayList<>(neededCols));
             } else {
                 executor = new DuckDBQueryExecutor(schema.getCsv(), mode, "column" + xColStr,
-                        "column" + yColStr, schema.getValidationFilters(), schema.getNullstr());
+                        "column" + yColStr, schema.getValidationFilters(), schema.getNullstr(),
+                        schema.getHasHeader(), null);
             }
 
             // Log initialization timing metrics
@@ -605,6 +613,82 @@ public class Experiments {
         }
 
         LOG.info("Generated and saved {} queries to {}", sequence.size(), outFile);
+    }
+
+    /**
+     * Generates a SQL file for PilotDB execution.
+     * Line 1: metadata comment with measure column indices.
+     * Line 2: CREATE TABLE (projected, with validation filters applied).
+     * Lines 3+: SELECT queries with PilotDB-compatible aggregates (sum, avg).
+     */
+    private void generatePilotDBSqlFile() throws IOException {
+        requireScenario("generatePilotDBSqlFile");
+        Preconditions.checkNotNull(outFile, "No out file specified.");
+
+        // Build initial query and generate sequence
+        Rectangle rect = scenarioConfig.getQ0().toRectangle();
+        Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
+        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
+                schema.getMeasureCols());
+        List<Query> sequence = generateQuerySequence(q0, schema);
+
+        // Determine column naming format via DuckDB introspection
+        String readCsvOptions = DuckDBSQLQueryGenerator.buildReadCsvOptions(schema.getHasHeader(), schema.getNullstr());
+        int csvColumnCount;
+        try {
+            csvColumnCount = DuckDBQueryExecutor.getCSVColumnCountForFile(schema.getCsv(), readCsvOptions);
+        } catch (Exception e) {
+            throw new IOException("Failed to determine CSV column count", e);
+        }
+        boolean useTwoDigit = csvColumnCount > 10;
+
+        // Format column names
+        String xColStr = DuckDBSQLQueryGenerator.formatColumnName(schema.getxColumn(), useTwoDigit);
+        String yColStr = DuckDBSQLQueryGenerator.formatColumnName(schema.getyColumn(), useTwoDigit);
+        List<String> measureColNames = schema.getMeasureCols().stream()
+                .map(col -> DuckDBSQLQueryGenerator.formatColumnName(col, useTwoDigit))
+                .collect(Collectors.toList());
+
+        // Collect needed columns for projection (x, y, measures, validation filter columns)
+        TreeSet<Integer> neededCols = new TreeSet<>();
+        neededCols.add(schema.getxColumn());
+        neededCols.add(schema.getyColumn());
+        neededCols.addAll(schema.getMeasureCols());
+        if (schema.getValidationFilters() != null) {
+            for (DataValidationFilter f : schema.getValidationFilters()) {
+                neededCols.add(f.getFilterColumn());
+            }
+        }
+
+        // Build CREATE TABLE (TABLE_PROJECTED style)
+        String createSql = DuckDBSQLQueryGenerator.buildCreateProjectedTableSQL(
+                "data_table", schema.getCsv(), readCsvOptions,
+                schema.getValidationFilters(), useTwoDigit, new ArrayList<>(neededCols));
+
+        // Write SQL file
+        try (FileWriter writer = new FileWriter(outFile)) {
+            // Metadata: measure column indices (used by Python for result formatting)
+            writer.write("-- measures: " + schema.getMeasureCols().stream()
+                    .map(String::valueOf).collect(Collectors.joining(",")) + "\n");
+            // CREATE TABLE
+            writer.write(createSql);
+            writer.write("\n");
+            // SELECT queries
+            for (Query query : sequence) {
+                List<Range<Double>> ranges = new ArrayList<>();
+                Rectangle rectangle = query.getRect();
+                if (rectangle != null) {
+                    ranges.add(rectangle.getXRange());
+                    ranges.add(rectangle.getYRange());
+                }
+                String selectSql = SQLQueryGenerator.getSQLUniAggQuery(
+                        "data_table", ranges, measureColNames, null, AggregateType.PILOTDB, xColStr, yColStr);
+                writer.write(selectSql);
+                writer.write("\n");
+            }
+        }
+
+        LOG.info("Generated PilotDB SQL file with {} queries to {}", sequence.size(), outFile);
     }
 
 }

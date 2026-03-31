@@ -266,7 +266,7 @@ public class SQLQueryGenerator {
         }
     }
 
-    private static String negateOperator(FilterOperator operator) {
+    public static String negateOperator(FilterOperator operator) {
         switch (operator) {
             case LESS_THAN: return ">=";
             case LESS_THAN_OR_EQUAL: return ">";
