@@ -14,7 +14,6 @@ import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-
 import org.openjdk.jol.info.GraphLayout;
 
 import com.google.common.collect.Range;
@@ -427,8 +426,10 @@ public class Valinor implements AutoCloseable {
                 Tile qnTile = queryNode.getTile();
                 if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
                     query.getMeasureCols().forEach(measureCol -> {
-                        queryResults.adjustStats(null, measureCol,
-                                queryNode.getTile().getStats(schema.getMeasureIndex(measureCol)).snapshot());
+                        StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
+                        if (acc != null) {
+                            queryResults.adjustStats(null, measureCol, acc.snapshot());
+                        }
                     });
                 } else {
                     rawIterators.add(new NodePointsIterator(queryNode));
@@ -536,8 +537,10 @@ public class Valinor implements AutoCloseable {
             if (!samplingOnly && leafTile.hasFrozenStats()) {
                 frozenStatsTileCount++;
                 query.getMeasureCols().forEach(measureCol -> {
-                    queryResults.adjustStats(null, measureCol,
-                            leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
+                    Stats frozen = leafTile.getFrozenStats(schema.getMeasureIndex(measureCol));
+                    if (frozen != null) {
+                        queryResults.adjustStats(null, measureCol, frozen);
+                    }
                 });
                 continue;
             }
@@ -576,8 +579,10 @@ public class Valinor implements AutoCloseable {
         }
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
             query.getMeasureCols().forEach(measureCol -> {
-                queryResults.adjustStats(null, measureCol,
-                        queryNode.getTile().getStats(schema.getMeasureIndex(measureCol)).snapshot());
+                StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
+                if (acc != null) {
+                    queryResults.adjustStats(null, measureCol, acc.snapshot());
+                }
             });
             nonRawNodes.add(queryNode);
         }
