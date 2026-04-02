@@ -34,53 +34,75 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     }
 
     /**
-     * Implements reservoir sampling to select exactly `remainingSamplesNeeded`
-     * points from the set of query-intersecting and unsampled points.
+     * Selects exactly {@code remainingSamplesNeeded} random points from the
+     * eligible (query-intersecting and not yet sampled) population.
+     * Uses O(k) rejection sampling for fully-contained tiles, or
+     * O(eligible + k) enumerate-then-Fisher-Yates for partial tiles.
      */
     private BitSet selectRandomBitsReservoir(int remainingSamplesNeeded) {
-        BitSet reservoir = new BitSet();
-
-        // Compute eligible points: within query AND not previously sampled
-        BitSet eligiblePoints = (BitSet) queryNode.getQueryPointsBitSet().clone();
-        eligiblePoints.andNot(queryNode.getSampledTracker()); // Remove previously sampled points
-
-        Random random = new Random();
-        int reservoirSize = 0; // Tracks selected samples count
-
-        for (int index = eligiblePoints.nextSetBit(0),
-                processedCount = 0; index >= 0; index = eligiblePoints.nextSetBit(index + 1), processedCount++) {
-
-            if (reservoirSize < remainingSamplesNeeded) {
-                // Fill reservoir with query-intersecting, unsampled points
-                reservoir.set(index);
-                reservoirSize++;
-            } else {
-                // Replace existing points with decreasing probability
-                int r = random.nextInt(processedCount + 1);
-                if (r < remainingSamplesNeeded) {
-                    // Replace an existing point in the reservoir
-                    int toRemove = getRandomSetBit(reservoir, random);
-                    reservoir.clear(toRemove);
-                    reservoir.set(index);
-                }
+        // Fast path: fully-contained tile — eligible indices are [0, tileSize) \ sampledTracker.
+        // Rejection sampling generates k random ints in [0, tileSize), rejecting collisions.
+        // Expected cost: O(k / (1-f)) where f = sampled fraction. Falls through if f >= 50%.
+        if (queryNode.isFullyContained()) {
+            int tileSize = queryNode.getTile().getSize();
+            BitSet sampledTracker = queryNode.getSampledTracker();
+            int alreadySampled = sampledTracker.cardinality();
+            if (alreadySampled < tileSize / 2) {
+                int eligibleCount = tileSize - alreadySampled;
+                int k = Math.min(remainingSamplesNeeded, eligibleCount);
+                return selectRandomBitsRejection(k, tileSize, sampledTracker);
             }
         }
 
-        return reservoir;
+        // General path: sparse eligible population — enumerate then partial Fisher-Yates
+        BitSet eligiblePoints = (BitSet) queryNode.getQueryPointsBitSet().clone();
+        eligiblePoints.andNot(queryNode.getSampledTracker());
+
+        int eligibleCount = eligiblePoints.cardinality();
+
+        // Collect all eligible bit positions into an array (single pass)
+        int[] indices = new int[eligibleCount];
+        int pos = 0;
+        for (int index = eligiblePoints.nextSetBit(0); index >= 0;
+                index = eligiblePoints.nextSetBit(index + 1)) {
+            indices[pos++] = index;
+        }
+
+        int k = Math.min(remainingSamplesNeeded, eligibleCount);
+
+        // Partial Fisher-Yates: shuffle only the first k positions — O(k)
+        Random random = new Random();
+        for (int i = 0; i < k; i++) {
+            int j = i + random.nextInt(eligibleCount - i); // uniform in [i, eligibleCount)
+            int tmp = indices[i];
+            indices[i] = indices[j];
+            indices[j] = tmp;
+        }
+
+        // Build result BitSet from the first k shuffled positions
+        BitSet result = new BitSet();
+        for (int i = 0; i < k; i++) {
+            result.set(indices[i]);
+        }
+        return result;
     }
 
     /**
-     * Returns the index of a randomly chosen set bit from the given reservoir BitSet.
+     * Selects k random indices from [0, tileSize) avoiding sampledTracker via rejection.
+     * Each eligible index has equal probability k/eligible of being selected (SRSWOR).
      */
-    private int getRandomSetBit(BitSet reservoir, Random random) {
-        int size = reservoir.cardinality();
-        int target = random.nextInt(size);
-
-        int current = reservoir.nextSetBit(0);
-        for (int count = 0; count < target; count++) {
-            current = reservoir.nextSetBit(current + 1);
+    private BitSet selectRandomBitsRejection(int k, int tileSize, BitSet sampledTracker) {
+        Random random = new Random();
+        BitSet result = new BitSet();
+        int selected = 0;
+        while (selected < k) {
+            int idx = random.nextInt(tileSize);
+            if (!sampledTracker.get(idx) && !result.get(idx)) {
+                result.set(idx);
+                selected++;
+            }
         }
-        return current;
+        return result;
     }
 
     @Override
