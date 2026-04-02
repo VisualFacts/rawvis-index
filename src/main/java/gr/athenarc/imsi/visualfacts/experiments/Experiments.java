@@ -28,6 +28,7 @@ import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.Valinor;
+import gr.athenarc.imsi.visualfacts.config.IndexConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
@@ -70,8 +71,11 @@ public class Experiments {
     @Parameter(names = "-duckDbMode", description = "DuckDB execution mode: directCSV, table, spatialIndex")
     private String duckDbMode;
 
-    @Parameter(names = "-gridSize", description = "Grid size for index")
-    private Integer gridSize;
+    @Parameter(names = "-resolution", description = "Number of partitions per axis for the initial uniform grid (G×G cells). Default: 100")
+    private Integer resolution;
+
+    @Parameter(names = "-subtileRatio", description = "Fraction of G² cells that get query-biased sub-tiling (0.0–1.0). Default: 0.2")
+    private Double subtileRatio;
 
     @Parameter(names = "-run", description = "Run number for experiments")
     private Integer run;
@@ -156,6 +160,16 @@ public class Experiments {
 
             LOG.info("Loaded scenario '{}' with dataset '{}'", scenario, scenarioConfig.getDataset());
 
+        }
+
+        // Apply index parameter overrides
+        if (resolution != null && resolution > 0) {
+            IndexConfig.RESOLUTION = resolution;
+            LOG.info("Overriding RESOLUTION to {}", resolution);
+        }
+        if (subtileRatio != null) {
+            IndexConfig.SUBTILE_RATIO = subtileRatio;
+            LOG.info("Overriding SUBTILE_RATIO to {}", subtileRatio);
         }
     }
 

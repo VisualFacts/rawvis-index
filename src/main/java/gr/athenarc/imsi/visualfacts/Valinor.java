@@ -78,7 +78,7 @@ public class Valinor implements AutoCloseable {
     /**
      * Grid initialization mode.
      * <ul>
-     *   <li>{@code null} — uniform grid: a regular GRID_SIZE×GRID_SIZE grid
+     *   <li>{@code null} — uniform grid: a regular RESOLUTION×RESOLUTION grid
      *       with no sub-tiling bias.</li>
      *   <li>{@code "queryBiased"} — query-biased grid: uses
      *       {@link InitializationPolicy} to place denser sub-tiles near the
@@ -147,10 +147,10 @@ public class Valinor implements AutoCloseable {
 
         if (q0 != null && INIT_MODE_QUERY_BIASED.equalsIgnoreCase(initMode)) {
             initializationPolicy = new InitializationPolicy(q0,
-                    (int) (GRID_SIZE * GRID_SIZE * SUBTILE_RATIO), schema);
+                    (int) (RESOLUTION * RESOLUTION * SUBTILE_RATIO), schema);
         }
-        LOG.debug("Generating initial grid with size " + GRID_SIZE + "x" + GRID_SIZE);
-        grid = new Grid(initializationPolicy, schema.getBounds(), GRID_SIZE);
+        LOG.debug("Generating initial grid with resolution " + RESOLUTION + "x" + RESOLUTION);
+        grid = new Grid(initializationPolicy, schema.getBounds(), RESOLUTION);
         grid.split();
     }
 

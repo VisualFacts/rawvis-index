@@ -1,25 +1,21 @@
 package gr.athenarc.imsi.visualfacts.config;
 
-import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.ConfigurationRuntimeException;
-import org.apache.commons.configuration.PropertiesConfiguration;
-
+/**
+ * Index construction parameters.
+ * <p>
+ * Defaults can be overridden at runtime via CLI parameters in
+ * {@code Experiments} ({@code -resolution}, {@code -subtileRatio}).
+ */
 public final class IndexConfig {
 
-    private static final PropertiesConfiguration PROPERTIES_CONFIG = loadPropertiesConfig();
+    /** Partitions per axis for the initial uniform grid (R×R cells). */
+    public static int RESOLUTION = 100;
 
-    public static double SUBTILE_RATIO = PROPERTIES_CONFIG.getDouble("SUBTILE_RATIO", 0.2d);
-    public static int GRID_SIZE = PROPERTIES_CONFIG.getInt("GRID_SIZE", 100);
-    public static int THRESHOLD = PROPERTIES_CONFIG.getInt("THRESHOLD", 200);
+    /** Fraction of R² cells allocated additionally for query-biased sub-tiling (0.0–1.0). */
+    public static double SUBTILE_RATIO = 0.2;
 
-    public static char DELIMITER = PROPERTIES_CONFIG.getString("DELIMITER", ",").charAt(0);
+    /** Point count above which a partial tile is split during query processing. */
+    public static int THRESHOLD = 200;
 
-    private static PropertiesConfiguration loadPropertiesConfig() {
-        try {
-            return new PropertiesConfiguration("config.properties");
-        } catch (ConfigurationException e) {
-            throw new ConfigurationRuntimeException(e);
-        }
-    }
-
+    private IndexConfig() {}
 }

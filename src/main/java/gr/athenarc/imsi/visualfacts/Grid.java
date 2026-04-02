@@ -20,7 +20,7 @@ public class Grid extends Tile {
     private Tile[][] tiles;
     private Range<Double>[] xRanges;
     private Range<Double>[] yRanges;
-    private int gridSize;
+    private int resolution;
     private double rowSize;
     private double colSize;
 
@@ -28,9 +28,9 @@ public class Grid extends Tile {
     // private RangeMap<Float, Integer> yRangeMap = TreeRangeMap.create();
 
     public Grid(InitializationPolicy initializationPolicy, Rectangle bounds,
-            int gridSize) {
+            int resolution) {
         super(bounds);
-        this.gridSize = gridSize;
+        this.resolution = resolution;
         this.initializationPolicy = initializationPolicy;
     }
 
@@ -38,16 +38,16 @@ public class Grid extends Tile {
         if (this.tiles != null)
             return;
 
-        this.yRanges = createSubranges(this.bounds.getYRange(), gridSize);
-        this.xRanges = createSubranges(this.bounds.getXRange(), gridSize);
+        this.yRanges = createSubranges(this.bounds.getYRange(), resolution);
+        this.xRanges = createSubranges(this.bounds.getXRange(), resolution);
 
         rowSize = yRanges[0].upperEndpoint() - yRanges[0].lowerEndpoint();
         colSize = xRanges[0].upperEndpoint() - xRanges[0].lowerEndpoint();
 
-        tiles = new Tile[gridSize][gridSize];
+        tiles = new Tile[resolution][resolution];
 
-        for (int i = 0; i < gridSize; i++) {
-            for (int j = 0; j < gridSize; j++) {
+        for (int i = 0; i < resolution; i++) {
+            for (int j = 0; j < resolution; j++) {
                 int splitSize = 0;
                 Range<Double> colTileRange = xRanges[j], rowTileRange = yRanges[i];
                 Rectangle rect = new Rectangle(colTileRange, rowTileRange);
@@ -92,8 +92,8 @@ public class Grid extends Tile {
         // Clamp to valid range to handle floating-point precision issues at boundaries
         if (i < 0) {
             i = 0;
-        } else if (i >= gridSize) {
-            i = gridSize - 1;
+        } else if (i >= resolution) {
+            i = resolution - 1;
         }
         return i;
     }
@@ -106,8 +106,8 @@ public class Grid extends Tile {
         // Clamp to valid range to handle floating-point precision issues at boundaries
         if (j < 0) {
             j = 0;
-        } else if (j >= gridSize) {
-            j = gridSize - 1;
+        } else if (j >= resolution) {
+            j = resolution - 1;
         }
         return j;
     }
@@ -249,8 +249,8 @@ public class Grid extends Tile {
         if (this.tiles == null) {
             leafTiles.add(this);
         } else {
-            for (int i = 0; i < gridSize; i++) {
-                for (int j = 0; j < gridSize; j++) {
+            for (int i = 0; i < resolution; i++) {
+                for (int j = 0; j < resolution; j++) {
                     leafTiles.addAll(tiles[i][j].getLeafTiles());
                 }
             }
