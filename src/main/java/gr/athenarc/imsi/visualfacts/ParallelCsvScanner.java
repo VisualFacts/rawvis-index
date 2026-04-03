@@ -41,6 +41,16 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
  */
 public final class ParallelCsvScanner {
 
+    static {
+        // All spill I/O uses ByteBuffer.putInt/getInt for tile IDs.
+        // If TILE_ID_BYTES changes from 4, every putInt/getInt call in
+        // flushSpillBuffers and scanChunk must be updated.
+        if (IndexConfig.TILE_ID_BYTES != Integer.BYTES) {
+            throw new AssertionError(
+                    "ParallelCsvScanner spill I/O assumes TILE_ID_BYTES == 4, got " + IndexConfig.TILE_ID_BYTES);
+        }
+    }
+
     private static final Logger LOG = LogManager.getLogger(ParallelCsvScanner.class);
 
     /** Spill buffer size for the disk-streaming path (8 MB). */
@@ -182,12 +192,22 @@ public final class ParallelCsvScanner {
         // decision is deferred to after the join where we know the actual count.
         // Peak during flatten: xs/ys/offsets chunks (24N) + tileId chunks (TID×N)
         // + new flat tileIds (TID×N) = (24 + 2×TID)×N.
+        // Additionally, each worker thread allocates per-tile scan metadata:
+        //   tileCounts: int[R²]                          → 4×R² bytes
+        //   tileStats:  StatsAccumulator[R²][M] refs     → 8×R²×M + ~64×R²×M objects
+        //   tileStatsPointCounts: int[R²][M]             → (16+4M)×R² bytes (outer refs + inner arrays)
+        // Conservative estimate per thread: ~(24 + 76×M)×R² bytes.
         long maxHeap = Runtime.getRuntime().maxMemory();
-        long estimatedPeak = (24L + 2L * IndexConfig.TILE_ID_BYTES) * totalCapacity;
+        long estimatedPointData = (24L + 2L * IndexConfig.TILE_ID_BYTES) * totalCapacity;
+        long estimatedMetadata = (long) numThreads * (long) numTiles * (24L + 76L * measureCount);
+        long estimatedPeak = estimatedPointData + estimatedMetadata;
         boolean useDiskScan = estimatedPeak > (long) (maxHeap * 0.85);
-        LOG.info("Parallel scan: {} threads, {} scan path, estimated peak={} MB, maxHeap={} MB",
+        LOG.info("Parallel scan: {} threads, {} scan path, estimated peak={} MB (point data={} MB, metadata={} MB), maxHeap={} MB",
                 numThreads, useDiskScan ? "disk-streaming" : "in-memory",
-                estimatedPeak / (1024 * 1024), maxHeap / (1024 * 1024));
+                estimatedPeak / (1024 * 1024),
+                estimatedPointData / (1024 * 1024),
+                estimatedMetadata / (1024 * 1024),
+                maxHeap / (1024 * 1024));
 
         // 3. Launch worker threads
         ChunkResult[] results = new ChunkResult[numThreads];

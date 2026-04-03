@@ -461,7 +461,11 @@ public class SharedPointStore {
         }
     }
 
-    /** Writes an int[] to a file (sequential, platform byte-order). */
+    /**
+     * Writes an int[] to a file (sequential, platform byte-order).
+     * <p>Uses putInt — assumes TILE_ID_BYTES == Integer.BYTES.
+     * See static assertion in {@link ParallelCsvScanner}.
+     */
     private static void spillIntArrayToFile(int[] arr, int len, Path file) throws IOException {
         try (FileChannel ch = FileChannel.open(file,
                 StandardOpenOption.WRITE, StandardOpenOption.CREATE,
@@ -579,6 +583,9 @@ public class SharedPointStore {
      * Scatters N longs from {@code srcFile} into a partitioned array, reading
      * tile IDs from {@code tileIdsFile} in tandem (both files are read
      * sequentially, one chunk at a time).
+     * <p>
+     * Uses getInt for tile IDs &mdash; assumes TILE_ID_BYTES == Integer.BYTES.
+     * See static assertion in {@link ParallelCsvScanner}.
      * <p>
      * Used when tileIds has been freed from heap to stay within G1's usable headroom.
      */
