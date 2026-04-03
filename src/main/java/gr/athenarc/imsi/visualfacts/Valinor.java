@@ -203,8 +203,8 @@ public class Valinor implements AutoCloseable {
         // Build tile index mapping for partition
         List leafTileList = grid.getLeafTiles();
         int numTiles = leafTileList.size();
-        if (numTiles > Short.MAX_VALUE) {
-            throw new IllegalStateException("Tile count " + numTiles + " exceeds short range; cannot use short[] tileIds");
+        if (numTiles > Integer.MAX_VALUE) {
+            throw new IllegalStateException("Tile count " + numTiles + " exceeds int range; cannot use int[] tileIds");
         }
         IdentityHashMap<Tile, Integer> tileIndexMap = new IdentityHashMap<>(numTiles);
         for (int t = 0; t < numTiles; t++) {

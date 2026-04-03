@@ -12,6 +12,8 @@ import java.util.stream.IntStream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import gr.athenarc.imsi.visualfacts.config.IndexConfig;
+
 /**
  * Shared backing store for point data (x, y, file-offset).
  * All tiles reference slices of the same arrays, avoiding per-tile duplication.
@@ -49,9 +51,9 @@ public class SharedPointStore {
      * {@link #takeTileIds} before {@link #partition},
      * cleared internally after partition completes.  Holding tileIds as a field
      * (rather than a method parameter) allows the spill path to null and GC the
-     * 1 GB array before the final scatter pass, staying under G1's reserve limit.
+     * array before the final scatter pass, staying under G1's reserve limit.
      */
-    private short[] tileIds;
+    private int[] tileIds;
 
     /** Whether the most recent {@link #partition} call used disk-spill. */
     private boolean partitionSpilled;
@@ -82,7 +84,7 @@ public class SharedPointStore {
      * @param chunkSizes number of valid elements in each chunk
      */
     public SharedPointStore(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
-                            short[][] tileIdChunks, int[] chunkSizes, int totalSize) {
+                            int[][] tileIdChunks, int[] chunkSizes, int totalSize) {
         this.chunked = true;
         this.xsChunks = xsChunks;
         this.ysChunks = ysChunks;
@@ -94,8 +96,8 @@ public class SharedPointStore {
         }
         this.capacity = totalSize;
 
-        // Flatten tileIdChunks into contiguous array (only 2 bytes/point)
-        this.tileIds = new short[totalSize];
+        // Flatten tileIdChunks into contiguous array
+        this.tileIds = new int[totalSize];
         int pos = 0;
         for (int c = 0; c < numChunks; c++) {
             System.arraycopy(tileIdChunks[c], 0, this.tileIds, pos, chunkSizes[c]);
@@ -136,7 +138,7 @@ public class SharedPointStore {
      * reference after this call so that the array can be GC'd from inside
      * {@link #partition} when the spill path needs the memory.
      */
-    public void takeTileIds(short[] ids) {
+    public void takeTileIds(int[] ids) {
         this.tileIds = ids;
     }
 
@@ -160,8 +162,8 @@ public class SharedPointStore {
             throw new IllegalStateException("takeTileIds() must be called before partition()");
         }
         // Peak memory during in-memory partition:
-        //   3 existing arrays (24n bytes) + 1 new array (8n) + tileIds (2n) = 34n bytes
-        long peakInMemory = 4L * n * 8 + (long) n * 2;
+        //   3 existing arrays (24n bytes) + 1 new array (8n) + tileIds (TILE_ID_BYTES * n)
+        long peakInMemory = 4L * n * 8 + (long) n * IndexConfig.TILE_ID_BYTES;
         long maxHeap = Runtime.getRuntime().maxMemory();
 
         if (peakInMemory > (long) (maxHeap * 0.85)) {
@@ -179,7 +181,7 @@ public class SharedPointStore {
 
     /** Dispatches to chunked or contiguous in-memory partition. */
     private void partitionInMemory(int n, int[] starts, int numTiles) {
-        final short[] tid = this.tileIds;
+        final int[] tid = this.tileIds;
         if (chunked) {
             partitionChunkedInMemory(n, starts, numTiles, tid);
         } else {
@@ -197,7 +199,7 @@ public class SharedPointStore {
      * 3. Parallel scatter: each chunk writes to its own disjoint ranges
      *    — no synchronization, bit-identical output to a sequential scatter.
      */
-    private void partitionChunkedInMemory(int n, int[] starts, int numTiles, short[] tid) {
+    private void partitionChunkedInMemory(int n, int[] starts, int numTiles, int[] tid) {
         final int numChunks = xsChunks.length;
 
         // Step 1: per-chunk tile counts (sequential — tileIds fits in cache)
@@ -243,7 +245,7 @@ public class SharedPointStore {
 
     /** Parallel scatter of chunked double arrays into a flat partitioned array. */
     private static double[] scatterDoubleChunksParallel(double[][] srcChunks, int n,
-            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, short[] tid) {
+            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, int[] tid) {
         double[] dest = new double[n];
         IntStream.range(0, numChunks).parallel().forEach(c -> {
             int[] cursors = chunkTileStarts[c].clone();
@@ -259,7 +261,7 @@ public class SharedPointStore {
 
     /** Parallel scatter of chunked long arrays into a flat partitioned array. */
     private static long[] scatterLongChunksParallel(long[][] srcChunks, int n,
-            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, short[] tid) {
+            int numChunks, int[][] chunkTileStarts, int[] chunkStarts, int[] tid) {
         long[] dest = new long[n];
         IntStream.range(0, numChunks).parallel().forEach(c -> {
             int[] cursors = chunkTileStarts[c].clone();
@@ -274,7 +276,7 @@ public class SharedPointStore {
     }
 
     /** Original contiguous scatter partition (used by legacy non-parallel path). */
-    private void partitionContiguousInMemory(int n, int[] starts, int numTiles, short[] tid) {
+    private void partitionContiguousInMemory(int n, int[] starts, int numTiles, int[] tid) {
         int[] cursors;
 
         // Pass 1: scatter xs
@@ -311,17 +313,18 @@ public class SharedPointStore {
      * so the peak during any single scatter never exceeds xs + ys + dest = 24N,
      * staying safely under G1's 10% reserve at 14 GB max heap.
      * <p>
-     * Heap trace for N points (each array = 8N bytes, tileIds = 2N):
+     * Heap trace for N points (each array = 8N bytes, tileIds = TILE_ID_BYTES × N):
      * <pre>
-     *   Before:  xs + ys + offsets + tileIds             = 26N
-     *   Spill xs,  null, gc:  ys + offsets + tileIds     = 18N
-     *   Spill ys,  null, gc:  offsets + tileIds          = 10N
-     *   Spill off, null, gc:  tileIds                    = 2N   ← trough
-     *   Scatter xs (tileIds in memory):  xs_new + tileIds = 10N
-     *   Scatter ys (tileIds in memory):  xs + ys + tileIds= 18N
+     *   Before:  xs + ys + offsets + tileIds             = (24 + TID)N
+     *   Spill xs,  null, gc:  ys + offsets + tileIds     = (16 + TID)N
+     *   Spill ys,  null, gc:  offsets + tileIds          = (8 + TID)N
+     *   Spill off, null, gc:  tileIds                    = TID × N   ← trough
+     *   Scatter xs (tileIds in memory):  xs_new + tileIds = (8 + TID)N
+     *   Scatter ys (tileIds in memory):  xs + ys + tileIds= (16 + TID)N
      *   Spill tileIds, null, gc:         xs + ys          = 16N
-     *   Scatter offsets (tileIds from disk): xs+ys+off    = 24N ← peak, fits in 14 GB
+     *   Scatter offsets (tileIds from disk): xs+ys+off    = 24N ← peak
      * </pre>
+     * where TID = {@link IndexConfig#TILE_ID_BYTES}.
      */
     private void partitionWithSpill(int n, int[] starts, int numTiles) {
         Path tmpXs = null, tmpYs = null, tmpOff = null, tmpTid = null;
@@ -373,11 +376,8 @@ public class SharedPointStore {
             LOG.debug("Scattered xs + ys from disk in {} s",
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase C: Spill tileIds to disk and free it (1 GB) before 3rd scatter.
-            // This brings heap from xs(4GB) + ys(4GB) + tileIds(1GB) = 9 GB
-            // down to 8 GB, leaving room for offsets_new(4GB) = 12 GB total
-            // which fits within G1's usable heap (14 GB × 0.9 = 12.6 GB).
-            spillShortArrayToFile(this.tileIds, n, tmpTid);
+            // Phase C: Spill tileIds to disk and free it before 3rd scatter.
+            spillIntArrayToFile(this.tileIds, n, tmpTid);
             this.tileIds = null;
             forceGC("tileIds");
 
@@ -461,8 +461,8 @@ public class SharedPointStore {
         }
     }
 
-    /** Writes a short[] to a file (sequential, platform byte-order). */
-    private static void spillShortArrayToFile(short[] arr, int len, Path file) throws IOException {
+    /** Writes an int[] to a file (sequential, platform byte-order). */
+    private static void spillIntArrayToFile(int[] arr, int len, Path file) throws IOException {
         try (FileChannel ch = FileChannel.open(file,
                 StandardOpenOption.WRITE, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
@@ -470,9 +470,9 @@ public class SharedPointStore {
             int pos = 0;
             while (pos < len) {
                 buf.clear();
-                int chunk = Math.min(SPILL_BUF_SIZE / 2, len - pos);
+                int chunk = Math.min(SPILL_BUF_SIZE / Integer.BYTES, len - pos);
                 for (int i = 0; i < chunk; i++) {
-                    buf.putShort(arr[pos + i]);
+                    buf.putInt(arr[pos + i]);
                 }
                 buf.flip();
                 while (buf.hasRemaining()) {
@@ -523,7 +523,7 @@ public class SharedPointStore {
      * Reads N doubles from a file, scattering them into a partitioned array.
      */
     private static double[] scatterDoublesFromFile(Path file, int n,
-            short[] tileIds, int[] starts, int numTiles) throws IOException {
+            int[] tileIds, int[] starts, int numTiles) throws IOException {
         int[] cursors = Arrays.copyOf(starts, numTiles);
         double[] dest = new double[n];
         try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
@@ -551,7 +551,7 @@ public class SharedPointStore {
      * Reads N longs from a file, scattering them into a partitioned array.
      */
     private static long[] scatterLongsFromFile(Path file, int n,
-            short[] tileIds, int[] starts, int numTiles) throws IOException {
+            int[] tileIds, int[] starts, int numTiles) throws IOException {
         int[] cursors = Arrays.copyOf(starts, numTiles);
         long[] dest = new long[n];
         try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
@@ -589,8 +589,8 @@ public class SharedPointStore {
         try (FileChannel srcCh = FileChannel.open(srcFile, StandardOpenOption.READ);
              FileChannel tidCh = FileChannel.open(tileIdsFile, StandardOpenOption.READ)) {
             ByteBuffer srcBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-            // For K source elements (8 bytes each), we need K tileId shorts (2 bytes each)
-            ByteBuffer tidBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE / 4);
+            // For K source elements (8 bytes each), we need K tileId ints (TILE_ID_BYTES each)
+            ByteBuffer tidBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE / (8 / IndexConfig.TILE_ID_BYTES));
             int pos = 0;
             while (pos < n) {
                 int chunk = Math.min(SPILL_BUF_SIZE / 8, n - pos);
@@ -606,7 +606,7 @@ public class SharedPointStore {
 
                 // Read corresponding tile IDs
                 tidBuf.clear();
-                tidBuf.limit(chunk * 2);
+                tidBuf.limit(chunk * IndexConfig.TILE_ID_BYTES);
                 while (tidBuf.hasRemaining()) {
                     if (tidCh.read(tidBuf) < 0)
                         throw new IOException("TileIds file truncated at element " + pos);
@@ -615,7 +615,7 @@ public class SharedPointStore {
 
                 // Scatter
                 for (int i = 0; i < chunk; i++) {
-                    short tid = tidBuf.getShort();
+                    int tid = tidBuf.getInt();
                     dest[cursors[tid]++] = srcBuf.getLong();
                 }
                 pos += chunk;
