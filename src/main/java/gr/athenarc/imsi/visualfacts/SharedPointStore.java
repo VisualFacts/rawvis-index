@@ -26,7 +26,7 @@ import gr.athenarc.imsi.visualfacts.config.IndexConfig;
  *   <li>Phase 3: each tile wired to its slice via {@link Tile#setSlice}</li>
  * </ol>
  */
-public class SharedPointStore {
+public class SharedPointStore implements AutoCloseable {
 
     private static final Logger LOG = LogManager.getLogger(SharedPointStore.class);
 
@@ -57,6 +57,18 @@ public class SharedPointStore {
 
     /** Whether the most recent {@link #partition} call used disk-spill. */
     private boolean partitionSpilled;
+
+    // ---- Mmap mode: point data backed by memory-mapped files ----
+    private boolean mmapMode;
+    private MmapArray mmapXs;
+    private MmapArray mmapYs;
+    private MmapArray mmapOffsets;
+    /** Per-thread temp files from scan phase — consumed during partitionToMmap, then nulled. */
+    private Path[] pendingXsFiles;
+    private Path[] pendingYsFiles;
+    private Path[] pendingOffsetsFiles;
+    private int[] pendingFileCounts;
+    private Path mmapDir;
 
     public boolean didPartitionSpill() { return partitionSpilled; }
 
@@ -105,17 +117,54 @@ public class SharedPointStore {
         }
     }
 
+    /**
+     * Creates a store for mmap mode.  Only tileIds are on heap; xs/ys/offsets
+     * remain in per-thread temp files and will be scattered into mmap files
+     * during {@link #partitionToMmap}.
+     *
+     * @param tileIds      merged flat tileIds array (4N on heap)
+     * @param capacity     total number of valid points
+     * @param xsFiles      per-thread temp file paths for xs
+     * @param ysFiles      per-thread temp file paths for ys
+     * @param offsetsFiles per-thread temp file paths for offsets
+     * @param fileCounts   per-thread valid counts
+     * @param mmapDir      directory for mmap files
+     */
+    public static SharedPointStore createForMmap(
+            int[] tileIds, int capacity,
+            Path[] xsFiles, Path[] ysFiles, Path[] offsetsFiles, int[] fileCounts,
+            Path mmapDir) {
+        SharedPointStore store = new SharedPointStore();
+        store.tileIds = tileIds;
+        store.capacity = capacity;
+        store.mmapMode = true;
+        store.pendingXsFiles = xsFiles;
+        store.pendingYsFiles = ysFiles;
+        store.pendingOffsetsFiles = offsetsFiles;
+        store.pendingFileCounts = fileCounts;
+        store.mmapDir = mmapDir;
+        return store;
+    }
+
+    /** Private no-arg constructor for factory method. */
+    private SharedPointStore() {}
+
     public int getCapacity() { return capacity; }
 
+    public boolean isMmapMode() { return mmapMode; }
+
     public double getX(int i) {
+        if (mmapMode) return mmapXs.getDouble(i);
         if (chunked) { int c = chunkFor(i); return xsChunks[c][i - chunkStarts[c]]; }
         return xs[i];
     }
     public double getY(int i) {
+        if (mmapMode) return mmapYs.getDouble(i);
         if (chunked) { int c = chunkFor(i); return ysChunks[c][i - chunkStarts[c]]; }
         return ys[i];
     }
     public long getOffset(int i) {
+        if (mmapMode) return mmapOffsets.getLong(i);
         if (chunked) { int c = chunkFor(i); return offsetsChunks[c][i - chunkStarts[c]]; }
         return offsets[i];
     }
@@ -161,6 +210,15 @@ public class SharedPointStore {
         if (this.tileIds == null) {
             throw new IllegalStateException("takeTileIds() must be called before partition()");
         }
+
+        if (mmapMode) {
+            LOG.info("Partition using mmap path for {} points", n);
+            partitionToMmap(n, starts, numTiles);
+            partitionSpilled = true;
+            this.tileIds = null;
+            return;
+        }
+
         // Peak memory during in-memory partition:
         //   3 existing arrays (24n bytes) + 1 new array (8n) + tileIds (TILE_ID_BYTES * n)
         long peakInMemory = 4L * n * 8 + (long) n * IndexConfig.TILE_ID_BYTES;
@@ -665,8 +723,190 @@ public class SharedPointStore {
 
     /** Swaps elements at absolute positions a and b across all three arrays. */
     private void swap(int a, int b) {
+        if (mmapMode) {
+            double tx = mmapXs.getDouble(a); mmapXs.putDouble(a, mmapXs.getDouble(b)); mmapXs.putDouble(b, tx);
+            double ty = mmapYs.getDouble(a); mmapYs.putDouble(a, mmapYs.getDouble(b)); mmapYs.putDouble(b, ty);
+            long  to = mmapOffsets.getLong(a); mmapOffsets.putLong(a, mmapOffsets.getLong(b)); mmapOffsets.putLong(b, to);
+            return;
+        }
         double tx = xs[a]; xs[a] = xs[b]; xs[b] = tx;
         double ty = ys[a]; ys[a] = ys[b]; ys[b] = ty;
         long to = offsets[a]; offsets[a] = offsets[b]; offsets[b] = to;
+    }
+
+    // ======================================================================
+    //  Mmap partition: scatter per-thread temp files into memory-mapped arrays
+    // ======================================================================
+
+    /**
+     * Scatters per-thread temp files directly into mmap files, tile-partitioned.
+     * <p>
+     * Heap trace (N = 1B, TID = 4 bytes):
+     * <pre>
+     *   Before:  tileIds (4N)                                    ≈ 3.7 GiB
+     *   Phase A: create mmap files (off-heap)                   ≈ 3.7 GiB
+     *   Phase B: scatter xs+ys in tandem (tileIds in memory)    ≈ 3.7 GiB
+     *   Phase C: scatter offsets (tileIds still in memory)      ≈ 3.7 GiB
+     *   Steady:  0 heap for point data (all in mmap)
+     * </pre>
+     * TileIds stay on heap throughout — only 4N bytes, and there are no
+     * competing heap arrays (xs/ys/offsets are all in mmap).  Freed by
+     * the caller ({@link #partition}) after this method returns.
+     */
+    private void partitionToMmap(int n, int[] starts, int numTiles) {
+        try {
+            // Phase A: create mmap files
+            long t0 = System.nanoTime();
+            this.mmapXs = MmapArray.create(mmapDir.resolve("valinor_xs.mmap"), n);
+            this.mmapYs = MmapArray.create(mmapDir.resolve("valinor_ys.mmap"), n);
+            this.mmapOffsets = MmapArray.create(mmapDir.resolve("valinor_off.mmap"), n);
+            LOG.info("Mmap files created in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            // Phase B: scatter xs and ys in tandem using in-memory tileIds
+            t0 = System.nanoTime();
+            scatterXsYsToMmap(n, starts, numTiles);
+            LOG.info("Scattered xs + ys to mmap in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            // Phase C: scatter offsets using in-memory tileIds (still only 4N on heap)
+            t0 = System.nanoTime();
+            scatterOffsetsToMmap(n, starts, numTiles);
+            LOG.info("Scattered offsets to mmap in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            this.capacity = n;
+
+        } catch (IOException e) {
+            throw new RuntimeException("Mmap partition failed", e);
+        } finally {
+            // Clean up pending per-thread files (may already be deleted in scatter methods)
+            safeDeleteArray(pendingXsFiles);
+            safeDeleteArray(pendingYsFiles);
+            safeDeleteArray(pendingOffsetsFiles);
+            pendingXsFiles = null;
+            pendingYsFiles = null;
+            pendingOffsetsFiles = null;
+            pendingFileCounts = null;
+        }
+    }
+
+    /**
+     * Reads xs and ys from per-thread temp files in tandem, scattering into mmap
+     * at partitioned positions determined by in-memory tileIds.
+     */
+    private void scatterXsYsToMmap(int n, int[] starts, int numTiles) throws IOException {
+        int[] cursors = Arrays.copyOf(starts, numTiles);
+        int globalPos = 0;
+
+        for (int t = 0; t < pendingFileCounts.length; t++) {
+            int count = pendingFileCounts[t];
+            if (count == 0) {
+                safeDelete(pendingXsFiles[t]);
+                safeDelete(pendingYsFiles[t]);
+                pendingXsFiles[t] = null;
+                pendingYsFiles[t] = null;
+                continue;
+            }
+
+            try (FileChannel xsCh = FileChannel.open(pendingXsFiles[t], StandardOpenOption.READ);
+                 FileChannel ysCh = FileChannel.open(pendingYsFiles[t], StandardOpenOption.READ)) {
+
+                ByteBuffer xsBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
+                ByteBuffer ysBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
+                int pos = 0;
+                while (pos < count) {
+                    int chunk = Math.min(SPILL_BUF_SIZE / 8, count - pos);
+                    int bytes = chunk * 8;
+
+                    xsBuf.clear();
+                    xsBuf.limit(bytes);
+                    while (xsBuf.hasRemaining()) {
+                        if (xsCh.read(xsBuf) < 0) throw new IOException("xs file truncated for thread " + t);
+                    }
+                    xsBuf.flip();
+
+                    ysBuf.clear();
+                    ysBuf.limit(bytes);
+                    while (ysBuf.hasRemaining()) {
+                        if (ysCh.read(ysBuf) < 0) throw new IOException("ys file truncated for thread " + t);
+                    }
+                    ysBuf.flip();
+
+                    for (int i = 0; i < chunk; i++) {
+                        int tid = tileIds[globalPos + i];
+                        int dest = cursors[tid]++;
+                        mmapXs.putDouble(dest, xsBuf.getDouble());
+                        mmapYs.putDouble(dest, ysBuf.getDouble());
+                    }
+                    pos += chunk;
+                    globalPos += chunk;
+                }
+            }
+            safeDelete(pendingXsFiles[t]);
+            safeDelete(pendingYsFiles[t]);
+            pendingXsFiles[t] = null;
+            pendingYsFiles[t] = null;
+        }
+    }
+
+    /**
+     * Reads offsets from per-thread temp files, scattering into mmap at
+     * partitioned positions using in-memory tileIds.
+     */
+    private void scatterOffsetsToMmap(int n, int[] starts, int numTiles) throws IOException {
+        int[] cursors = Arrays.copyOf(starts, numTiles);
+        int globalPos = 0;
+
+        for (int t = 0; t < pendingFileCounts.length; t++) {
+            int count = pendingFileCounts[t];
+            if (count == 0) {
+                safeDelete(pendingOffsetsFiles[t]);
+                pendingOffsetsFiles[t] = null;
+                continue;
+            }
+
+            try (FileChannel offCh = FileChannel.open(pendingOffsetsFiles[t], StandardOpenOption.READ)) {
+                ByteBuffer offBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
+                int pos = 0;
+                while (pos < count) {
+                    int chunk = Math.min(SPILL_BUF_SIZE / 8, count - pos);
+
+                    // Read offsets
+                    offBuf.clear();
+                    offBuf.limit(chunk * 8);
+                    while (offBuf.hasRemaining()) {
+                        if (offCh.read(offBuf) < 0)
+                            throw new IOException("offsets file truncated for thread " + t);
+                    }
+                    offBuf.flip();
+
+                    // Scatter using in-memory tileIds
+                    for (int i = 0; i < chunk; i++) {
+                        int tid = tileIds[globalPos + i];
+                        mmapOffsets.putLong(cursors[tid]++, offBuf.getLong());
+                    }
+                    pos += chunk;
+                    globalPos += chunk;
+                }
+            }
+            safeDelete(pendingOffsetsFiles[t]);
+            pendingOffsetsFiles[t] = null;
+        }
+    }
+
+    private static void safeDeleteArray(Path[] paths) {
+        if (paths == null) return;
+        for (int i = 0; i < paths.length; i++) {
+            safeDelete(paths[i]);
+            paths[i] = null;
+        }
+    }
+
+    @Override
+    public void close() {
+        if (mmapXs != null) { mmapXs.close(); mmapXs = null; }
+        if (mmapYs != null) { mmapYs.close(); mmapYs = null; }
+        if (mmapOffsets != null) { mmapOffsets.close(); mmapOffsets = null; }
     }
 }

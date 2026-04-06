@@ -234,10 +234,24 @@ public class Valinor implements AutoCloseable {
             this.maxRowLength = (int) scanResult.maxRowLength;
             LOG.info("Max row length observed during init: {} bytes", maxRowLength);
 
-            // Adopt scan chunks into a SharedPointStore (zero-copy, no merge)
-            SharedPointStore store = new SharedPointStore(
-                    scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
-                    scanResult.tileIdChunks, scanResult.chunkSizes, validCount);
+            // Adopt scan results into a SharedPointStore
+            SharedPointStore store;
+            if (scanResult.mmapPending) {
+                // Mmap mode: only tileIds on heap; xs/ys/offsets stay in temp files
+                String mmapDirProp = System.getProperty("valinor.mmap.dir", "/tmp");
+                java.nio.file.Path mmapDir = java.nio.file.Paths.get(mmapDirProp);
+                LOG.info("Using mmap partition path, mmap dir: {}", mmapDir);
+                store = SharedPointStore.createForMmap(
+                        scanResult.tileIdChunks[0], validCount,
+                        scanResult.perThreadXsFiles, scanResult.perThreadYsFiles,
+                        scanResult.perThreadOffsetsFiles, scanResult.perThreadCounts,
+                        mmapDir);
+            } else {
+                // Normal path: chunked arrays on heap (zero-copy adoption)
+                store = new SharedPointStore(
+                        scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
+                        scanResult.tileIdChunks, scanResult.chunkSizes, validCount);
+            }
 
             // Wire per-tile counts and stats from the parallel scan into tiles
             for (int t = 0; t < numTiles; t++) {
@@ -1059,6 +1073,9 @@ public class Valinor implements AutoCloseable {
         if (batchReader != null) {
             batchReader.close();
             batchReader = null;
+        }
+        if (pointStore != null) {
+            pointStore.close();
         }
     }
 }
