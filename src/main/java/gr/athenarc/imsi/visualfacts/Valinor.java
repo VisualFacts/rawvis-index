@@ -224,7 +224,7 @@ public class Valinor implements AutoCloseable {
                     selectedColumns, xPos, yPos,
                     filterPositions, filterArray, measurePositions,
                     grid.getBounds(), grid, tileIndexMap, numTiles,
-                    scanThreads, capacity);
+                    scanThreads, capacity, schema.getNullstr());
 
             ParallelCsvScanner.ScanResult scanResult = scanner.scan();
             long scanEndNanos = System.nanoTime();
@@ -379,7 +379,9 @@ public class Valinor implements AutoCloseable {
         QueryResults queryResults = new QueryResults(query);
 
         if (batchReader == null) {
-            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength);
+            String ns = schema.getNullstr();
+            byte[] nsBytes = (ns != null && !ns.isEmpty()) ? ns.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null;
+            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength, nsBytes);
         }
 
         List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
@@ -518,7 +520,9 @@ public class Valinor implements AutoCloseable {
         ApproximateQueryResults queryResults = new ApproximateQueryResults(query);
 
         if (batchReader == null) {
-            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength);
+            String ns = schema.getNullstr();
+            byte[] nsBytes = (ns != null && !ns.isEmpty()) ? ns.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null;
+            batchReader = new RandomAccessRowReader(schema.getCsv(), maxRowLength, nsBytes);
         }
         List<QueryNode> nonRawNodes = new ArrayList<>();
 

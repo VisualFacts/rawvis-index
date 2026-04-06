@@ -73,6 +73,7 @@ public final class ParallelCsvScanner {
     private final int numTiles;
     private final int numThreads;
     private final int totalCapacity;          // schema.getObjectCount()
+    private final String nullstr;             // null-string for CSV parsing (e.g. "\\N"), or null
 
     public ParallelCsvScanner(File csvFile, char delimiter, boolean hasHeader,
                               int[] selectedColumns, int xPos, int yPos,
@@ -80,7 +81,7 @@ public final class ParallelCsvScanner {
                               int[] measurePositions,
                               Rectangle bounds, Grid grid,
                               IdentityHashMap<Tile, Integer> tileIndexMap, int numTiles,
-                              int numThreads, int totalCapacity) {
+                              int numThreads, int totalCapacity, String nullstr) {
         this.csvFile = csvFile;
         this.delimiter = delimiter;
         this.hasHeader = hasHeader;
@@ -97,6 +98,7 @@ public final class ParallelCsvScanner {
         this.numTiles = numTiles;
         this.numThreads = numThreads;
         this.totalCapacity = totalCapacity;
+        this.nullstr = nullstr;
     }
 
     // ======================================================================
@@ -366,7 +368,8 @@ public final class ParallelCsvScanner {
                     false,    // header already skipped via chunk offset
                     delimiter,
                     startOffset,
-                    endOffset);
+                    endOffset,
+                    nullstr);
 
             try (ZsvCsvDoubleRowReader reader = new ZsvCsvDoubleRowReader()) {
                 reader.open(chunkConfig);

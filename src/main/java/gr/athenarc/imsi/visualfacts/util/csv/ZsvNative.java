@@ -7,7 +7,7 @@ public final class ZsvNative {
         System.loadLibrary("zsv_jni");
     }
 
-    public static native long open(String path, byte delimiter, boolean skipHeader, int[] selectedCols);
+    public static native long open(String path, byte delimiter, boolean skipHeader, int[] selectedCols, byte[] nullstr);
 
     /**
      * Opens a ZSV parser starting at a specific byte offset within the file.
@@ -27,7 +27,7 @@ public final class ZsvNative {
      */
     public static native long openAtOffset(String path, byte delimiter,
                                            long startOffset, long endOffset,
-                                           int[] selectedCols);
+                                           int[] selectedCols, byte[] nullstr);
 
     public static native void close(long handle);
 
@@ -107,7 +107,8 @@ public final class ZsvNative {
             int[] measureCols,
             byte delimiter,
             ByteBuffer values8,
-            ByteBuffer present1
+            ByteBuffer present1,
+            byte[] nullstr
     );
 
     private ZsvNative() {

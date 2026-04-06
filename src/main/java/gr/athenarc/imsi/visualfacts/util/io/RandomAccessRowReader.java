@@ -40,6 +40,7 @@ public class RandomAccessRowReader implements AutoCloseable {
     public static final int BATCH_SIZE = 32_768;
 
     private long handle;
+    private byte[] nullstrBytes;  // UTF-8 encoded null-string, or null
 
     // Reusable direct ByteBuffers — grown on demand, never shrunk
     private ByteBuffer offsetsBuf;
@@ -62,7 +63,12 @@ public class RandomAccessRowReader implements AutoCloseable {
      * @throws RuntimeException wrapping IOException if the file cannot be opened
      */
     public RandomAccessRowReader(String path, int maxRowLength) {
+        this(path, maxRowLength, null);
+    }
+
+    public RandomAccessRowReader(String path, int maxRowLength, byte[] nullstrBytes) {
         this.handle = ZsvNative.openUringReader(path, maxRowLength);
+        this.nullstrBytes = nullstrBytes;
     }
 
     /**
@@ -100,7 +106,8 @@ public class RandomAccessRowReader implements AutoCloseable {
                 handle,
                 offsetsBuf, rowCount,
                 sortedMeasureCols, delimiter,
-                valuesBuf, presentBuf);
+                valuesBuf, presentBuf,
+                nullstrBytes);
 
         lastRowCount = rowCount;
         lastMeasureCount = nm;

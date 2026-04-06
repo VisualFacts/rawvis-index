@@ -15,15 +15,22 @@ public final class CsvReaderConfig {
     private final char delimiter;
     private final long startOffset;  // byte offset to start from (0 = beginning)
     private final long endOffset;    // exclusive end byte; -1 = read to EOF
+    private final String nullstr;    // null-string (e.g. "\\N"); null = none
 
     public CsvReaderConfig(File file, Charset charset, int[] selectedColumns,
                            boolean skipHeader, char delimiter) {
-        this(file, charset, selectedColumns, skipHeader, delimiter, 0, -1);
+        this(file, charset, selectedColumns, skipHeader, delimiter, 0, -1, null);
     }
 
     public CsvReaderConfig(File file, Charset charset, int[] selectedColumns,
                            boolean skipHeader, char delimiter,
                            long startOffset, long endOffset) {
+        this(file, charset, selectedColumns, skipHeader, delimiter, startOffset, endOffset, null);
+    }
+
+    public CsvReaderConfig(File file, Charset charset, int[] selectedColumns,
+                           boolean skipHeader, char delimiter,
+                           long startOffset, long endOffset, String nullstr) {
         this.file = file;
         this.charset = charset;
         this.selectedColumns = selectedColumns == null ? null : Arrays.copyOf(selectedColumns, selectedColumns.length);
@@ -31,6 +38,7 @@ public final class CsvReaderConfig {
         this.delimiter = delimiter;
         this.startOffset = startOffset;
         this.endOffset = endOffset;
+        this.nullstr = nullstr;
     }
 
     public File getFile() {
@@ -59,6 +67,20 @@ public final class CsvReaderConfig {
 
     public long getEndOffset() {
         return endOffset;
+    }
+
+    /** Returns the null-string (e.g. "\\N"), or null if not configured. */
+    public String getNullstr() {
+        return nullstr;
+    }
+
+    /**
+     * Returns the nullstr as a UTF-8 byte array for JNI, or null if not set.
+     */
+    public byte[] getNullstrBytes() {
+        return (nullstr != null && !nullstr.isEmpty())
+                ? nullstr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                : null;
     }
 
     /** Returns true if this config describes a chunk-based read (non-zero start offset or bounded end). */

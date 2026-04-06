@@ -42,6 +42,9 @@ typedef struct
 
     int64_t start_offset; // absolute byte offset this reader started from (0 for full-file)
     int64_t end_offset;   // exclusive end byte; -1 = read to EOF
+
+    char *nullstr;        // NULL or heap-allocated null-string (e.g. "\\N")
+    int   nullstr_len;    // length of nullstr (0 = no nullstr configured)
 } reader_t;
 
 static reader_t *handle_to_reader(jlong handle)
@@ -70,6 +73,7 @@ static void free_reader(reader_t *r)
         fclose(r->f);
 
     free(r->sel);
+    free(r->nullstr);
     free(r);
 }
 
@@ -88,10 +92,26 @@ static inline int parse_double(const unsigned char *s, size_t len, double *out)
 extern "C" {
 #endif
 
+// Extract a JNI byte[] into a heap-allocated C string.
+// Sets *out_str = NULL, *out_len = 0 if jba is null or empty.
+static void extract_nullstr(JNIEnv *env, jbyteArray jba, char **out_str, int *out_len)
+{
+    *out_str = NULL;
+    *out_len = 0;
+    if (!jba) return;
+    jsize len = env->GetArrayLength(jba);
+    if (len <= 0) return;
+    char *buf = (char *)malloc((size_t)len);
+    if (!buf) return;
+    env->GetByteArrayRegion(jba, 0, len, (jbyte *)buf);
+    *out_str = buf;
+    *out_len = (int)len;
+}
+
 JNIEXPORT jlong JNICALL
 Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
     JNIEnv *env, jclass cls, jstring jpath, jbyte delimiter,
-    jboolean skipHeader, jintArray jselCols)
+    jboolean skipHeader, jintArray jselCols, jbyteArray jnullstr)
 {
     (void)cls;
 
@@ -188,13 +208,15 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
         return 0;
     }
 
+    extract_nullstr(env, jnullstr, &r->nullstr, &r->nullstr_len);
+
     return (jlong)(uintptr_t)r;
 }
 
 JNIEXPORT jlong JNICALL
 Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_openAtOffset(
     JNIEnv *env, jclass cls, jstring jpath, jbyte delimiter,
-    jlong jstartOffset, jlong jendOffset, jintArray jselCols)
+    jlong jstartOffset, jlong jendOffset, jintArray jselCols, jbyteArray jnullstr)
 {
     (void)cls;
 
@@ -298,6 +320,8 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_openAtOffset(
         throw_ioe(env, "zsv_new failed");
         return 0;
     }
+
+    extract_nullstr(env, jnullstr, &r->nullstr, &r->nullstr_len);
 
     return (jlong)(uintptr_t)r;
 }
@@ -427,6 +451,7 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
             // Clear presence flags for THIS row only (k bytes)
             memset(present + base, 0, (size_t)k);
 
+            bool row_valid = true;
             for (int c = 0; c < k; c++)
             {
                 int col = r->sel[c];
@@ -435,7 +460,13 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
 
                 struct zsv_cell cell = zsv_get_cell(r->parser, (size_t)col);
                 if (!cell.str || cell.len == 0)
-                    continue;
+                    continue;  // empty → present stays 0 (NULL/missing)
+
+                // Check if cell matches the configured null-string
+                if (r->nullstr_len > 0 &&
+                    (int)cell.len == r->nullstr_len &&
+                    memcmp(cell.str, r->nullstr, (size_t)r->nullstr_len) == 0)
+                    continue;  // nullstr match → present stays 0 (NULL/missing)
 
                 double d;
                 if (parse_double((const unsigned char *)cell.str, cell.len, &d))
@@ -443,10 +474,20 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
                     values[base + c] = d;
                     present[base + c] = 1;
                 }
+                else
+                {
+                    // Genuinely invalid data — skip entire row (matches DuckDB
+                    // ignore_errors=true behaviour which drops rows with any
+                    // unparseable DOUBLE column).
+                    row_valid = false;
+                    break;
+                }
             }
 
-            rowsRead++;
             r->row_index++;
+            if (row_valid) {
+                rowsRead++;
+            }
             continue;
         }
 
@@ -558,12 +599,16 @@ static int build_page_groups(const int64_t *offsets, int n_rows, page_group_t *p
 // the caller must retry with a larger buffer.  When buf_is_eof is true, running
 // past the buffer boundary is treated as a genuine end-of-file (last row with
 // no trailing newline) and the pending field is flushed normally.
+//
+// nullstr/nullstr_len: if non-NULL/non-zero, fields matching this string are
+// treated as missing (present stays 0) instead of being parsed.
 
 static bool parse_row_from_buf(
         const uint8_t *buf, size_t buf_len, size_t row_off,
         const int *mcols, int nm, char delim,
         double *out_vals, uint8_t *out_pres,
-        bool buf_is_eof)
+        bool buf_is_eof,
+        const char *nullstr, int nullstr_len)
 {
     size_t pos         = row_off;
     int    cur_col     = 0;
@@ -580,11 +625,18 @@ static bool parse_row_from_buf(
         if (c == (uint8_t)delim || c == '\n' || c == '\r') {
             if (cur_col == next_tgt) {
                 if (flen > 0) {
-                    double d;
-                    auto result = fast_float::from_chars(field, field + flen, d);
-                    if (result.ec == std::errc() && result.ptr == field + flen) {
-                        out_vals[tgt_idx] = d;
-                        out_pres[tgt_idx] = 1;
+                    // Check nullstr match → treat as missing (present stays 0)
+                    bool is_null = (nullstr_len > 0 && flen == nullstr_len &&
+                                    memcmp(field, nullstr, (size_t)nullstr_len) == 0);
+                    if (!is_null) {
+                        double d;
+                        auto result = fast_float::from_chars(field, field + flen, d);
+                        if (result.ec == std::errc() && result.ptr == field + flen) {
+                            out_vals[tgt_idx] = d;
+                            out_pres[tgt_idx] = 1;
+                        }
+                        // else: parse failure on a measure column during sampling;
+                        // present stays 0 (treated as missing).
                     }
                 }
                 // Always advance to next target (empty field -> present stays 0)
@@ -610,11 +662,15 @@ static bool parse_row_from_buf(
     // truncated and would produce a silently wrong value.
     if (!row_complete && tgt_idx < nm && cur_col == next_tgt) {
         if (buf_is_eof && flen > 0) {
-            double d;
-            auto result = fast_float::from_chars(field, field + flen, d);
-            if (result.ec == std::errc() && result.ptr == field + flen) {
-                out_vals[tgt_idx] = d;
-                out_pres[tgt_idx] = 1;
+            bool is_null = (nullstr_len > 0 && flen == nullstr_len &&
+                            memcmp(field, nullstr, (size_t)nullstr_len) == 0);
+            if (!is_null) {
+                double d;
+                auto result = fast_float::from_chars(field, field + flen, d);
+                if (result.ec == std::errc() && result.ptr == field + flen) {
+                    out_vals[tgt_idx] = d;
+                    out_pres[tgt_idx] = 1;
+                }
             }
             row_complete = true;
         }
@@ -713,7 +769,8 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
         JNIEnv *env, jclass cls, jlong handle,
         jobject jOffsets, jint rowCount,
         jintArray jMeasureCols, jbyte delimiter,
-        jobject jValues, jobject jPresent)
+        jobject jValues, jobject jPresent,
+        jbyteArray jnullstr)
 {
     (void)cls;
     if (!handle || rowCount <= 0) return;
@@ -764,6 +821,11 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
     if (!pages) { free(mcols); throw_ioe(env, "readRowBatch: OOM (pages)"); return; }
     int num_pages = build_page_groups(offsets, rowCount, pages);
 
+    // Extract nullstr (may be NULL/empty)
+    char *nullstr_buf = NULL;
+    int   nullstr_len = 0;
+    extract_nullstr(env, jnullstr, &nullstr_buf, &nullstr_len);
+
     // io_uring pipeline
     int next_submit    = 0;
     int completed      = 0;
@@ -812,6 +874,7 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
                 // Non-recoverable submit error — bail out
                 free(pages);
                 free(mcols);
+                free(nullstr_buf);
                 char errbuf[128];
                 snprintf(errbuf, sizeof(errbuf), "readRowBatch: io_uring_submit failed (%d)", sr);
                 throw_ioe(env, errbuf);
@@ -851,7 +914,8 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
                         parse_row_from_buf(buf, blen, roff,
                                            mcols, nm, delim,
                                            values + base, present + base,
-                                           is_eof);
+                                           is_eof,
+                                           nullstr_buf, nullstr_len);
                     }
                 }
                 // Failed reads (bytes_got < 0) are silently skipped — present stays 0
@@ -864,6 +928,7 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
 
     free(pages);
     free(mcols);
+    free(nullstr_buf);
 }
 
 #else  // !HAVE_URING — stub implementations that throw at runtime
@@ -888,10 +953,12 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_readRowBatch(
         JNIEnv *env, jclass cls, jlong handle,
         jobject jOffsets, jint rowCount,
         jintArray jMeasureCols, jbyte delimiter,
-        jobject jValues, jobject jPresent)
+        jobject jValues, jobject jPresent,
+        jbyteArray jnullstr)
 {
     (void)cls; (void)handle; (void)jOffsets; (void)rowCount;
     (void)jMeasureCols; (void)delimiter; (void)jValues; (void)jPresent;
+    (void)jnullstr;
     jclass ex = env->FindClass("java/lang/UnsupportedOperationException");
     if (ex) env->ThrowNew(ex, "io_uring not available (build without HAVE_URING)");
 }

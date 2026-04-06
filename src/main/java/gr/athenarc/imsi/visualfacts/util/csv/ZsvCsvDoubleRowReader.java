@@ -79,6 +79,7 @@ public final class ZsvCsvDoubleRowReader implements CsvDoubleRowReader {
         this.batchRowIndex = 0;
 
         boolean skipHeader = config.isSkipHeader();
+        byte[] nullstrBytes = config.getNullstrBytes();
 
         if (config.isChunkBased()) {
             // Chunk-based opening: start at a specific byte offset, stop at end offset.
@@ -88,13 +89,15 @@ public final class ZsvCsvDoubleRowReader implements CsvDoubleRowReader {
                     (byte) config.getDelimiter(),
                     config.getStartOffset(),
                     config.getEndOffset(),
-                    selectedCols);
+                    selectedCols,
+                    nullstrBytes);
         } else {
             this.handle = ZsvNative.open(
                     config.getFile().getAbsolutePath(),
                     (byte) config.getDelimiter(),
                     skipHeader,
-                    selectedCols);
+                    selectedCols,
+                    nullstrBytes);
         }
 
         if (this.handle == 0) {

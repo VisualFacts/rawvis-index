@@ -53,10 +53,13 @@ public class DuckDBSQLQueryGenerator extends SQLQueryGenerator {
     public static String buildReadCsvOptions(boolean hasHeader, String nullstr) {
         StringBuilder opts = new StringBuilder("ignore_errors = true");
         if (hasHeader) {
-            opts.append(", header = true");
+            // header=false; skip=1 discards the actual header row so it isn't ingested as data.
+            opts.append(", header = false, skip = 1");
         }
         if (nullstr != null && !nullstr.isEmpty()) {
-            opts.append(", nullstr = '").append(nullstr).append("'");
+            // Use a list so DuckDB still treats empty fields as NULL alongside
+            // the custom null string (e.g. 'X' in eBird OBSERVATION COUNT).
+            opts.append(", nullstr = ['', '").append(nullstr).append("']");
         }
         return opts.toString();
     }
