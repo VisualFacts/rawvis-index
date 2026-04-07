@@ -215,6 +215,25 @@ public class Valinor implements AutoCloseable {
         final int availableThreads = Runtime.getRuntime().availableProcessors();
         final int scanThreads = Math.max(1, availableThreads);
 
+        // Resolve mmap/tmp dirs early so tmpDir can be passed to the scanner.
+        // Clean up tmpDir BEFORE timing starts.
+        String mmapDirProp = System.getProperty("valinor.mmap.dir", "/tmp");
+        java.nio.file.Path mmapDir = java.nio.file.Paths.get(mmapDirProp);
+        java.nio.file.Path tmpDir = mmapDir.resolve("valinor_tmp");
+        try {
+            if (java.nio.file.Files.exists(tmpDir)) {
+                try (var walk = java.nio.file.Files.walk(tmpDir)) {
+                    walk.sorted(java.util.Comparator.reverseOrder())
+                        .map(java.nio.file.Path::toFile)
+                        .forEach(java.io.File::delete);
+                }
+            }
+            java.nio.file.Files.createDirectories(tmpDir);
+        } catch (IOException e) {
+            LOG.warn("Failed to prepare tmpDir {}: {}", tmpDir, e.getMessage());
+            tmpDir = null;
+        }
+
         try {
             // --- Phase 1: parallel CSV scan → merged arrays + per-tile counts/stats ---
             long phase1Start = System.nanoTime();
@@ -224,7 +243,7 @@ public class Valinor implements AutoCloseable {
                     selectedColumns, xPos, yPos,
                     filterPositions, filterArray, measurePositions,
                     grid.getBounds(), grid, tileIndexMap, numTiles,
-                    scanThreads, capacity, schema.getNullstr());
+                    scanThreads, capacity, schema.getNullstr(), tmpDir);
 
             ParallelCsvScanner.ScanResult scanResult = scanner.scan();
             long scanEndNanos = System.nanoTime();
@@ -236,10 +255,16 @@ public class Valinor implements AutoCloseable {
 
             // Adopt scan results into a SharedPointStore
             SharedPointStore store;
-            if (scanResult.mmapPending) {
+            if (scanResult.bucketMode) {
+                // Bucket-mmap: scatter per-thread bucket files into mmap arrays
+                LOG.info("Using bucket-mmap partition path ({} buckets), mmap dir: {}",
+                        scanResult.numBuckets, mmapDir);
+                store = SharedPointStore.createForBucketMmap(
+                        validCount, scanResult.bucketDir,
+                        scanResult.numBuckets, scanResult.tilesPerBucket,
+                        scanResult.numScanThreads, mmapDir);
+            } else if (scanResult.mmapPending) {
                 // Mmap mode: only tileIds on heap; xs/ys/offsets stay in temp files
-                String mmapDirProp = System.getProperty("valinor.mmap.dir", "/tmp");
-                java.nio.file.Path mmapDir = java.nio.file.Paths.get(mmapDirProp);
                 LOG.info("Using mmap partition path, mmap dir: {}", mmapDir);
                 store = SharedPointStore.createForMmap(
                         scanResult.tileIdChunks[0], validCount,

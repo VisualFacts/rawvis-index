@@ -1,88 +1,110 @@
 package gr.athenarc.imsi.visualfacts;
 
-import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import net.openhft.chronicle.bytes.MappedBytes;
-import net.openhft.chronicle.bytes.MappedFile;
-
 /**
  * Memory-mapped array of 8-byte elements (doubles or longs) backed by
- * Chronicle Bytes for efficient off-heap access.
+ * pure JDK NIO {@link MappedByteBuffer}s.
  * <p>
- * Chronicle Bytes handles multi-segment mapping automatically (no 2 GiB
- * limit), provides deterministic unmap via {@code release()}, and uses
- * {@code Unsafe} for minimal-overhead reads/writes.
+ * Because a single {@code MappedByteBuffer} is limited to ~2 GiB
+ * ({@code Integer.MAX_VALUE} bytes), the file is divided into segments
+ * of up to {@link #SEGMENT_SIZE} bytes.
  * <p>
  * Thread safety: absolute-positioned reads are thread-safe (each call
- * computes the byte offset independently). Writes are single-writer only.
+ * computes the segment and offset independently). Writes are single-writer only.
  */
 public final class MmapArray implements AutoCloseable {
 
     private static final Logger LOG = LogManager.getLogger(MmapArray.class);
 
-    /** Chunk size for Chronicle's internal mapping — 128 MB. */
-    private static final long CHUNK_SIZE = 128L * 1024 * 1024;
+    /** Segment size: 1 GiB — well under MappedByteBuffer's 2 GiB limit. */
+    private static final long SEGMENT_SIZE = 1L << 30;  // 1 GiB
 
-    private MappedBytes mappedBytes;
+    /** Bit shift for dividing byte offset by SEGMENT_SIZE. */
+    private static final int SEGMENT_SHIFT = 30;
+
+    private MappedByteBuffer[] segments;
     private final Path filePath;
     private final int count;
 
-    private MmapArray(Path filePath, int count, MappedBytes mappedBytes) {
+    private MmapArray(Path filePath, int count, MappedByteBuffer[] segments) {
         this.filePath = filePath;
         this.count = count;
-        this.mappedBytes = mappedBytes;
+        this.segments = segments;
     }
 
     /**
      * Creates a new mmap file for {@code count} 8-byte elements.
      * The file is created at {@code file}, pre-sized to {@code count * 8} bytes,
-     * and mapped read-write via Chronicle Bytes.
+     * and memory-mapped in 1 GiB segments.
      */
     public static MmapArray create(Path file, int count) throws IOException {
         long totalBytes = (long) count * 8;
 
-        // Delete any stale file from a previous crashed run so we don't
-        // inherit a larger-than-needed mapping (Chronicle opens without truncation).
+        // Delete any stale file from a previous crashed run
         Files.deleteIfExists(file);
 
-        File f = file.toFile();
-        MappedFile mf = MappedFile.of(f, CHUNK_SIZE, 0);
-        MappedBytes mb = MappedBytes.mappedBytes(mf);
-        // Set write limit so Chronicle knows the file extent
-        mb.writeLimit(totalBytes);
+        int numSegments = (int) ((totalBytes + SEGMENT_SIZE - 1) / SEGMENT_SIZE);
+        if (numSegments == 0) numSegments = 1;
+        MappedByteBuffer[] segs = new MappedByteBuffer[numSegments];
 
-        LOG.debug("Mmap created (Chronicle): {} ({} elements, {} GB)",
+        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
+            raf.setLength(totalBytes);
+            FileChannel ch = raf.getChannel();
+            for (int i = 0; i < numSegments; i++) {
+                long offset = (long) i * SEGMENT_SIZE;
+                long size = Math.min(SEGMENT_SIZE, totalBytes - offset);
+                segs[i] = ch.map(FileChannel.MapMode.READ_WRITE, offset, size);
+            }
+        }
+
+        LOG.debug("Mmap created (NIO): {} ({} elements, {} GB, {} segments)",
                 file.getFileName(), count,
-                String.format("%.1f", totalBytes / (1024.0 * 1024 * 1024)));
-        return new MmapArray(file, count, mb);
+                String.format("%.1f", totalBytes / (1024.0 * 1024 * 1024)),
+                numSegments);
+        return new MmapArray(file, count, segs);
     }
 
     public int getCount() { return count; }
 
-    // ---- Double access (absolute byte offset) ----
+    // ---- Double access (absolute element index) ----
 
     public double getDouble(int i) {
-        return mappedBytes.readDouble((long) i * 8);
+        long bytePos = (long) i * 8;
+        int seg = (int) (bytePos >>> SEGMENT_SHIFT);
+        int off = (int) (bytePos & (SEGMENT_SIZE - 1));
+        return segments[seg].getDouble(off);
     }
 
     public void putDouble(int i, double v) {
-        mappedBytes.writeDouble((long) i * 8, v);
+        long bytePos = (long) i * 8;
+        int seg = (int) (bytePos >>> SEGMENT_SHIFT);
+        int off = (int) (bytePos & (SEGMENT_SIZE - 1));
+        segments[seg].putDouble(off, v);
     }
 
-    // ---- Long access (absolute byte offset) ----
+    // ---- Long access (absolute element index) ----
 
     public long getLong(int i) {
-        return mappedBytes.readLong((long) i * 8);
+        long bytePos = (long) i * 8;
+        int seg = (int) (bytePos >>> SEGMENT_SHIFT);
+        int off = (int) (bytePos & (SEGMENT_SIZE - 1));
+        return segments[seg].getLong(off);
     }
 
     public void putLong(int i, long v) {
-        mappedBytes.writeLong((long) i * 8, v);
+        long bytePos = (long) i * 8;
+        int seg = (int) (bytePos >>> SEGMENT_SHIFT);
+        int off = (int) (bytePos & (SEGMENT_SIZE - 1));
+        segments[seg].putLong(off, v);
     }
 
     /**
@@ -90,21 +112,22 @@ public final class MmapArray implements AutoCloseable {
      * Call after partition scatter is complete.
      */
     public void force() {
-        MappedFile mf = mappedBytes.mappedFile();
-        if (mf != null) {
-            // No direct force API on MappedBytes — the OS will flush eventually.
-            // For correctness this is fine; data is visible to readers immediately
-            // through the page cache.
+        if (segments != null) {
+            for (MappedByteBuffer seg : segments) {
+                if (seg != null) seg.force();
+            }
         }
     }
 
     @Override
     public void close() {
-        if (mappedBytes != null) {
-            try {
-                mappedBytes.close();     // deterministic unmap via Chronicle
-            } catch (Exception ignored) { }
-            mappedBytes = null;
+        if (segments != null) {
+            // MappedByteBuffers are unmapped by GC; no deterministic unmap in standard JDK.
+            // Null out references so GC can reclaim.
+            for (int i = 0; i < segments.length; i++) {
+                segments[i] = null;
+            }
+            segments = null;
         }
         if (filePath != null) {
             try { Files.deleteIfExists(filePath); } catch (IOException ignored) { }

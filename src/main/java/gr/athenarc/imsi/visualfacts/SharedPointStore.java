@@ -2,6 +2,7 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,6 +70,13 @@ public class SharedPointStore implements AutoCloseable {
     private Path[] pendingOffsetsFiles;
     private int[] pendingFileCounts;
     private Path mmapDir;
+
+    // ---- Bucket mmap mode: per-thread per-bucket files ----
+    private boolean bucketMode;
+    private Path bucketDir;
+    private int numBuckets;
+    private int tilesPerBucket;
+    private int numScanThreads;
 
     public boolean didPartitionSpill() { return partitionSpilled; }
 
@@ -146,6 +154,33 @@ public class SharedPointStore implements AutoCloseable {
         return store;
     }
 
+    /**
+     * Creates a store for bucket-mmap mode.  Point data lives in per-thread
+     * per-bucket files; tileIds are inline in those files (no heap array).
+     * The {@link #partition} call will scatter bucket-by-bucket into mmap.
+     *
+     * @param capacity       total number of valid points
+     * @param bucketDir      directory containing scan_t{t}_b{k}.bin files
+     * @param numBuckets     number of buckets (power of 2)
+     * @param tilesPerBucket ceil(numTiles / numBuckets)
+     * @param numScanThreads number of scan threads (per-bucket file count)
+     * @param mmapDir        directory for final mmap files
+     */
+    public static SharedPointStore createForBucketMmap(
+            int capacity, Path bucketDir, int numBuckets, int tilesPerBucket,
+            int numScanThreads, Path mmapDir) {
+        SharedPointStore store = new SharedPointStore();
+        store.capacity = capacity;
+        store.mmapMode = true;
+        store.bucketMode = true;
+        store.bucketDir = bucketDir;
+        store.numBuckets = numBuckets;
+        store.tilesPerBucket = tilesPerBucket;
+        store.numScanThreads = numScanThreads;
+        store.mmapDir = mmapDir;
+        return store;
+    }
+
     /** Private no-arg constructor for factory method. */
     private SharedPointStore() {}
 
@@ -207,6 +242,13 @@ public class SharedPointStore implements AutoCloseable {
      * @param numTiles  number of distinct tiles
      */
     public void partition(int n, int[] starts, int numTiles) {
+        if (mmapMode && bucketMode) {
+            LOG.info("Partition using bucket-mmap path for {} points ({} buckets)", n, numBuckets);
+            partitionBucketsToMmap(n, starts, numTiles);
+            partitionSpilled = true;
+            return;
+        }
+
         if (this.tileIds == null) {
             throw new IllegalStateException("takeTileIds() must be called before partition()");
         }
@@ -900,6 +942,96 @@ public class SharedPointStore implements AutoCloseable {
         for (int i = 0; i < paths.length; i++) {
             safeDelete(paths[i]);
             paths[i] = null;
+        }
+    }
+
+    // ======================================================================
+    //  Bucket-mmap partition: scatter per-thread bucket files into mmap
+    // ======================================================================
+
+    /** Bytes per bucket record: x(8) + y(8) + offset(8) + tileId(4) = 28. */
+    private static final int BUCKET_RECORD_BYTES = 8 + 8 + 8 + IndexConfig.TILE_ID_BYTES;
+
+    /**
+     * Scatters per-thread per-bucket files into mmap files, bucket by bucket.
+     * <p>
+     * Each bucket covers a contiguous range of tile IDs, so the mmap write
+     * target for each bucket fits in page cache (~250 MB working set for
+     * B=32, N=1B).  No tileIds array is needed on heap — tileIds are read
+     * inline from bucket records.
+     * <p>
+     * Heap during scatter: only cursors (~1 MB) + read buffer (8 MB).
+     */
+    private void partitionBucketsToMmap(int n, int[] starts, int numTiles) {
+        try {
+            // Phase A: create mmap files
+            long t0 = System.nanoTime();
+            this.mmapXs = MmapArray.create(mmapDir.resolve("valinor_xs.mmap"), n);
+            this.mmapYs = MmapArray.create(mmapDir.resolve("valinor_ys.mmap"), n);
+            this.mmapOffsets = MmapArray.create(mmapDir.resolve("valinor_off.mmap"), n);
+            LOG.info("Mmap files created in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            // Phase B: scatter bucket by bucket
+            t0 = System.nanoTime();
+            int[] cursors = Arrays.copyOf(starts, numTiles);
+
+            for (int b = 0; b < numBuckets; b++) {
+                // Read each thread's bucket-b file and scatter into mmap
+                for (int t = 0; t < numScanThreads; t++) {
+                    Path bucketFile = bucketDir.resolve(String.format("scan_t%d_b%d.bin", t, b));
+                    if (!Files.exists(bucketFile)) continue;
+                    long fileSize = Files.size(bucketFile);
+                    if (fileSize == 0) {
+                        safeDelete(bucketFile);
+                        continue;
+                    }
+
+                    try (FileChannel ch = FileChannel.open(bucketFile, StandardOpenOption.READ)) {
+                        // Round buffer capacity down to a multiple of BUCKET_RECORD_BYTES
+                        // so every read consumes complete records (no leftover partial records).
+                        int alignedBuf = (SPILL_BUF_SIZE / BUCKET_RECORD_BYTES) * BUCKET_RECORD_BYTES;
+                        ByteBuffer buf = ByteBuffer.allocateDirect(alignedBuf)
+                                .order(ByteOrder.nativeOrder());
+                        long remaining = fileSize;
+                        while (remaining > 0) {
+                            buf.clear();
+                            int toRead = (int) Math.min(alignedBuf, remaining);
+                            buf.limit(toRead);
+                            while (buf.hasRemaining()) {
+                                if (ch.read(buf) < 0) break;
+                            }
+                            buf.flip();
+
+                            int records = buf.remaining() / BUCKET_RECORD_BYTES;
+                            for (int r = 0; r < records; r++) {
+                                double x = buf.getDouble();
+                                double y = buf.getDouble();
+                                long offset = buf.getLong();
+                                int tileId = buf.getInt();
+                                int dest = cursors[tileId]++;
+                                mmapXs.putDouble(dest, x);
+                                mmapYs.putDouble(dest, y);
+                                mmapOffsets.putLong(dest, offset);
+                            }
+                            remaining -= (long) records * BUCKET_RECORD_BYTES;
+                        }
+                    }
+                    safeDelete(bucketFile);
+                }
+
+                if (b % 8 == 7 || b == numBuckets - 1) {
+                    LOG.debug("Bucket scatter progress: {}/{} buckets", b + 1, numBuckets);
+                }
+            }
+
+            LOG.info("Bucket scatter complete ({} buckets) in {} s",
+                    numBuckets, String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            this.capacity = n;
+
+        } catch (IOException e) {
+            throw new RuntimeException("Bucket-mmap partition failed", e);
         }
     }
 
