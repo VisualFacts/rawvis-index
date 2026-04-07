@@ -78,7 +78,7 @@ contains() {
     return 1
 }
 
-# ---- Pre-generate query sequences ----
+# ---- Pre-generate SQL files ----
 
 for scenario in "${scenarios[@]}"
 do
@@ -86,18 +86,23 @@ do
     results_dir="${results_base}/${scenario}/pilotdb/"
     mkdir -p "$results_dir"
 
-    generated_queries_file="${results_dir}queries_generated.txt"
-    if [[ ! -f "$generated_queries_file" ]]; then
-        echo "Generating query sequence for scenario $scenario..."
-        "$JAVA" -Xmx16G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
-            -c generateAndSaveQuerySequence \
-            -scenario "$scenario" \
-            -configFile "$config_file" \
-            -out "$generated_queries_file"
-        if [[ ! -f "$generated_queries_file" ]]; then
-            echo "Failed to generate queries for scenario $scenario. Skipping."
+    # Generate PilotDB SQL files (one per num_measures value)
+    for num_measures in "${num_measures_list[@]}"
+    do
+        sql_file="${results_dir}pilotdb_mcols${num_measures}.sql"
+        if [[ ! -f "$sql_file" ]]; then
+            echo "Generating PilotDB SQL file for scenario=$scenario mcols=$num_measures..."
+            "$JAVA" -Xmx2G -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                -c generatePilotDBSqlFile \
+                -scenario "$scenario" \
+                -configFile "$config_file" \
+                -numMeasures "$num_measures" \
+                -out "$sql_file"
+            if [[ ! -f "$sql_file" ]]; then
+                echo "Failed to generate SQL file for scenario=$scenario mcols=$num_measures."
+            fi
         fi
-    fi
+    done
 done
 
 # ---- Main loop (run is outermost so run 1 completes across all configs first) ----
@@ -108,14 +113,15 @@ do
     do
         results_base=${RESULTS_BASE:-experiments/results}
         results_dir="${results_base}/${scenario}/pilotdb/"
-        generated_queries_file="${results_dir}queries_generated.txt"
-        if [[ ! -f "$generated_queries_file" ]]; then
-            echo "No queries file for scenario $scenario. Skipping."
-            continue
-        fi
 
         for num_measures in "${num_measures_list[@]}"
         do
+            sql_file="${results_dir}pilotdb_mcols${num_measures}.sql"
+            if [[ ! -f "$sql_file" ]]; then
+                echo "No SQL file for scenario=$scenario mcols=$num_measures. Skipping."
+                continue
+            fi
+
             for error_bound in "${error_bounds[@]}"
             do
                 # Combination pruning (same logic as exp_valinor.sh):
@@ -142,10 +148,7 @@ do
                     --setenv=DUCKDB_TEMP_DIR="$DUCKDB_TEMP_DIR" \
                     --working-directory="$PROJECT_ROOT" \
                     "$PROJECT_ROOT/.venv-pilotdb/bin/python" "$SCRIPT_DIR/run_pilotdb_queries.py" \
-                    --queries-file "$generated_queries_file" \
-                    --scenario "$scenario" \
-                    --config-file "$config_file" \
-                    --num-measures "$num_measures" \
+                    --sql-file "$sql_file" \
                     --error "$error_bound" \
                     --out "$out_file"
 
