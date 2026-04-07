@@ -116,12 +116,16 @@ public class SharedPointStore implements AutoCloseable {
         }
         this.capacity = totalSize;
 
-        // Flatten tileIdChunks into contiguous array
-        this.tileIds = new int[totalSize];
-        int pos = 0;
-        for (int c = 0; c < numChunks; c++) {
-            System.arraycopy(tileIdChunks[c], 0, this.tileIds, pos, chunkSizes[c]);
-            pos += chunkSizes[c];
+        // Flatten tileIdChunks into contiguous array (or adopt directly if single chunk)
+        if (numChunks == 1) {
+            this.tileIds = tileIdChunks[0];
+        } else {
+            this.tileIds = new int[totalSize];
+            int pos = 0;
+            for (int c = 0; c < numChunks; c++) {
+                System.arraycopy(tileIdChunks[c], 0, this.tileIds, pos, chunkSizes[c]);
+                pos += chunkSizes[c];
+            }
         }
     }
 
