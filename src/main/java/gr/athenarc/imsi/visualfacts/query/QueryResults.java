@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.math.Stats;
 import com.google.common.math.StatsAccumulator;
 
@@ -13,9 +12,7 @@ public class QueryResults {
 
     private Query query;
 
-    private Map<ImmutableList<String>, Map<Integer, StatsAccumulator>> stats;
-
-    private Map<Integer, Stats> rectStats; // Univariate stats for each query measure
+    private Map<Integer, StatsAccumulator> stats;
 
     private List<double[]> points;
 
@@ -44,23 +41,19 @@ public class QueryResults {
         this.query = query;
     }
 
-    public Map<ImmutableList<String>, Map<Integer, Stats>> getStats() {
+    public Map<Integer, Stats> getStats() {
         return stats.entrySet().stream().collect(Collectors.toMap(
                 Map.Entry::getKey,
-                e -> e.getValue().entrySet().stream().collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        entry -> entry.getValue().snapshot()))));
+                e -> e.getValue().snapshot()));
     }
 
-    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, double measureValue) {
-        stats.computeIfAbsent(groupByValues, v -> new HashMap<>())
-                .computeIfAbsent(measure, m -> new StatsAccumulator())
+    public void adjustStats(Integer measure, double measureValue) {
+        stats.computeIfAbsent(measure, m -> new StatsAccumulator())
                 .add(measureValue);
     }
 
-    public void adjustStats(ImmutableList<String> groupByValues, Integer measure, Stats stats) {
-        this.stats.computeIfAbsent(groupByValues, v -> new HashMap<>())
-                .computeIfAbsent(measure, m -> new StatsAccumulator())
+    public void adjustStats(Integer measure, Stats stats) {
+        this.stats.computeIfAbsent(measure, m -> new StatsAccumulator())
                 .addAll(stats);
     }
 
@@ -126,20 +119,11 @@ public class QueryResults {
         this.points = points;
     }
 
-    public Map<Integer, Stats> getRectStats() {
-        return rectStats;
-    }
-
-    public void setRectStats(Map<Integer, Stats> rectStats) {
-        this.rectStats = rectStats;
-    }
-
     @Override
     public String toString() {
         return "QueryResults{" +
                 "query=" + query +
                 ", stats=" + stats +
-                ", rectStats=" + rectStats +
                 ", points=" + points +
                 ", fullyContainedTileCount=" + fullyContainedTileCount +
                 ", tileCount=" + tileCount +

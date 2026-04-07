@@ -433,7 +433,7 @@ public class Valinor implements AutoCloseable {
             if (leafTile.hasFrozenStats()) {
                 fullyContainedTilesCount++;
                 query.getMeasureCols().forEach(measureCol -> {
-                    queryResults.adjustStats(null, measureCol,
+                    queryResults.adjustStats(measureCol,
                             leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
                 });
                 continue;
@@ -469,7 +469,7 @@ public class Valinor implements AutoCloseable {
                     query.getMeasureCols().forEach(measureCol -> {
                         StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
                         if (acc != null) {
-                            queryResults.adjustStats(null, measureCol, acc.snapshot());
+                            queryResults.adjustStats(measureCol, acc.snapshot());
                         }
                     });
                 } else {
@@ -521,7 +521,7 @@ public class Valinor implements AutoCloseable {
                         value = batchReader.getValue(rowIdx, ep);
                     }
                     if (!Double.isNaN(value)) {
-                        queryResults.adjustStats(null, measureCol, value);
+                        queryResults.adjustStats(measureCol, value);
                     }
                     if (queryNode.isFullyContained()) {
                         qnTile.adjustStats(idx, measureCount, value);
@@ -534,19 +534,6 @@ public class Valinor implements AutoCloseable {
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
-
-        // Compute rectStats by aggregating stats across all groups
-        Map<Integer, StatsAccumulator> rectStatsAccumulators = new HashMap<>();
-        queryResults.getStats().forEach((groupByValues, measureStats) -> {
-            measureStats.forEach((measureCol, stats) -> {
-                rectStatsAccumulators
-                        .computeIfAbsent(measureCol, m -> new StatsAccumulator())
-                        .addAll(stats);
-            });
-        });
-        Map<Integer, Stats> rectStats = rectStatsAccumulators.entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().snapshot()));
-        queryResults.setRectStats(rectStats);
 
         return queryResults;
     }
@@ -582,7 +569,7 @@ public class Valinor implements AutoCloseable {
                 query.getMeasureCols().forEach(measureCol -> {
                     Stats frozen = leafTile.getFrozenStats(schema.getMeasureIndex(measureCol));
                     if (frozen != null) {
-                        queryResults.adjustStats(null, measureCol, frozen);
+                        queryResults.adjustStats(measureCol, frozen);
                     }
                 });
                 continue;
@@ -624,7 +611,7 @@ public class Valinor implements AutoCloseable {
             query.getMeasureCols().forEach(measureCol -> {
                 StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
                 if (acc != null) {
-                    queryResults.adjustStats(null, measureCol, acc.snapshot());
+                    queryResults.adjustStats(measureCol, acc.snapshot());
                 }
             });
             nonRawNodes.add(queryNode);
@@ -930,8 +917,8 @@ public class Valinor implements AutoCloseable {
     private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
             double samplingRate, int measureCol) {
         double exactSum = 0;
-        if (queryResults.getStats().containsKey(null)) {
-            exactSum = queryResults.getStats().get(null).get(measureCol).sum();
+        if (queryResults.getStats().containsKey(measureCol)) {
+            exactSum = queryResults.getStats().get(measureCol).sum();
         }
 
         if (samplingNodes == null || samplingNodes.isEmpty()) {

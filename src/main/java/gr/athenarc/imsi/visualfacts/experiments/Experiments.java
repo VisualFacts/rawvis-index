@@ -1,8 +1,6 @@
 package gr.athenarc.imsi.visualfacts.experiments;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -80,23 +78,8 @@ public class Experiments {
     @Parameter(names = "-run", description = "Run number for experiments")
     private Integer run;
 
-    @Parameter(names = "-queries", description = "Path to file containing saved query sequence (one query per line)")
-    private String queriesFile;
-
-    @Parameter(names = "-groupBy", description = "Group by column")
-    private Integer groupBy;
-
     @Parameter(names = "-sort", description = "Sort mode")
     private String sort;
-
-    @Parameter(names = "-cardinality", description = "Cardinality for dummy categorical columns")
-    private Integer cardinality;
-
-    @Parameter(names = "-minFilters", description = "Min filters in the query sequence")
-    private Integer minFilters = 0;
-
-    @Parameter(names = "-maxFilters", description = "Max filters in the query sequence")
-    private Integer maxFilters = 0;
 
     @Parameter(names = "-numMeasures", description = "Number of measure columns to use (uses first N from config). If not specified, uses all.")
     private Integer numMeasures;
@@ -207,9 +190,6 @@ public class Experiments {
                         "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
                 timeDuckDBQueries();
                 break;
-            case "generateAndSaveQuerySequence":
-                generateAndSaveQuerySequence();
-                break;
             case "generatePilotDBSqlFile":
                 generatePilotDBSqlFile();
                 break;
@@ -248,14 +228,14 @@ public class Experiments {
                             "Leaf tiles",
                             "Overlapped tiles",
                             "Fully Contained Tiles", "I/Os", "Time (sec)", "Query Result",
-                            "Query Result Sum", "Init Timing",
+                            "Init Timing",
                             "Index Mem Deep Size (bytes)");
                 } else {
                     csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
                             "Leaf tiles",
                             "Overlapped tiles",
                             "Fully Contained Tiles", "I/Os", "Time (sec)", "Query Result",
-                            "Query Result Sum", "Init Timing");
+                            "Init Timing");
                 }
             }
 
@@ -265,9 +245,7 @@ public class Experiments {
 
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
-            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
-                    schema.getMeasureCols());
+            Query q0 = new Query(rect, schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
             for (int i = 0; i < sequence.size(); i++) {
@@ -295,10 +273,6 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
                 csvWriter.addValue(queryResults.getStats());
-                csvWriter.addValue(queryResults.getStats() != null && queryResults.getStats().get(null) != null
-                        ? queryResults.getStats().get(null).entrySet().stream()
-                                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
-                        : null);
                 // Init timing breakdown (only for query 0)
                 csvWriter.addValue(i == 0 && valinor.getInitTimingBreakdown() != null
                         ? valinor.getInitTimingBreakdown().toString() : "");
@@ -349,7 +323,7 @@ public class Experiments {
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
-                        "Confidence Interval",
+                        "Query Result",
                         "Error Bound", "run", "Init Timing",
                         "Index Mem Deep Size (bytes)");
             } else {
@@ -357,7 +331,7 @@ public class Experiments {
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
-                        "Confidence Interval",
+                        "Query Result",
                         "Error Bound", "run", "Init Timing");
             }
 
@@ -367,9 +341,7 @@ public class Experiments {
 
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
-            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(),
-                    schema.getMeasureCols());
+            Query q0 = new Query(rect, schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
             for (int i = 0; i < sequence.size(); i++) {
@@ -400,13 +372,8 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getSamplingRounds());
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-                csvWriter.addValue(queryResults.getConfidenceIntervals() != null
-                        ? queryResults.getConfidenceIntervals().entrySet().stream()
-                                .collect(Collectors.toMap(
-                                        Map.Entry::getKey,
-                                        e -> Arrays.asList(e.getValue()[0], e.getValue()[1])))
-                                .toString()
-                        : "null");
+                // Query Result: {measureCol={count=N, sum=[lo, hi]}, ...}
+                csvWriter.addValue(formatApproxQueryResult(queryResults));
                 csvWriter.addValue(queryResults.getErrorBounds());
                 csvWriter.addValue(run);
                 // Init timing breakdown (only for query 0)
@@ -440,11 +407,6 @@ public class Experiments {
     }
 
     private List<Query> generateQuerySequence(Query q0, Schema schema) throws IOException {
-        // If queries file is provided, read from it instead of generating new queries
-        if (queriesFile != null && !queriesFile.isEmpty()) {
-            return loadQueriesFromFile(queriesFile);
-        }
-
         // Use phased generator if phases are configured
         if (scenarioConfig.isPhased()) {
             LOG.info("Using phased query sequence generator with {} phases", scenarioConfig.getPhases().size());
@@ -458,27 +420,26 @@ public class Experiments {
         int maxShift = scenarioConfig.getMaxShift();
         double zoomFactor = scenarioConfig.getZoomFactor();
 
-        QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift, minFilters,
-                maxFilters, zoomFactor, scenarioConfig.getDirectionWeights());
+        QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift,
+                zoomFactor, scenarioConfig.getDirectionWeights());
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
     }
 
-    /**
-     * Loads query sequence from a file.
-     * Each line in the file should contain a serialized query.
-     */
-    private List<Query> loadQueriesFromFile(String filePath) throws IOException {
-        List<Query> queries = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.trim().isEmpty()) {
-                    queries.add(Query.fromSerializedString(line));
-                }
+    private String formatApproxQueryResult(ApproximateQueryResults queryResults) {
+        StringBuilder sb = new StringBuilder("{");
+        Map<Integer, double[]> cis = queryResults.getConfidenceIntervals();
+        boolean first = true;
+        if (cis != null) {
+            for (Map.Entry<Integer, double[]> entry : cis.entrySet()) {
+                if (!first) sb.append(", ");
+                first = false;
+                int col = entry.getKey();
+                double[] ci = entry.getValue();
+                sb.append(col).append("={sum=[").append(ci[0]).append(", ").append(ci[1]).append("]}");
             }
         }
-        LOG.info("Loaded {} queries from file: {}", queries.size(), filePath);
-        return queries;
+        sb.append("}");
+        return sb.toString();
     }
 
     private void timeDuckDBQueries() throws IOException {
@@ -491,15 +452,13 @@ public class Experiments {
 
         if (addHeader) {
             csvWriter.writeHeaders("csv", "version", "i", "rowCount", "Time (sec)", "Query", "errorBound",
-                    "Query Result", "Query Result Sum");
+                    "Query Result", "Init Timing");
         }
 
         try {
             // Build initial query from scenario config
             Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
-            Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : new ArrayList<>(),
-                    schema.getMeasureCols());
+            Query q0 = new Query(rect, schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
             // Determine execution mode
@@ -554,9 +513,14 @@ public class Experiments {
                     csvWriter.addValue(result.getQuery());
                     csvWriter.addValue(0);
                     csvWriter.addValue(result.getMeasureStats());
-                    csvWriter.addValue(result.getMeasureStats() != null ? result.getMeasureStats().entrySet().stream()
-                            .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum())).toString()
-                            : null);
+                    // Init timing breakdown (only for query 0)
+                    if (i == 0) {
+                        csvWriter.addValue(String.format("{tableCreation=%.3f, indexCreation=%.3f, total=%.3f}",
+                                tableCreationTimeMs / 1000.0, indexCreationTimeMs / 1000.0,
+                                (tableCreationTimeMs + indexCreationTimeMs) / 1000.0));
+                    } else {
+                        csvWriter.addValue("");
+                    }
                     csvWriter.writeValuesToRow();
                     csvWriter.flush();
                 } catch (Exception e) {
@@ -568,8 +532,8 @@ public class Experiments {
                     csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
                     csvWriter.addValue(-1);
-                    csvWriter.addValue(-1);
                     csvWriter.addValue("ERROR: " + e.getMessage());
+                    csvWriter.addValue("");
                     csvWriter.writeValuesToRow();
                     csvWriter.flush();
                 }
@@ -602,34 +566,6 @@ public class Experiments {
     }
 
     /**
-     * Generates query sequence and saves it to a file.
-     * Each query is serialized as a string representation.
-     * This ensures reproducibility when running from the saved sequence.
-     */
-    private void generateAndSaveQuerySequence() throws IOException {
-        requireScenario("generateAndSaveQuerySequence");
-        Preconditions.checkNotNull(outFile, "No out file specified.");
-
-        // Build initial query from scenario config
-        Rectangle rect = scenarioConfig.getQ0().toRectangle();
-        Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
-                schema.getMeasureCols());
-        List<Query> sequence = generateQuerySequence(q0, schema);
-
-        // Save queries to file
-        try (FileWriter writer = new FileWriter(outFile)) {
-            for (int i = 0; i < sequence.size(); i++) {
-                Query query = sequence.get(i);
-                writer.write(query.toSerializedString());
-                writer.write("\n");
-            }
-        }
-
-        LOG.info("Generated and saved {} queries to {}", sequence.size(), outFile);
-    }
-
-    /**
      * Generates a SQL file for PilotDB execution.
      * Line 1: metadata comment with measure column indices.
      * Line 2: CREATE TABLE (projected, with validation filters applied).
@@ -641,9 +577,7 @@ public class Experiments {
 
         // Build initial query and generate sequence
         Rectangle rect = scenarioConfig.getQ0().toRectangle();
-        Map<Integer, String> categoricalFilters = scenarioConfig.getQ0().getFilters();
-        Query q0 = new Query(rect, categoricalFilters, groupBy != null ? Arrays.asList(groupBy) : null,
-                schema.getMeasureCols());
+        Query q0 = new Query(rect, schema.getMeasureCols());
         List<Query> sequence = generateQuerySequence(q0, schema);
 
         // Determine column naming format via DuckDB introspection

@@ -90,13 +90,11 @@ public class ScenarioRunnerTest {
 
 
         Rectangle q0Rect = scenarioConfig.getQ0().toRectangle();
-        Map<Integer, String> q0Filters = scenarioConfig.getQ0().getFilters();
-        Query q0 = new Query(q0Rect, q0Filters, new ArrayList<>(), schema.getMeasureCols());
+        Query q0 = new Query(q0Rect, schema.getMeasureCols());
         
         QuerySequenceGenerator generator = new QuerySequenceGenerator(
                 scenarioConfig.getMinShift(),
                 scenarioConfig.getMaxShift(),
-                0, 0,
                 scenarioConfig.getZoomFactor(),
                 scenarioConfig.getDirectionWeights());
         queries = generator.generateQuerySequence(q0, scenarioConfig.getSeqCount(), schema);
@@ -122,7 +120,7 @@ public class ScenarioRunnerTest {
             if (i > 0) {
                 for (Integer measure : expected.keySet()) {
                     StatsDuckDB expStats = expected.get(measure);
-                    Stats actStats = actual.getRectStats().get(measure);
+                    Stats actStats = actual.getStats().get(measure);
                     LOG.trace("Q{} M{}: exp={}, act={}", i, measure, expStats, actStats);
                     if (expStats.count() == 0) {
                         if (actStats != null) {

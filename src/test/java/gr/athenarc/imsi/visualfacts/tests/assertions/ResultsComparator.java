@@ -13,12 +13,12 @@ public final class ResultsComparator {
     private ResultsComparator() {}
 
     public static void assertClose(Map<Integer, StatsDuckDB> expected, QueryResults actual, double relTol) {
-        Map<Integer, Stats> act = actual.getRectStats();
+        Map<Integer, Stats> act = actual.getStats();
         assertThat(expected)
             .as("expected must be present")
             .isNotNull();
         assertThat(act)
-            .as("actual rectStats must be present")
+            .as("actual stats must be present")
             .isNotNull();
 
         assertThat(act.keySet()).as("measures present").isEqualTo(expected.keySet());

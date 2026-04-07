@@ -4,7 +4,6 @@ import static gr.athenarc.imsi.visualfacts.experiments.util.UserOpType.*;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -25,23 +24,18 @@ public class QuerySequenceGenerator {
     private int minShift;
     private int maxShift;
 
-    private int minFilters;
-    private int maxFilters;
-
     private double zoomFactor;
 
     private Map<String, Double> directionWeights;
 
-    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, double zoomFactor) {
-        this(minShift, maxShift, minFilters, maxFilters, zoomFactor, null);
+    public QuerySequenceGenerator(int minShift, int maxShift, double zoomFactor) {
+        this(minShift, maxShift, zoomFactor, null);
     }
 
-    public QuerySequenceGenerator(int minShift, int maxShift, int minFilters, int maxFilters, double zoomFactor,
+    public QuerySequenceGenerator(int minShift, int maxShift, double zoomFactor,
                                   Map<String, Double> directionWeights) {
         this.minShift = minShift;
         this.maxShift = maxShift;
-        this.minFilters = minFilters;
-        this.maxFilters = maxFilters;
         this.zoomFactor = zoomFactor;
         this.directionWeights = directionWeights;
     }
@@ -78,8 +72,7 @@ public class QuerySequenceGenerator {
                 }
             }
 
-            Map<Integer, String> filters = new HashMap<>();
-            query = new Query(rect, filters, q0.getGroupByCols(), schema.getMeasureCols(), opType); // Set the operation type
+            query = new Query(rect, schema.getMeasureCols(), opType);
             queries.add(query);
         }
         return queries;

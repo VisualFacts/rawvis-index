@@ -99,8 +99,7 @@ public class PhasedQuerySequenceGenerator {
                 throw new IllegalArgumentException("Unknown phase operation: " + phase.getOperation());
         }
 
-        return new Query(rect, current.getCategoricalFilters(), current.getGroupByCols(),
-                schema.getMeasureCols(), opType);
+        return new Query(rect, schema.getMeasureCols(), opType);
     }
 
     /**
