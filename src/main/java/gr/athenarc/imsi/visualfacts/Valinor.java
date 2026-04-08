@@ -736,7 +736,7 @@ public class Valinor implements AutoCloseable {
 
         } while (errorBounds.values().stream().anyMatch(error -> error > errorThreshold));
 
-        LOG.debug("Sampling completed in {} round(s), final rate={}, I/Os={}", 
+        LOG.trace("Sampling completed in {} round(s), final rate={}, I/Os={}", 
             samplingRounds, samplingRate.get(), ioCount);
 
         // Persist sampledTracker for future queries
@@ -827,7 +827,7 @@ public class Valinor implements AutoCloseable {
         rate = Math.max(rate, minRateForCLT);
         rate = Math.min(1.0, rate);
         
-        LOG.debug("Initial sampling rate: {} (CV={}, requiredN={}, population={})", 
+        LOG.trace("Initial sampling rate: {} (CV={}, requiredN={}, population={})", 
             rate, maxCV, requiredN, totalPopulation);
         
         return rate;

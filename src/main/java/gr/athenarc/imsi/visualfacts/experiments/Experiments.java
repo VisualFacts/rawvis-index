@@ -248,9 +248,10 @@ public class Experiments {
             Query q0 = new Query(rect, schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
-            for (int i = 0; i < sequence.size(); i++) {
+            int totalQueries = sequence.size();
+            for (int i = 0; i < totalQueries; i++) {
                 Query query = sequence.get(i);
-                LOG.debug("Executing query {}: {}", i, query);
+                LOG.trace("Executing query {}: {}", i, query);
 
                 stopwatch = Stopwatch.createStarted();
                 QueryResults queryResults = valinor.executeQuery(query);
@@ -282,7 +283,10 @@ public class Experiments {
                 }
                 csvWriter.writeValuesToRow();
                 csvWriter.flush();
-                LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
+                LOG.trace("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
+                if ((i + 1) % 50 == 0 || i + 1 == totalQueries) {
+                    LOG.info("Progress: {}/{} queries completed", i + 1, totalQueries);
+                }
             }
         } finally {
             if (valinor != null) {
@@ -345,9 +349,10 @@ public class Experiments {
             Query q0 = new Query(rect, schema.getMeasureCols());
             List<Query> sequence = generateQuerySequence(q0, schema);
 
-            for (int i = 0; i < sequence.size(); i++) {
+            int totalQueries = sequence.size();
+            for (int i = 0; i < totalQueries; i++) {
                 Query query = sequence.get(i);
-                LOG.debug("Executing query {}: {}", i, query);
+                LOG.trace("Executing query {}: {}", i, query);
 
                 stopwatch = Stopwatch.createStarted();
                 ApproximateQueryResults queryResults = (ApproximateQueryResults) index.executeQuery(query);
@@ -386,7 +391,10 @@ public class Experiments {
                 }
                 csvWriter.writeValuesToRow();
                 csvWriter.flush();
-                LOG.debug("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
+                LOG.trace("Finished query {} in {} sec", i, stopwatch.elapsed(TimeUnit.NANOSECONDS) / 1_000_000_000.0);
+                if ((i + 1) % 50 == 0 || i + 1 == totalQueries) {
+                    LOG.info("Progress: {}/{} queries completed", i + 1, totalQueries);
+                }
             }
         } finally {
             if (index != null) {
@@ -506,9 +514,10 @@ public class Experiments {
 
             LOG.info("Executing DuckDB queries in {} mode", duckDbMode);
 
-            for (int i = 0; i < sequence.size(); i++) {
+            int totalQueries = sequence.size();
+            for (int i = 0; i < totalQueries; i++) {
                 Query query = sequence.get(i);
-                LOG.debug("Executing query {}", i);
+                LOG.trace("Executing query {}", i);
                 try {
                     QueryResult result = executor.executeQuery(query);
 
@@ -545,6 +554,9 @@ public class Experiments {
                     csvWriter.addValue("");
                     csvWriter.writeValuesToRow();
                     csvWriter.flush();
+                }
+                if ((i + 1) % 50 == 0 || i + 1 == totalQueries) {
+                    LOG.info("Progress: {}/{} queries completed", i + 1, totalQueries);
                 }
             }
             executor.close();

@@ -13,6 +13,7 @@ import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.StatsDuckDB;
 import gr.athenarc.imsi.visualfacts.query.Query;
+import gr.athenarc.imsi.visualfacts.tests.util.ProgressBar;
 
 /**
  * Exact ground-truth calculator for tests using DuckDB.
@@ -43,10 +44,13 @@ public final class GroundTruthCalculator {
                     yCol,
                     schema.getValidationFilters());
             
-            for (Query query : queries) {
-                QueryResult qr = duckdb.executeQuery(query);
+            int total = queries.size();
+            for (int i = 0; i < total; i++) {
+                QueryResult qr = duckdb.executeQuery(queries.get(i));
                 statsList.add(qr.getMeasureStats());
+                ProgressBar.print("Ground truth", i + 1, total);
             }
+            ProgressBar.finish();
         } catch (Exception e) {
             throw new RuntimeException("DuckDB ground truth calculation failed", e);
         } finally {

@@ -354,7 +354,7 @@ public class DuckDBQueryExecutor {
             throw new IllegalStateException("Execution mode not set. Use constructor with mode parameter.");
         }
 
-        LOG.info("Executing query in {} mode", mode);
+        LOG.trace("Executing query in {} mode", mode);
         List<Range<Double>> ranges = extractRangesFromQuery(query);
 
         // Determine column naming format based on actual dataset column count
@@ -472,7 +472,7 @@ public class DuckDBQueryExecutor {
             long endTime = System.nanoTime();
             result.setExecutionTimeNanos(endTime - startTime);
 
-            LOG.debug("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
+            LOG.trace("DuckDB Query executed successfully. Rows: {}, Time: {} ns",
                     result.getRowCount(), result.getExecutionTimeNanos());
             LOG.trace("Duck db query: {}", query);
             LOG.trace("DuckDB query results: {}", measureStats);

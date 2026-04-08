@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.*;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,223 +16,220 @@ import org.junit.jupiter.api.Test;
 
 import com.google.common.math.Stats;
 
-import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.Valinor;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
-import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.StatsDuckDB;
-import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.UniformRandomQueryGenerator;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.tests.groundtruth.GroundTruthCalculator;
+import gr.athenarc.imsi.visualfacts.tests.util.ProgressBar;
 
 /**
- * Test class for running and validating exploration scenarios.
- * 
+ * Test class for running and validating Valinor against ground truth using
+ * independent uniform random range queries.
+ *
  * Configuration via system properties:
- * - scenario.name: Name of the scenario to run (default: "test_pan_scenario")
- * - scenario.config: Path to YAML config file (default: uses test classpath resource)
- * - scenario.count: Number of queries to generate (default: 100, or uses seqCount from config)
- * - ci.coverage: Required CI coverage for approximate tests (default: 0.90)
+ * - dataset.name:   Dataset to use (default: "test_synth10_10M", fallback: "test_synth10_100K")
+ * - dataset.config:  Path to YAML config file (default: test classpath resource)
+ * - query.count:    Number of random queries (default: 500)
+ * - query.seed:     Random seed for query generation (default: 42)
+ * - query.selectivity: Target area selectivity (default: 0.01 = 1%)
+ * - ci.coverage:    Required CI coverage for approximate tests (default: 0.90)
  */
 public class ScenarioRunnerTest {
     private static final Logger LOG = LogManager.getLogger(ScenarioRunnerTest.class);
-    
-    // Default test config in test resources
+
     private static final String DEFAULT_TEST_CONFIG = "experiments/test_scenarios.yaml";
-    private static final String DEFAULT_SCENARIO = "test_scenario";
+    private static final String DEFAULT_DATASET = "test_synth10_10M";
+    private static final String FALLBACK_DATASET  = "test_synth10_100K";
 
     private static Schema schema;
-    private static ExplorationScenarioConfig scenarioConfig;
     private static List<Query> queries;
     private static List<Map<Integer, StatsDuckDB>> expectedResultsList;
 
     @BeforeAll
-    static void prepareScenarioAndGroundTruth() throws IOException {
-        // Load configuration
-        String configPath = System.getProperty("scenario.config");
-        String scenarioName = System.getProperty("scenario.name", DEFAULT_SCENARIO);
-        
+    static void prepareQueriesAndGroundTruth() throws IOException {
+        String configPath = System.getProperty("dataset.config");
+        String datasetName = System.getProperty("dataset.name", DEFAULT_DATASET);
+
         ExperimentConfig experimentConfig;
         if (configPath != null && !configPath.isEmpty()) {
-            // Load from specified file path
             LOG.info("Loading config from file: {}", configPath);
             experimentConfig = ExperimentConfigLoader.loadFromFile(configPath);
         } else {
-            // Load from test classpath resource
             LOG.info("Loading config from test classpath: {}", DEFAULT_TEST_CONFIG);
             experimentConfig = ExperimentConfigLoader.loadFromClasspath(DEFAULT_TEST_CONFIG);
         }
-        
-        // Get scenario configuration
-        scenarioConfig = experimentConfig.getScenario(scenarioName);
-        if (scenarioConfig == null) {
-            throw new IllegalArgumentException("Scenario not found: " + scenarioName + 
-                    ". Available: " + experimentConfig.getScenarios().keySet());
-        }
-        
-        // Get schema for the scenario's dataset
-        schema = experimentConfig.getSchemaForScenario(scenarioName);
-        LOG.info("Loaded scenario '{}' with dataset, csv: {}", scenarioName, schema.getCsv());
 
-        // Skip the test gracefully if the CSV file does not exist (e.g. large
-        // datasets only present on experiment machines, not in CI).
+        schema = experimentConfig.getSchemaForDataset(datasetName);
+
+        // Fall back to the bundled classpath dataset if the requested CSV is missing
         String csvPath = schema.getCsv();
         if (!csvPath.startsWith("classpath:")) {
             java.io.File csvFile = new java.io.File(csvPath);
-            assumeTrue(csvFile.exists(),
-                    "Skipping: CSV file not found at " + csvPath + " (set scenario.config to a reachable dataset)");
+            if (!csvFile.exists()) {
+                LOG.info("CSV not found at {}; falling back to dataset '{}'", csvPath, FALLBACK_DATASET);
+                schema = experimentConfig.getSchemaForDataset(FALLBACK_DATASET);
+            }
         }
+        LOG.info("Using dataset csv: {}", schema.getCsv());
 
+        int queryCount = Integer.parseInt(System.getProperty("query.count", "500"));
+        long seed = Long.parseLong(System.getProperty("query.seed", "42"));
+        double selectivity = Double.parseDouble(System.getProperty("query.selectivity", "0.01"));
 
-        Rectangle q0Rect = scenarioConfig.getQ0().toRectangle();
-        Query q0 = new Query(q0Rect, schema.getMeasureCols());
-        
-        QuerySequenceGenerator generator = new QuerySequenceGenerator(
-                scenarioConfig.getMinShift(),
-                scenarioConfig.getMaxShift(),
-                scenarioConfig.getZoomFactor(),
-                scenarioConfig.getDirectionWeights());
-        queries = generator.generateQuerySequence(q0, scenarioConfig.getSeqCount(), schema);
-        LOG.info("Generated {} queries for scenario", queries.size());
+        UniformRandomQueryGenerator generator = new UniformRandomQueryGenerator(seed, selectivity);
+        queries = generator.generate(queryCount, schema);
+        LOG.info("Generated {} random queries (seed={}, selectivity={})", queries.size(), seed, selectivity);
 
-        // Compute ground truth once for all engines
         expectedResultsList = GroundTruthCalculator.computeAll(schema, queries);
     }
 
     @Test
-    void exactScenarioMatchesGroundTruth() throws Exception {
-        LOG.info("Running exact scenario test with {} queries", queries.size());
+    void exactMatchesGroundTruth() throws Exception {
+        LOG.info("Running exact test with {} queries", queries.size());
         Valinor index = new Valinor(schema);
-        
-        for (int i = 0; i < queries.size(); i++) {
+
+        int total = queries.size();
+        for (int i = 0; i < total; i++) {
             Query query = queries.get(i);
             QueryResults actual = index.executeQuery(query);
+            ProgressBar.print("Exact", i + 1, total);
+            // First query initializes the index (full data scan); skip validation
+            if (i == 0) continue;
             Map<Integer, StatsDuckDB> expected = expectedResultsList.get(i);
             if (expected.isEmpty()) {
-                LOG.debug("No expected results for query {}, skipping CI check", i);
                 continue;
             }
-            if (i > 0) {
-                for (Integer measure : expected.keySet()) {
-                    StatsDuckDB expStats = expected.get(measure);
-                    Stats actStats = actual.getStats().get(measure);
-                    LOG.trace("Q{} M{}: exp={}, act={}", i, measure, expStats, actStats);
-                    if (expStats.count() == 0) {
-                        if (actStats != null) {
-                            assertEquals(0, actStats.count(), 
-                                    String.format("Query %d [%s]: Actual stats should have count 0 for measure %d", 
-                                            i, query.getRect(), measure));
-                        }
-                    } else {
-                        try {
-                            assertNotNull(actStats, 
-                                    String.format("Query %d [%s]: Missing actual stats for measure %d. Expected: %s", 
-                                            i, query.getRect(), measure, expStats));
-                            assertEquals(expStats.count(), actStats.count(),
-                                    String.format("Query %d [%s]: Count mismatch for measure %d", i, query.getRect(), measure));
-                            assertEquals(expStats.mean(), actStats.mean(), 1e-6,
-                                    String.format("Query %d [%s]: Mean mismatch for measure %d", i, query.getRect(), measure));
-                            assertEquals(expStats.min(), actStats.min(), 1e-6,
-                                    String.format("Query %d [%s]: Min mismatch for measure %d", i, query.getRect(), measure));
-                            assertEquals(expStats.max(), actStats.max(), 1e-6,
-                                    String.format("Query %d [%s]: Max mismatch for measure %d", i, query.getRect(), measure));
-                        } catch (AssertionError e) {
-                            LOG.error("Assertion failed for Query {} [{}], measure {}: {}", i, query.getRect(), measure, e.getMessage());
-                        }
+            for (Integer measure : expected.keySet()) {
+                StatsDuckDB expStats = expected.get(measure);
+                Stats actStats = actual.getStats().get(measure);
+                if (expStats.count() == 0) {
+                    if (actStats != null) {
+                        assertEquals(0, actStats.count(),
+                                String.format("Q%d [%s]: count should be 0 for measure %d",
+                                        i, query.getRect(), measure));
                     }
+                } else {
+                    assertNotNull(actStats,
+                            String.format("Q%d [%s]: missing stats for measure %d. Expected: %s",
+                                    i, query.getRect(), measure, expStats));
+                    assertEquals(expStats.count(), actStats.count(),
+                            String.format("Q%d [%s]: count mismatch for measure %d", i, query.getRect(), measure));
+                    assertEquals(expStats.mean(), actStats.mean(), 1e-6,
+                            String.format("Q%d [%s]: mean mismatch for measure %d", i, query.getRect(), measure));
+                    assertEquals(expStats.min(), actStats.min(), 1e-6,
+                            String.format("Q%d [%s]: min mismatch for measure %d", i, query.getRect(), measure));
+                    assertEquals(expStats.max(), actStats.max(), 1e-6,
+                            String.format("Q%d [%s]: max mismatch for measure %d", i, query.getRect(), measure));
                 }
             }
         }
+        ProgressBar.finish();
     }
 
     @Test
-    void approximateScenarioCoverageWithinCI() throws Exception {
-        int minRows = 1000000;
-        if (schema.getObjectCount() < minRows) {
-            assumeTrue(false, "Skipping approximate scenario test: dataset too small (rows: " + schema.getObjectCount() + ")");
-        }
+    void approximateCoverageWithinCI() throws Exception {
+        // Needs enough points per tile for the CLT normal approximation to hold;
+        // sparse datasets produce near-empty tiles where the nominal 95% level breaks down.
+        assumeTrue(schema.getObjectCount() >= 1000000,
+                "Skipping approximate test: dataset too small for reliable CLT approximation (" + schema.getObjectCount() + " rows, need >= 1M)");
+
         Valinor index = new Valinor(schema, 0.05);
-        int total = 0;
-        int inside = 0;
         double requiredCoverage = Double.parseDouble(System.getProperty("ci.coverage", "0.90"));
-        Map<Integer, int[]> perMeasure = new HashMap<>(); // measure -> [inside, total]
-        // With a fixed 0.95 confidence level, coverage should be around 0.95 in
-        // expectation.
-        // The test default threshold is 0.90 for robustness (small-sample effects,
-        // normal approx., FP), but you can set -Dci.coverage=0.95 to be stricter.
-        // 95% CI → expect ~0.95, allow 0.90
-        for (int i = 0; i < queries.size(); i++) {
+
+        Map<String, int[]> overallByType = new HashMap<>();
+        Map<String, Map<Integer, int[]>> perMeasureByType = new HashMap<>();
+        overallByType.put("sum", new int[2]);
+        overallByType.put("count", new int[2]);
+        perMeasureByType.put("sum", new HashMap<>());
+        perMeasureByType.put("count", new HashMap<>());
+
+        // 95% CI → expect ~0.95 coverage. 500 independent queries × 8 measures
+        // gives ~4000 checks per aggregate type. Threshold 0.90 is conservative
+        // enough for small-sample / normal-approximation effects.
+        int total = queries.size();
+        for (int i = 0; i < total; i++) {
             QueryResults actual = index.executeQuery(queries.get(i));
-            if (i == 0)
-                continue;
+            ProgressBar.print("Approximate", i + 1, total);
+            // First query initializes the index; skip validation
+            if (i == 0) continue;
             ApproximateQueryResults aqr = (ApproximateQueryResults) actual;
 
-            LOG.trace("Approximate results for query {}: {}", i, aqr);
-
             Map<Integer, StatsDuckDB> expected = expectedResultsList.get(i);
-
             if (expected.isEmpty()) {
-                LOG.debug("No expected results for query {}, skipping CI check", i);
                 continue;
             }
 
-            Map<Integer, double[]> confIntervals = aqr.getSumConfidenceIntervals();
-            assertNotNull(confIntervals, "confidence intervals must be present");
-
-            for (Map.Entry<Integer, double[]> e : confIntervals.entrySet()) {
+            // --- SUM CI coverage ---
+            Map<Integer, double[]> sumCIs = aqr.getSumConfidenceIntervals();
+            assertNotNull(sumCIs, "SUM CIs must be present for query " + i);
+            for (Map.Entry<Integer, double[]> e : sumCIs.entrySet()) {
                 Integer measure = e.getKey();
-                double[] interval = confIntervals.get(measure);
-                assertNotNull(interval, "missing CI for measure " + measure);
-                assertTrue(interval.length == 2, "CI must have length 2 for measure " + measure);
-                double lo = interval[0], hi = interval[1];
-                // FP tolerance for comparing CI bounds to expected values
-                // Different parsing paths (DuckDB vs our parsers) can yield slightly different sums
-                // For sums in hundreds of thousands, 1e-5 relative tolerance is appropriate
-                double absEps = 1e-3; // small absolute epsilon for near-zero sums
-                double relEps = 1e-8 * Math.abs((lo + hi) / 2.0);  // relative tolerance for large sums
-                double eps = Math.max(absEps, relEps);
-                double expectedSum = expected.get(measure).sum();
-                boolean insideInterval = expectedSum >= lo - eps && expectedSum <= hi + eps;
-                if (insideInterval)
-                    inside++;
-                total++;
-                int[] c = perMeasure.computeIfAbsent(measure, k -> new int[2]);
-                if (insideInterval)
-                    c[0]++;
-                c[1]++;
+                double[] ci = e.getValue();
+                assertNotNull(ci, "missing SUM CI for measure " + measure);
+                assertEquals(2, ci.length, "SUM CI must have length 2 for measure " + measure);
+                boolean inside = isInsideCI(ci, expected.get(measure).sum());
+                tally(overallByType.get("sum"), inside);
+                tally(perMeasureByType.get("sum").computeIfAbsent(measure, k -> new int[2]), inside);
+            }
+
+            // --- COUNT CI coverage ---
+            Map<Integer, double[]> countCIs = aqr.getCountConfidenceIntervals();
+            assertNotNull(countCIs, "COUNT CIs must be present for query " + i);
+            for (Map.Entry<Integer, double[]> e : countCIs.entrySet()) {
+                Integer measure = e.getKey();
+                double[] ci = e.getValue();
+                assertNotNull(ci, "missing COUNT CI for measure " + measure);
+                assertEquals(2, ci.length, "COUNT CI must have length 2 for measure " + measure);
+                boolean inside = isInsideCI(ci, expected.get(measure).count());
+                tally(overallByType.get("count"), inside);
+                tally(perMeasureByType.get("count").computeIfAbsent(measure, k -> new int[2]), inside);
             }
         }
-        double coverage = total == 0 ? 1.0 : (inside / (double) total);
-        LOG.info("Approximate CI coverage overall={} (inside={} total={})", coverage, inside, total);
-        assertTrue(coverage >= requiredCoverage,
-                String.format("CI coverage %.3f below required %.3f (inside=%d total=%d)", coverage, requiredCoverage,
-                        inside, total));
+        ProgressBar.finish();
 
-        Map<Integer, CoverageStats> perMeasureCoverage = new TreeMap<>();
-        for (Map.Entry<Integer, int[]> e : perMeasure.entrySet()) {
-            int ok = e.getValue()[0];
-            int tot = e.getValue()[1];
-            double cov = tot == 0 ? 1.0 : (ok / (double) tot);
-            perMeasureCoverage.put(e.getKey(), new CoverageStats(cov, ok, tot));
+        // Assert coverage per aggregate type, overall and per measure
+        for (String type : new String[] { "sum", "count" }) {
+            int[] ov = overallByType.get(type);
+            double coverage = ov[1] == 0 ? 1.0 : (ov[0] / (double) ov[1]);
+            LOG.info("{} CI coverage overall={} (inside={} total={})", type.toUpperCase(), coverage, ov[0], ov[1]);
+            assertTrue(coverage >= requiredCoverage,
+                    String.format("%s CI coverage %.3f below required %.3f (inside=%d total=%d)",
+                            type.toUpperCase(), coverage, requiredCoverage, ov[0], ov[1]));
+
+            Map<Integer, CoverageStats> perMeasure = new TreeMap<>();
+            for (Map.Entry<Integer, int[]> e : perMeasureByType.get(type).entrySet()) {
+                int ok = e.getValue()[0], tot = e.getValue()[1];
+                perMeasure.put(e.getKey(), new CoverageStats(tot == 0 ? 1.0 : (ok / (double) tot), ok, tot));
+            }
+            perMeasure.forEach((m, s) -> assertTrue(s.coverage >= requiredCoverage,
+                    String.format("%s CI coverage for measure %d %.3f below required %.3f (inside=%d total=%d)",
+                            type.toUpperCase(), m, s.coverage, requiredCoverage, s.inside, s.total)));
         }
+    }
 
-        perMeasureCoverage.forEach((measure, stats) -> LOG.info("  Measure {} coverage={} (inside={} total={})",
-                measure, stats.coverage, stats.inside, stats.total));
+    private static boolean isInsideCI(double[] interval, double expected) {
+        double lo = interval[0], hi = interval[1];
+        double absEps = 1e-3;
+        double relEps = 1e-8 * Math.abs((lo + hi) / 2.0);
+        double eps = Math.max(absEps, relEps);
+        return expected >= lo - eps && expected <= hi + eps;
+    }
 
-        perMeasureCoverage.forEach((measure, stats) -> assertTrue(stats.coverage >= requiredCoverage,
-                String.format("CI coverage for measure %d %.3f below required %.3f (inside=%d total=%d)",
-                        measure, stats.coverage, requiredCoverage, stats.inside, stats.total)));
+    private static void tally(int[] counter, boolean inside) {
+        if (inside) counter[0]++;
+        counter[1]++;
     }
 
     private static final class CoverageStats {
         final double coverage;
         final int inside;
         final int total;
-
         CoverageStats(double coverage, int inside, int total) {
             this.coverage = coverage;
             this.inside = inside;
