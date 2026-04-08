@@ -227,14 +227,14 @@ public class Experiments {
                     csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
                             "Leaf tiles",
                             "Overlapped tiles",
-                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Query Result",
+                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
                             "Init Timing",
                             "Index Mem Deep Size (bytes)");
                 } else {
                     csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
                             "Leaf tiles",
                             "Overlapped tiles",
-                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Query Result",
+                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
                             "Init Timing");
                 }
             }
@@ -272,6 +272,7 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getFullyContainedTileCount());
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
+                csvWriter.addValue(queryResults.getTotalCount());
                 csvWriter.addValue(queryResults.getStats());
                 // Init timing breakdown (only for query 0)
                 csvWriter.addValue(i == 0 && valinor.getInitTimingBreakdown() != null
@@ -323,7 +324,7 @@ public class Experiments {
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
-                        "Query Result",
+                        "Total Count", "Query Result",
                         "Error Bound", "run", "Init Timing",
                         "Index Mem Deep Size (bytes)");
             } else {
@@ -331,7 +332,7 @@ public class Experiments {
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
-                        "Query Result",
+                        "Total Count", "Query Result",
                         "Error Bound", "run", "Init Timing");
             }
 
@@ -372,7 +373,8 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getSamplingRounds());
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
-                // Query Result: {measureCol={count=N, sum=[lo, hi]}, ...}
+                csvWriter.addValue(queryResults.getTotalCount());
+                // Query Result: {measureCol={sum=[lo, hi]}, ...}
                 csvWriter.addValue(formatApproxQueryResult(queryResults));
                 csvWriter.addValue(queryResults.getErrorBounds());
                 csvWriter.addValue(run);

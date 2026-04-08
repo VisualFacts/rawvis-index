@@ -28,6 +28,8 @@ public class QueryResults {
 
     private int ioCount;
 
+    private long totalCount;
+
     public QueryResults(Query query) {
         this.query = query;
         this.stats = new HashMap<>();
@@ -109,6 +111,18 @@ public class QueryResults {
 
     public void setIoCount(int ioCount) {
         this.ioCount = ioCount;
+    }
+
+    public long getTotalCount() {
+        return totalCount;
+    }
+
+    public void setTotalCount(long totalCount) {
+        this.totalCount = totalCount;
+    }
+
+    public void addTotalCount(long count) {
+        this.totalCount += count;
     }
 
     public List<double[]> getPoints() {

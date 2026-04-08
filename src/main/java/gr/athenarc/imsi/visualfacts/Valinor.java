@@ -432,6 +432,7 @@ public class Valinor implements AutoCloseable {
             // Short-circuited non-leaf tile with frozen exact stats
             if (leafTile.hasFrozenStats()) {
                 fullyContainedTilesCount++;
+                queryResults.addTotalCount(leafTile.getFrozenPointCount());
                 query.getMeasureCols().forEach(measureCol -> {
                     queryResults.adjustStats(measureCol,
                             leafTile.getFrozenStats(schema.getMeasureIndex(measureCol)));
@@ -466,6 +467,7 @@ public class Valinor implements AutoCloseable {
             for (QueryNode queryNode : queryNodes) {
                 Tile qnTile = queryNode.getTile();
                 if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
+                    queryResults.addTotalCount(queryNode.getIntersectionCount());
                     query.getMeasureCols().forEach(measureCol -> {
                         StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
                         if (acc != null) {
@@ -531,6 +533,7 @@ public class Valinor implements AutoCloseable {
             }
         }
 
+        queryResults.addTotalCount(ioCount);
         queryResults.setTileCount(leafTiles.size());
         queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
         queryResults.setIoCount(ioCount);
@@ -566,6 +569,7 @@ public class Valinor implements AutoCloseable {
             // Short-circuited non-leaf tile with frozen exact stats
             if (!samplingOnly && leafTile.hasFrozenStats()) {
                 frozenStatsTileCount++;
+                queryResults.addTotalCount(leafTile.getFrozenPointCount());
                 query.getMeasureCols().forEach(measureCol -> {
                     Stats frozen = leafTile.getFrozenStats(schema.getMeasureIndex(measureCol));
                     if (frozen != null) {
@@ -608,6 +612,7 @@ public class Valinor implements AutoCloseable {
             }
         }
         for (QueryNode queryNode : fullyContainedNodesWithStats) {
+            queryResults.addTotalCount(queryNode.getIntersectionCount());
             query.getMeasureCols().forEach(measureCol -> {
                 StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
                 if (acc != null) {
@@ -634,6 +639,11 @@ public class Valinor implements AutoCloseable {
         List<QueryNode> samplingNodes = new ArrayList<>();
         samplingNodes.addAll(partialNodes);
         samplingNodes.addAll(fullyContainedNodesWithoutStats);
+
+        // Total count (COUNT*) — exact from x,y coordinates, independent of sampling
+        for (QueryNode qn : samplingNodes) {
+            queryResults.addTotalCount(qn.getIntersectionCount());
+        }
 
         AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
         Map<Integer, double[]> confidenceIntervals = new HashMap<>();
