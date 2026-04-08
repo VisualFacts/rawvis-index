@@ -142,12 +142,13 @@ def run(sql_file, output_file, error_bound, failure_prob=0.05, explain=False):
 
                 result_str = format_stats(result, measure_cols)
                 if i == 0:
+                    q0_time = elapsed
                     elapsed += init_elapsed
                 writer.writerow({
                     'csv': csv_path, 'i': i, 'Time (sec)': elapsed,
                     'Query': sql, 'errorBound': error_bound,
                     'Query Result': result_str,
-                    'Init Timing': '{tableCreation=%.3f, total=%.3f}' % (init_elapsed, init_elapsed) if i == 0 else '',
+                    'Init Timing': '{tableCreation=%.3f, q0=%.3f, total=%.3f}' % (init_elapsed, q0_time, init_elapsed + q0_time) if i == 0 else '',
                 })
             except Exception as e:
                 print(f"ERROR in query {i}: {e}", file=sys.stderr)

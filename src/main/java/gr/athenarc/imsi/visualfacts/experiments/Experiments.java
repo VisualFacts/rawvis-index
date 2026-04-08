@@ -515,9 +515,10 @@ public class Experiments {
                     csvWriter.addValue(result.getMeasureStats());
                     // Init timing breakdown (only for query 0)
                     if (i == 0) {
-                        csvWriter.addValue(String.format("{tableCreation=%.3f, indexCreation=%.3f, total=%.3f}",
-                                tableCreationTimeMs / 1000.0, indexCreationTimeMs / 1000.0,
-                                (tableCreationTimeMs + indexCreationTimeMs) / 1000.0));
+                        double q0Sec = result.getExecutionTimeSeconds();
+                        csvWriter.addValue(String.format("{tableCreation=%.3f, indexCreation=%.3f, q0=%.3f, total=%.3f}",
+                                tableCreationTimeMs / 1000.0, indexCreationTimeMs / 1000.0, q0Sec,
+                                tableCreationTimeMs / 1000.0 + indexCreationTimeMs / 1000.0 + q0Sec));
                     } else {
                         csvWriter.addValue("");
                     }
