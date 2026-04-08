@@ -90,8 +90,8 @@ public class Valinor implements AutoCloseable {
     // Global statistics per measure column, computed during initialization (approximate mode only)
     private StatsAccumulator[] globalMeasureStats;
 
-    // Init timing breakdown (phase name → seconds)
-    private java.util.LinkedHashMap<String, Double> initTimingBreakdown;
+    // Init timing breakdown (phase name → value)
+    private java.util.LinkedHashMap<String, Object> initTimingBreakdown;
 
     /** Valid values for {@link #initMode}. */
     public static final String INIT_MODE_QUERY_BIASED = "queryBiased";
@@ -263,14 +263,6 @@ public class Valinor implements AutoCloseable {
                         validCount, scanResult.bucketDir,
                         scanResult.numBuckets, scanResult.tilesPerBucket,
                         scanResult.numScanThreads, mmapDir);
-            } else if (scanResult.mmapPending) {
-                // Mmap mode: only tileIds on heap; xs/ys/offsets stay in temp files
-                LOG.info("Using mmap partition path, mmap dir: {}", mmapDir);
-                store = SharedPointStore.createForMmap(
-                        scanResult.tileIdChunks[0], validCount,
-                        scanResult.perThreadXsFiles, scanResult.perThreadYsFiles,
-                        scanResult.perThreadOffsetsFiles, scanResult.perThreadCounts,
-                        mmapDir);
             } else {
                 // Normal path: chunked arrays on heap (zero-copy adoption)
                 store = new SharedPointStore(
@@ -310,6 +302,7 @@ public class Valinor implements AutoCloseable {
 
             // Release scanner and large scan-result fields so GC can reclaim
             // per-thread arrays and StatsAccumulators before partition allocates.
+            String scanPath = scanResult.scanPath;
             scanResult = null;
             scanner = null;
 
@@ -338,10 +331,12 @@ public class Valinor implements AutoCloseable {
 
             // Record init timing breakdown
             initTimingBreakdown = new java.util.LinkedHashMap<>();
+            initTimingBreakdown.put("scanPath", scanPath);
+            initTimingBreakdown.put("partitionPath", store.getPartitionPath());
+            initTimingBreakdown.put("mmapMode", store.isMmapMode() ? 1.0 : 0.0);
             initTimingBreakdown.put("scan", (scanEndNanos - phase1Start) / 1e9);
             initTimingBreakdown.put("setup", (partStart - scanEndNanos) / 1e9);
             initTimingBreakdown.put("partition", (partEndNanos - partStart) / 1e9);
-            initTimingBreakdown.put("partitionSpill", store.didPartitionSpill() ? 1.0 : 0.0);
             initTimingBreakdown.put("wire", (wireEndNanos - wireStart) / 1e9);
 
         } catch (IOException e) {
@@ -396,7 +391,7 @@ public class Valinor implements AutoCloseable {
      * Keys: "scan", "setup", "partition", "wire", "globalStats" (AQP only), "total".
      * Returns null if the index has not been initialized.
      */
-    public java.util.LinkedHashMap<String, Double> getInitTimingBreakdown() {
+    public java.util.LinkedHashMap<String, Object> getInitTimingBreakdown() {
         return initTimingBreakdown;
     }
 

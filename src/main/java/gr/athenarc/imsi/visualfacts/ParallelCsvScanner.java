@@ -37,9 +37,10 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
  *   <li><b>In-memory</b> (default): thread-local fastutil primitive lists</li>
  *   <li><b>Disk-streaming</b>: for large datasets where thread-local arrays
  *       would exceed heap, values are streamed to per-attribute temp files</li>
- *   <li><b>Bucket-streaming</b>: for very large datasets destined for mmap,
- *       values are streamed to per-tileRange bucket files so the subsequent
- *       scatter into mmap is cache-friendly (no page thrashing)</li>
+ *   <li><b>Bucket-streaming</b>: for very large datasets where even the
+ *       steady-state arrays (xs + ys + offsets) don't fit in heap, values are
+ *       streamed to per-tileRange bucket files so the subsequent scatter into
+ *       mmap is cache-friendly (no page thrashing)</li>
  * </ul>
  */
 public final class ParallelCsvScanner {
@@ -112,13 +113,13 @@ public final class ParallelCsvScanner {
     // ======================================================================
 
     public static final class ScanResult {
-        /** Per-thread chunk arrays. For the disk path, this is a single chunk. Null when mmapPending. */
+        /** Per-thread chunk arrays. For the disk path, this is a single chunk. Null for bucket mode. */
         public final double[][] xsChunks;
         public final double[][] ysChunks;
         public final long[][] offsetsChunks;
-        /** Per-thread tile ID chunks — parallel to xs/ys/offsets chunks. */
+        /** Per-thread tile ID chunks — parallel to xs/ys/offsets chunks. Null for bucket mode. */
         public final int[][] tileIdChunks;
-        /** Number of valid elements in each chunk. */
+        /** Number of valid elements in each chunk. Null for bucket mode. */
         public final int[] chunkSizes;
 
         public final int validCount;
@@ -136,19 +137,8 @@ public final class ParallelCsvScanner {
         /** Per-tile, per-measure processed point counts (includes NaN). */
         public final int[][] tileStatsPointCounts;
 
-        /**
-         * When true, point arrays (xs/ys/offsets) remain in per-thread temp files
-         * and must be scattered directly into mmap during partition.
-         * Only tileIds are merged to heap.
-         */
-        public final boolean mmapPending;
-
-        /** Per-thread temp file paths for xs/ys/offsets — non-null only when mmapPending and not bucket mode. */
-        public final Path[] perThreadXsFiles;
-        public final Path[] perThreadYsFiles;
-        public final Path[] perThreadOffsetsFiles;
-        /** Per-thread valid counts — parallel to perThread*Files. Non-null only when mmapPending. */
-        public final int[] perThreadCounts;
+        /** Scan path used: "in-memory", "disk-streaming", or "bucket-streaming". */
+        public final String scanPath;
 
         // ---- Bucket mode fields (non-null only when bucketMode=true) ----
 
@@ -167,10 +157,11 @@ public final class ParallelCsvScanner {
                    int[][] tileIdChunks,
                    int[] chunkSizes, int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats,
-                   int[][] tileStatsPointCounts) {
+                   int[][] tileStatsPointCounts,
+                   String scanPath) {
             this(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
                  validCount, maxRowLength, tileCounts, tileStats, tileStatsPointCounts,
-                 false, null, null, null, null,
+                 scanPath,
                  false, null, 0, 0, 0);
         }
 
@@ -179,9 +170,7 @@ public final class ParallelCsvScanner {
                    int[] chunkSizes, int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats,
                    int[][] tileStatsPointCounts,
-                   boolean mmapPending,
-                   Path[] perThreadXsFiles, Path[] perThreadYsFiles,
-                   Path[] perThreadOffsetsFiles, int[] perThreadCounts,
+                   String scanPath,
                    boolean bucketMode, Path bucketDir, int numBuckets,
                    int tilesPerBucket, int numScanThreads) {
             this.xsChunks = xsChunks;
@@ -194,11 +183,7 @@ public final class ParallelCsvScanner {
             this.tileCounts = tileCounts;
             this.tileStats = tileStats;
             this.tileStatsPointCounts = tileStatsPointCounts;
-            this.mmapPending = mmapPending;
-            this.perThreadXsFiles = perThreadXsFiles;
-            this.perThreadYsFiles = perThreadYsFiles;
-            this.perThreadOffsetsFiles = perThreadOffsetsFiles;
-            this.perThreadCounts = perThreadCounts;
+            this.scanPath = scanPath;
             this.bucketMode = bucketMode;
             this.bucketDir = bucketDir;
             this.numBuckets = numBuckets;
@@ -257,8 +242,13 @@ public final class ParallelCsvScanner {
         // Determine if mmap will be needed (steady-state point data > 85% heap)
         long estimatedSteadyState = 24L * totalCapacity;
         boolean useBucketScan = useDiskScan
-                && estimatedSteadyState > (long) (maxHeap * 0.85)
-                && tmpDir != null;
+                && estimatedSteadyState > (long) (maxHeap * 0.85);
+
+        if (useBucketScan && tmpDir == null) {
+            throw new IOException("Dataset requires bucket-mmap path (steady-state " +
+                    (estimatedSteadyState / (1024 * 1024)) + " MB > 85% of max heap " +
+                    (maxHeap / (1024 * 1024)) + " MB) but tmpDir is unavailable");
+        }
 
         // Compute bucket count for the bucket path
         int numBuckets = 0;
@@ -337,23 +327,18 @@ public final class ParallelCsvScanner {
         // 5. Merge results
         long t1 = System.nanoTime();
         ScanResult result;
+        String scanPath;
         if (bucket) {
             // Bucket path: no merge needed for point data — files stay on disk
+            scanPath = "bucket-streaming";
             result = buildBucketResult(results, totalValid, globalMaxRowLen,
-                    numBuckets, tilesPerBucket);
+                    numBuckets, tilesPerBucket, scanPath);
         } else if (useDiskScan) {
-            // Check if steady-state point data exceeds heap → mmap path
-            long steadyState = 24L * totalValid;
-            if (steadyState > (long) (maxHeap * 0.85)) {
-                LOG.info("Steady-state {} GB > 85% of max heap {} GB; using mmap merge (only tileIds to heap)",
-                        String.format("%.1f", steadyState / (1024.0 * 1024 * 1024)),
-                        String.format("%.1f", maxHeap / (1024.0 * 1024 * 1024)));
-                result = mergeDiskForMmap(results, totalValid, globalMaxRowLen);
-            } else {
-                result = mergeDisk(results, totalValid, globalMaxRowLen);
-            }
+            scanPath = "disk-streaming";
+            result = mergeDisk(results, totalValid, globalMaxRowLen, scanPath);
         } else {
-            result = adoptChunks(results, totalValid, globalMaxRowLen);
+            scanPath = "in-memory";
+            result = adoptChunks(results, totalValid, globalMaxRowLen, scanPath);
         }
         double adoptSec = (System.nanoTime() - t1) / 1e9;
         LOG.info("Chunk {} complete in {} s",
@@ -705,23 +690,18 @@ public final class ParallelCsvScanner {
      * {@link ScanResult#bucketDir}.
      */
     private ScanResult buildBucketResult(ChunkResult[] results, int totalValid,
-                                         long maxRowLen, int numBuckets, int tilesPerBucket) {
+                                         long maxRowLen, int numBuckets, int tilesPerBucket,
+                                         String scanPath) {
         int[] globalCounts = mergePerTileCounts(results);
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
         int[][] globalPointCounts = new int[numTiles][measureCount];
         mergePerTileStats(results, globalStats, globalPointCounts);
 
-        int[] perThreadCounts = new int[results.length];
-        for (int i = 0; i < results.length; i++) {
-            perThreadCounts[i] = results[i].validCount;
-        }
-
         return new ScanResult(
                 null, null, null, null, null,
                 totalValid, maxRowLen,
                 globalCounts, globalStats, globalPointCounts,
-                true,  // mmapPending
-                null, null, null, perThreadCounts,
+                scanPath,
                 true,  // bucketMode
                 tmpDir, numBuckets, tilesPerBucket, results.length);
     }
@@ -768,7 +748,8 @@ public final class ParallelCsvScanner {
      * avoiding the merge allocation that caused OOM on tight heaps.
      * Peak memory stays at 24N (the arrays already held during scan).
      */
-    private ScanResult adoptChunks(ChunkResult[] results, int totalValid, long maxRowLen) {
+    private ScanResult adoptChunks(ChunkResult[] results, int totalValid, long maxRowLen,
+                                   String scanPath) {
         int numChunks = results.length;
         double[][] xsChunks = new double[numChunks][];
         double[][] ysChunks = new double[numChunks][];
@@ -797,14 +778,15 @@ public final class ParallelCsvScanner {
         }
 
         return buildResult(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
-                totalValid, maxRowLen, results);
+                totalValid, maxRowLen, results, scanPath);
     }
 
     // ======================================================================
     //  Merge: disk-streaming path
     // ======================================================================
 
-    private ScanResult mergeDisk(ChunkResult[] results, int totalValid, long maxRowLen) throws IOException {
+    private ScanResult mergeDisk(ChunkResult[] results, int totalValid, long maxRowLen,
+                                 String scanPath) throws IOException {
         try {
             // Merge xs from disk
             double[] globalXs = new double[totalValid];
@@ -858,79 +840,9 @@ public final class ParallelCsvScanner {
                     new double[][] { globalXs }, new double[][] { globalYs },
                     new long[][] { globalOffsets }, new int[][] { globalTileIds },
                     new int[] { totalValid },
-                    totalValid, maxRowLen, results);
+                    totalValid, maxRowLen, results, scanPath);
         } finally {
             // Cleanup any remaining temp files on error
-            for (ChunkResult cr : results) {
-                safeDelete(cr.tmpXs);
-                safeDelete(cr.tmpYs);
-                safeDelete(cr.tmpOffsets);
-                safeDelete(cr.tmpTileIds);
-            }
-        }
-    }
-
-    // ======================================================================
-    //  Merge: mmap path — only tileIds to heap, xs/ys/offsets stay on disk
-    // ======================================================================
-
-    /**
-     * For datasets where steady-state point data (24N) exceeds heap, merge only
-     * tileIds into a heap array.  Per-thread xs/ys/offsets temp files are kept
-     * alive and their paths are passed through ScanResult so that
-     * {@link SharedPointStore#partitionToMmap} can scatter them directly into
-     * memory-mapped files without allocating heap arrays.
-     * <p>
-     * Heap usage: only int[totalValid] for tileIds = 4N ≈ 3.7 GiB for 1B rows.
-     */
-    private ScanResult mergeDiskForMmap(ChunkResult[] results, int totalValid, long maxRowLen) throws IOException {
-        try {
-            // Merge only tileIds to heap (4N bytes)
-            int[] globalTileIds = new int[totalValid];
-            int offset = 0;
-            for (ChunkResult cr : results) {
-                if (cr.validCount > 0) {
-                    readIntsFromFile(cr.tmpTileIds, globalTileIds, offset, cr.validCount);
-                }
-                offset += cr.validCount;
-                safeDelete(cr.tmpTileIds);
-                cr.tmpTileIds = null;
-            }
-
-            // Collect per-thread file paths (ownership transfers to SharedPointStore)
-            int numThreads = results.length;
-            Path[] xsFiles = new Path[numThreads];
-            Path[] ysFiles = new Path[numThreads];
-            Path[] offsetsFiles = new Path[numThreads];
-            int[] perThreadCounts = new int[numThreads];
-            for (int i = 0; i < numThreads; i++) {
-                xsFiles[i] = results[i].tmpXs;
-                ysFiles[i] = results[i].tmpYs;
-                offsetsFiles[i] = results[i].tmpOffsets;
-                perThreadCounts[i] = results[i].validCount;
-                // Null out so the finally block doesn't delete files we're keeping
-                results[i].tmpXs = null;
-                results[i].tmpYs = null;
-                results[i].tmpOffsets = null;
-            }
-
-            // Build stats using the shared helper
-            int[] globalCounts = mergePerTileCounts(results);
-            StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
-            int[][] globalPointCounts = new int[numTiles][measureCount];
-            mergePerTileStats(results, globalStats, globalPointCounts);
-
-            return new ScanResult(
-                    null, null, null,  // no heap arrays for xs/ys/offsets
-                    new int[][] { globalTileIds },
-                    new int[] { totalValid },
-                    totalValid, maxRowLen,
-                    globalCounts, globalStats, globalPointCounts,
-                    true,  // mmapPending
-                    xsFiles, ysFiles, offsetsFiles, perThreadCounts,
-                    false, null, 0, 0, 0);  // not bucket mode
-        } finally {
-            // Cleanup any remaining temp files on error (only tileIds — xs/ys/off already nulled or transferred)
             for (ChunkResult cr : results) {
                 safeDelete(cr.tmpXs);
                 safeDelete(cr.tmpYs);
@@ -976,7 +888,7 @@ public final class ParallelCsvScanner {
     private ScanResult buildResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
                                    int[][] tileIdChunks,
                                    int[] chunkSizes, int totalValid, long maxRowLen,
-                                   ChunkResult[] results) {
+                                   ChunkResult[] results, String scanPath) {
         int[] globalCounts = mergePerTileCounts(results);
 
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
@@ -984,7 +896,7 @@ public final class ParallelCsvScanner {
         mergePerTileStats(results, globalStats, globalPointCounts);
 
         return new ScanResult(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
-                totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts);
+                totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts, scanPath);
     }
 
     // ======================================================================
