@@ -224,14 +224,14 @@ public class Experiments {
             csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
             if (addHeader) {
                 if (measureMem) {
-                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
+                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                             "Leaf tiles",
                             "Overlapped tiles",
                             "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
                             "Init Timing",
                             "Index Mem Deep Size (bytes)");
                 } else {
-                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
+                    csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                             "Leaf tiles",
                             "Overlapped tiles",
                             "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
@@ -267,7 +267,8 @@ public class Experiments {
                 csvWriter.addValue(0);
                 csvWriter.addValue(initMode);
                 csvWriter.addValue(i);
-                csvWriter.addValue(queryResults.getQuery());
+                csvWriter.addValue(query.getUserOpType());
+                csvWriter.addValue(formatBbox(query.getRect()));
                 csvWriter.addValue(valinor.getLeafTileCount());
                 csvWriter.addValue(queryResults.getTileCount());
                 csvWriter.addValue(queryResults.getFullyContainedTileCount());
@@ -324,7 +325,7 @@ public class Experiments {
             CsvWriterSettings csvWriterSettings = new CsvWriterSettings();
             csvWriter = new CsvWriter(new FileWriter(outFile, false), csvWriterSettings);
             if (measureMem) {
-                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
@@ -332,7 +333,7 @@ public class Experiments {
                         "Error Bound", "run", "Init Timing",
                         "Index Mem Deep Size (bytes)");
             } else {
-                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "query",
+                csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                         "Leaf tiles",
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
@@ -368,7 +369,8 @@ public class Experiments {
                 csvWriter.addValue(errorBound);
                 csvWriter.addValue(initMode);
                 csvWriter.addValue(i);
-                csvWriter.addValue(queryResults.getQuery());
+                csvWriter.addValue(query.getUserOpType());
+                csvWriter.addValue(formatBbox(query.getRect()));
                 csvWriter.addValue(index.getLeafTileCount());
                 csvWriter.addValue(queryResults.getTileCount());
                 csvWriter.addValue(queryResults.getFullyContainedTileCount());
@@ -433,6 +435,13 @@ public class Experiments {
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift,
                 zoomFactor, scenarioConfig.getDirectionWeights());
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
+    }
+
+    private static String formatBbox(Rectangle rect) {
+        if (rect == null) return "";
+        return String.format("%s,%s,%s,%s",
+                rect.getXRange().lowerEndpoint(), rect.getXRange().upperEndpoint(),
+                rect.getYRange().lowerEndpoint(), rect.getYRange().upperEndpoint());
     }
 
     private String formatApproxQueryResult(ApproximateQueryResults queryResults) {
