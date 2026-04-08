@@ -146,8 +146,10 @@ public class ScenarioRunnerTest {
         Map<String, Map<Integer, int[]>> perMeasureByType = new HashMap<>();
         overallByType.put("sum", new int[2]);
         overallByType.put("count", new int[2]);
+        overallByType.put("mean", new int[2]);
         perMeasureByType.put("sum", new HashMap<>());
         perMeasureByType.put("count", new HashMap<>());
+        perMeasureByType.put("mean", new HashMap<>());
 
         // 95% CI → expect ~0.95 coverage. 500 independent queries × 8 measures
         // gives ~4000 checks per aggregate type. Threshold 0.90 is conservative
@@ -190,11 +192,28 @@ public class ScenarioRunnerTest {
                 tally(overallByType.get("count"), inside);
                 tally(perMeasureByType.get("count").computeIfAbsent(measure, k -> new int[2]), inside);
             }
+
+            // --- MEAN CI coverage ---
+            Map<Integer, double[]> meanCIs = aqr.getMeanConfidenceIntervals();
+            assertNotNull(meanCIs, "MEAN CIs must be present for query " + i);
+            for (Map.Entry<Integer, double[]> e : meanCIs.entrySet()) {
+                Integer measure = e.getKey();
+                double[] ci = e.getValue();
+                assertNotNull(ci, "missing MEAN CI for measure " + measure);
+                assertEquals(2, ci.length, "MEAN CI must have length 2 for measure " + measure);
+                // Skip NaN intervals (zero-count queries have undefined mean)
+                if (Double.isNaN(ci[0]) || Double.isNaN(ci[1])) continue;
+                double expectedMean = expected.get(measure).mean();
+                if (Double.isNaN(expectedMean)) continue;
+                boolean inside = isInsideCI(ci, expectedMean);
+                tally(overallByType.get("mean"), inside);
+                tally(perMeasureByType.get("mean").computeIfAbsent(measure, k -> new int[2]), inside);
+            }
         }
         ProgressBar.finish();
 
         // Assert coverage per aggregate type, overall and per measure
-        for (String type : new String[] { "sum", "count" }) {
+        for (String type : new String[] { "sum", "count", "mean" }) {
             int[] ov = overallByType.get(type);
             double coverage = ov[1] == 0 ? 1.0 : (ov[0] / (double) ov[1]);
             LOG.info("{} CI coverage overall={} (inside={} total={})", type.toUpperCase(), coverage, ov[0], ov[1]);

@@ -11,6 +11,10 @@ public class ApproximateQueryResults extends QueryResults {
     // Represents the estimated non-null count as [lower, upper] bounds.
     private Map<Integer, double[]> countConfidenceIntervals;
 
+    // MEAN confidence intervals for each measure (key: measure column index)
+    // Computed via delta method on the ratio SUM/COUNT.
+    private Map<Integer, double[]> meanConfidenceIntervals;
+
     // Error bounds for each measure (key: measure column index)
     private Map<Integer, Double> errorBounds;
 
@@ -35,6 +39,14 @@ public class ApproximateQueryResults extends QueryResults {
 
     public void setCountConfidenceIntervals(Map<Integer, double[]> countConfidenceIntervals) {
         this.countConfidenceIntervals = countConfidenceIntervals;
+    }
+
+    public Map<Integer, double[]> getMeanConfidenceIntervals() {
+        return meanConfidenceIntervals;
+    }
+
+    public void setMeanConfidenceIntervals(Map<Integer, double[]> meanConfidenceIntervals) {
+        this.meanConfidenceIntervals = meanConfidenceIntervals;
     }
 
     public Map<Integer, Double> getErrorBounds() {

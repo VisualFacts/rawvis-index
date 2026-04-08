@@ -439,6 +439,7 @@ public class Experiments {
         StringBuilder sb = new StringBuilder("{");
         Map<Integer, double[]> cis = queryResults.getSumConfidenceIntervals();
         Map<Integer, double[]> countCIs = queryResults.getCountConfidenceIntervals();
+        Map<Integer, double[]> meanCIs = queryResults.getMeanConfidenceIntervals();
         boolean first = true;
         if (cis != null) {
             for (Map.Entry<Integer, double[]> entry : cis.entrySet()) {
@@ -450,6 +451,10 @@ public class Experiments {
                 if (countCIs != null && countCIs.containsKey(col)) {
                     double[] countCI = countCIs.get(col);
                     sb.append(", count=[").append(countCI[0]).append(", ").append(countCI[1]).append("]");
+                }
+                if (meanCIs != null && meanCIs.containsKey(col)) {
+                    double[] meanCI = meanCIs.get(col);
+                    sb.append(", mean=[").append(meanCI[0]).append(", ").append(meanCI[1]).append("]");
                 }
                 sb.append("}");
             }

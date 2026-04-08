@@ -648,6 +648,7 @@ public class Valinor implements AutoCloseable {
         AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
         Map<Integer, double[]> sumConfidenceIntervals = new HashMap<>();
         Map<Integer, double[]> countConfidenceIntervals = new HashMap<>();
+        Map<Integer, double[]> meanConfidenceIntervals = new HashMap<>();
         Map<Integer, Double> errorBounds = new HashMap<>();
         int samplingRounds = 0;
         int maxSamplingRounds = 50;
@@ -700,21 +701,23 @@ public class Valinor implements AutoCloseable {
             // SUM CI uses the null-as-zero variance on continuous values.
             // COUNT CI uses Bernoulli variance p̂(1-p̂) ≤ 0.25, which is bounded,
             // so COUNT is guaranteed to converge whenever SUM converges — SUM is
-            // always the bottleneck. Both are computed each round for completeness
-            // and to support future aggregates (e.g. MEAN) whose convergence may
-            // differ from SUM.
+            // always the bottleneck.
+            // MEAN CI uses the delta method on the ratio SUM/COUNT.
             for (Integer measureCol : query.getMeasureCols()) {
                 sumConfidenceIntervals.put(measureCol,
                         getQuerySumConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
                 countConfidenceIntervals.put(measureCol,
                         getQueryCountConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                meanConfidenceIntervals.put(measureCol,
+                        getQueryMeanConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
             }
 
             // Error bound per measure: max relative error across all aggregate types
             for (Integer measureCol : query.getMeasureCols()) {
                 double sumError = calculateRelativeError(sumConfidenceIntervals.get(measureCol));
                 double countError = calculateRelativeError(countConfidenceIntervals.get(measureCol));
-                errorBounds.put(measureCol, Math.max(sumError, countError));
+                double meanError = calculateRelativeError(meanConfidenceIntervals.get(measureCol));
+                errorBounds.put(measureCol, Math.max(sumError, Math.max(countError, meanError)));
             }
 
             // Find the maximum error bound across all measures
@@ -756,6 +759,7 @@ public class Valinor implements AutoCloseable {
 
         queryResults.setSumConfidenceIntervals(sumConfidenceIntervals);
         queryResults.setCountConfidenceIntervals(countConfidenceIntervals);
+        queryResults.setMeanConfidenceIntervals(meanConfidenceIntervals);
         queryResults.setErrorBounds(errorBounds);
 
         return queryResults;
@@ -1093,6 +1097,135 @@ public class Valinor implements AutoCloseable {
         return new double[] { lower, upper };
     }
 
+    /**
+     * Computes a confidence interval for the MEAN of a measure column using the
+     * delta-method (ratio estimator) applied to MEAN = SUM / COUNT.
+     *
+     * <p>Because MEAN is a ratio of two estimated quantities (both affected by
+     * sampling), its variance requires the covariance between SUM and COUNT
+     * estimators. Per sampling node, with m total samples, n non-null, S = sum
+     * of non-null values:
+     * <ul>
+     *   <li>Ŝ = N · S/m (SUM estimator, null-as-zero)</li>
+     *   <li>Ĉ = N · n/m (COUNT estimator)</li>
+     *   <li>Cov(Ŝ,Ĉ) = N² · S(m−n) / [m²(m−1)] · (1 − m/N)</li>
+     * </ul>
+     * Global variance via the delta method:
+     * <pre>
+     *   Var(μ̂) ≈ (1/Ĉ²) · [Var(Ŝ) − 2μ̂·Cov(Ŝ,Ĉ) + μ̂²·Var(Ĉ)]
+     * </pre>
+     * where all sums/variances/covariances are aggregated across sampling nodes,
+     * and exact nodes contribute to the point estimate with zero variance.
+     */
+    private double[] getQueryMeanConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
+            double samplingRate, int measureCol) {
+        // Exact contributions from frozen-stats and fully-contained-with-stats tiles
+        double exactSum = 0;
+        double exactCount = 0;
+        if (queryResults.getStats().containsKey(measureCol)) {
+            exactSum = queryResults.getStats().get(measureCol).sum();
+            exactCount = queryResults.getStats().get(measureCol).count();
+        }
+
+        if (samplingNodes == null || samplingNodes.isEmpty()) {
+            if (exactCount == 0) {
+                return new double[] { Double.NaN, Double.NaN };
+            }
+            double mean = exactSum / exactCount;
+            return new double[] { mean, mean };
+        }
+
+        double totalSumEstimate = 0.0;
+        double totalCountEstimate = 0.0;
+        double totalSumVariance = 0.0;
+        double totalCountVariance = 0.0;
+        double totalCovariance = 0.0;
+
+        for (QueryNode qnode : samplingNodes) {
+            int n = (int) qnode.getSampleStatsAcc(measureCol).count();
+            double N = qnode.getIntersectionCount();
+            int m = qnode.getSampledTracker().cardinality();
+
+            // Fully sampled node → exact, zero variance/covariance
+            if (m >= (int) N) {
+                double nodeSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
+                exactSum += nodeSum;
+                exactCount += n;
+                continue;
+            }
+
+            if (m < 2) {
+                // Best-effort point estimate, no variance/covariance contribution
+                double sampleSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
+                totalSumEstimate += N * sampleSum / m;
+                totalCountEstimate += N * n / (double) m;
+                continue;
+            }
+
+            double sampleSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
+
+            // --- SUM variance (null-as-zero, same as getQuerySumConfidenceInterval) ---
+            double sumOfSquaresNonNull;
+            if (n >= 2) {
+                double stdev = qnode.getSampleStatsAcc(measureCol).sampleStandardDeviation();
+                double mean = qnode.getSampleStatsAcc(measureCol).mean();
+                sumOfSquaresNonNull = (n - 1) * stdev * stdev + n * mean * mean;
+            } else if (n == 1) {
+                double val = qnode.getSampleStatsAcc(measureCol).mean();
+                sumOfSquaresNonNull = val * val;
+            } else {
+                sumOfSquaresNonNull = 0.0;
+            }
+            double varWithZeros = (sumOfSquaresNonNull - sampleSum * sampleSum / m) / (m - 1);
+            if (varWithZeros < 0) varWithZeros = 0.0;
+
+            double fpc = 1.0 - m / N;
+
+            // SUM estimator and variance
+            double nodeSumEst = N * sampleSum / m;
+            double nodeSumVar = N * N * (varWithZeros / m) * fpc;
+
+            // COUNT estimator and variance (Bernoulli)
+            double pHat = (double) n / m;
+            double nodeCountEst = N * pHat;
+            double nodeCountVar = N * N * (pHat * (1.0 - pHat)) / (m - 1) * fpc;
+
+            // Covariance between SUM and COUNT estimators.
+            // The null-as-zero value z_j and the indicator I_j = 1{non-null} satisfy:
+            //   sum(z_j · I_j) = sum(z_j) = S  (since z_j = 0 when null)
+            //   Cov_sample(z, I) = [S - S·n/m] / (m-1) = S·(m-n) / [m·(m-1)]
+            // Scaled to population: Cov(Ŝ,Ĉ) = N² · Cov_sample(z,I)/m · fpc
+            double sampleCov = sampleSum * (m - n) / ((double) m * (m - 1));
+            double nodeCov = N * N * (sampleCov / m) * fpc;
+
+            totalSumEstimate += nodeSumEst;
+            totalCountEstimate += nodeCountEst;
+            totalSumVariance += nodeSumVar;
+            totalCountVariance += nodeCountVar;
+            totalCovariance += nodeCov;
+        }
+
+        double globalSum = exactSum + totalSumEstimate;
+        double globalCount = exactCount + totalCountEstimate;
+
+        if (globalCount <= 0) {
+            return new double[] { Double.NaN, Double.NaN };
+        }
+
+        double meanEst = globalSum / globalCount;
+
+        // Delta method: Var(μ̂) ≈ (1/Ĉ²)[Var(Ŝ) − 2μ̂·Cov(Ŝ,Ĉ) + μ̂²·Var(Ĉ)]
+        double meanVar = (totalSumVariance - 2.0 * meanEst * totalCovariance
+                + meanEst * meanEst * totalCountVariance) / (globalCount * globalCount);
+        if (meanVar < 0) meanVar = 0.0;
+
+        double stdError = Math.sqrt(meanVar);
+        double z = getZScoreForConfidence(0.95);
+        double margin = z * stdError;
+
+        return new double[] { meanEst - margin, meanEst + margin };
+    }
+
     private double getZScoreForConfidence(double confidenceLevel) {
         if (confidenceLevel == 0.90) {
             return 1.645;
@@ -1105,9 +1238,16 @@ public class Valinor implements AutoCloseable {
     }
 
     private double calculateRelativeError(double[] confidenceInterval) {
-        double minSum = confidenceInterval[0];
-        double maxSum = confidenceInterval[1];
-        return (maxSum - minSum) / (maxSum + minSum);
+        double lo = confidenceInterval[0];
+        double hi = confidenceInterval[1];
+        if (Double.isNaN(lo) || Double.isNaN(hi)) {
+            return 0.0; // undefined (e.g. zero-count MEAN) — not a convergence blocker
+        }
+        double denom = hi + lo;
+        if (denom == 0.0) {
+            return 0.0;
+        }
+        return (hi - lo) / denom;
     }
 
 
