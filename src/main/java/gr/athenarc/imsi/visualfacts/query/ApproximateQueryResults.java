@@ -4,8 +4,12 @@ import java.util.Arrays;
 import java.util.Map;
 
 public class ApproximateQueryResults extends QueryResults {
-    // Confidence intervals for each measure (key: measure column index)
-    private Map<Integer, double[]> confidenceIntervals;
+    // SUM confidence intervals for each measure (key: measure column index)
+    private Map<Integer, double[]> sumConfidenceIntervals;
+
+    // COUNT confidence intervals for each measure (key: measure column index)
+    // Represents the estimated non-null count as [lower, upper] bounds.
+    private Map<Integer, double[]> countConfidenceIntervals;
 
     // Error bounds for each measure (key: measure column index)
     private Map<Integer, Double> errorBounds;
@@ -17,12 +21,20 @@ public class ApproximateQueryResults extends QueryResults {
         super(query);
     }
 
-    public Map<Integer, double[]> getConfidenceIntervals() {
-        return confidenceIntervals;
+    public Map<Integer, double[]> getSumConfidenceIntervals() {
+        return sumConfidenceIntervals;
     }
 
-    public void setConfidenceIntervals(Map<Integer, double[]> confidenceIntervals) {
-        this.confidenceIntervals = confidenceIntervals;
+    public void setSumConfidenceIntervals(Map<Integer, double[]> sumConfidenceIntervals) {
+        this.sumConfidenceIntervals = sumConfidenceIntervals;
+    }
+
+    public Map<Integer, double[]> getCountConfidenceIntervals() {
+        return countConfidenceIntervals;
+    }
+
+    public void setCountConfidenceIntervals(Map<Integer, double[]> countConfidenceIntervals) {
+        this.countConfidenceIntervals = countConfidenceIntervals;
     }
 
     public Map<Integer, Double> getErrorBounds() {
@@ -44,15 +56,15 @@ public class ApproximateQueryResults extends QueryResults {
     @Override
     public String toString() {
         String ciStr = "{";
-        if (confidenceIntervals != null && !confidenceIntervals.isEmpty()) {
-            ciStr += confidenceIntervals.entrySet().stream()
+        if (sumConfidenceIntervals != null && !sumConfidenceIntervals.isEmpty()) {
+            ciStr += sumConfidenceIntervals.entrySet().stream()
                     .map(e -> e.getKey() + ":" + Arrays.toString(e.getValue()))
                     .reduce((a, b) -> a + ", " + b).orElse("");
         }
         ciStr += "}";
         return "ApproximateQueryResults{" +
                 "query=" + getQuery() +
-                ", confidenceIntervals=" + ciStr +
+                ", sumConfidenceIntervals=" + ciStr +
                 ", errorBounds=" + errorBounds +
                 ", ioCount=" + getIoCount() +
                 '}';

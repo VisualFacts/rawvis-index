@@ -646,7 +646,8 @@ public class Valinor implements AutoCloseable {
         }
 
         AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
-        Map<Integer, double[]> confidenceIntervals = new HashMap<>();
+        Map<Integer, double[]> sumConfidenceIntervals = new HashMap<>();
+        Map<Integer, double[]> countConfidenceIntervals = new HashMap<>();
         Map<Integer, Double> errorBounds = new HashMap<>();
         int samplingRounds = 0;
         int maxSamplingRounds = 50;
@@ -695,16 +696,25 @@ public class Valinor implements AutoCloseable {
                 }
             }
 
-            // Calculate the confidence intervals for all measures
+            // Compute confidence intervals for all aggregate types and measures.
+            // SUM CI uses the null-as-zero variance on continuous values.
+            // COUNT CI uses Bernoulli variance p̂(1-p̂) ≤ 0.25, which is bounded,
+            // so COUNT is guaranteed to converge whenever SUM converges — SUM is
+            // always the bottleneck. Both are computed each round for completeness
+            // and to support future aggregates (e.g. MEAN) whose convergence may
+            // differ from SUM.
             for (Integer measureCol : query.getMeasureCols()) {
-                confidenceIntervals.put(measureCol,
-                        getQueryConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                sumConfidenceIntervals.put(measureCol,
+                        getQuerySumConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                countConfidenceIntervals.put(measureCol,
+                        getQueryCountConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
             }
-            // Calculate the error bounds for all measures
-            for (Map.Entry<Integer, double[]> entry : confidenceIntervals.entrySet()) {
-                Integer measureCol = entry.getKey();
-                double[] confidenceInterval = entry.getValue();
-                errorBounds.put(measureCol, calculateMaxErrorBound(confidenceInterval));
+
+            // Error bound per measure: max relative error across all aggregate types
+            for (Integer measureCol : query.getMeasureCols()) {
+                double sumError = calculateRelativeError(sumConfidenceIntervals.get(measureCol));
+                double countError = calculateRelativeError(countConfidenceIntervals.get(measureCol));
+                errorBounds.put(measureCol, Math.max(sumError, countError));
             }
 
             // Find the maximum error bound across all measures
@@ -744,7 +754,8 @@ public class Valinor implements AutoCloseable {
         queryResults.setSamplingRate(samplingRate.get());
         queryResults.setIoCount(ioCount);
 
-        queryResults.setConfidenceIntervals(confidenceIntervals);
+        queryResults.setSumConfidenceIntervals(sumConfidenceIntervals);
+        queryResults.setCountConfidenceIntervals(countConfidenceIntervals);
         queryResults.setErrorBounds(errorBounds);
 
         return queryResults;
@@ -924,7 +935,7 @@ public class Valinor implements AutoCloseable {
      * (N · nonNaNRatio · mean = N · S/m), but the variance now correctly
      * accounts for the null-proportion uncertainty.
      */
-    private double[] getQueryConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
+    private double[] getQuerySumConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
             double samplingRate, int measureCol) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(measureCol)) {
@@ -1009,6 +1020,79 @@ public class Valinor implements AutoCloseable {
         return new double[] { lower, upper };
     }
 
+    /**
+     * Computes a confidence interval for the non-null COUNT of a measure column,
+     * combining exact counts from fully-processed nodes with Horvitz-Thompson
+     * estimation from sampling nodes.
+     *
+     * <p>For each sampling node, the indicator variable z_i ∈ {0,1} (1 = non-null)
+     * gives a Bernoulli population. With m samples, n non-null:
+     * <ul>
+     *   <li>p̂ = n/m (estimated non-null proportion)</li>
+     *   <li>COUNT estimator: Ĉ = N · p̂ = N · n/m</li>
+     *   <li>Sample variance: s² = p̂(1−p̂)·m/(m−1)</li>
+     *   <li>Variance with FPC: Var(Ĉ) = N² · s²/m · (1 − m/N)
+     *       = N² · p̂(1−p̂)/(m−1) · (1 − m/N)</li>
+     * </ul>
+     */
+    private double[] getQueryCountConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
+            double samplingRate, int measureCol) {
+        // Exact count from frozen-stats and fully-contained-with-stats tiles
+        double exactCount = 0;
+        if (queryResults.getStats().containsKey(measureCol)) {
+            exactCount = queryResults.getStats().get(measureCol).count();
+        }
+
+        if (samplingNodes == null || samplingNodes.isEmpty()) {
+            return new double[] { exactCount, exactCount };
+        }
+
+        double totalEstimate = 0.0;
+        double totalVariance = 0.0;
+
+        for (QueryNode qnode : samplingNodes) {
+            int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
+            double N = qnode.getIntersectionCount();                    // total population (null + non-null)
+            int m = qnode.getSampledTracker().cardinality();            // total sampled  (null + non-null)
+
+            // SHORT-CIRCUIT: all points sampled → exact count
+            if (m >= (int) N) {
+                exactCount += n;
+                continue;
+            }
+
+            // With fewer than 2 samples, best-effort point estimate, no variance
+            if (m < 2) {
+                totalEstimate += N * n / (double) m;
+                continue;
+            }
+
+            // --- Bernoulli COUNT CI ---
+            double pHat = (double) n / m;    // estimated non-null proportion
+
+            // COUNT estimator: Ĉ = N · p̂
+            double nodeEstimate = N * pHat;
+
+            // Bernoulli sample variance: s² = p̂(1-p̂) · m/(m-1)
+            // Var(Ĉ) = N² · s²/m · (1 - m/N) = N² · p̂(1-p̂)/(m-1) · (1 - m/N)
+            double fpc = 1.0 - m / N;
+            double nodeVariance = N * N * (pHat * (1.0 - pHat)) / (m - 1) * fpc;
+
+            totalEstimate += nodeEstimate;
+            totalVariance += nodeVariance;
+        }
+
+        double finalEstimate = exactCount + totalEstimate;
+        double stdError = Math.sqrt(totalVariance);
+        double z = getZScoreForConfidence(0.95);
+        double margin = z * stdError;
+
+        double lower = finalEstimate - margin;
+        double upper = finalEstimate + margin;
+
+        return new double[] { lower, upper };
+    }
+
     private double getZScoreForConfidence(double confidenceLevel) {
         if (confidenceLevel == 0.90) {
             return 1.645;
@@ -1020,7 +1104,7 @@ public class Valinor implements AutoCloseable {
         throw new IllegalArgumentException("Unsupported confidence level: " + confidenceLevel);
     }
 
-    private double calculateMaxErrorBound(double[] confidenceInterval) {
+    private double calculateRelativeError(double[] confidenceInterval) {
         double minSum = confidenceInterval[0];
         double maxSum = confidenceInterval[1];
         return (maxSum - minSum) / (maxSum + minSum);

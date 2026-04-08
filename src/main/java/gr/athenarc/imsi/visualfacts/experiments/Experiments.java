@@ -429,7 +429,8 @@ public class Experiments {
 
     private String formatApproxQueryResult(ApproximateQueryResults queryResults) {
         StringBuilder sb = new StringBuilder("{");
-        Map<Integer, double[]> cis = queryResults.getConfidenceIntervals();
+        Map<Integer, double[]> cis = queryResults.getSumConfidenceIntervals();
+        Map<Integer, double[]> countCIs = queryResults.getCountConfidenceIntervals();
         boolean first = true;
         if (cis != null) {
             for (Map.Entry<Integer, double[]> entry : cis.entrySet()) {
@@ -437,7 +438,12 @@ public class Experiments {
                 first = false;
                 int col = entry.getKey();
                 double[] ci = entry.getValue();
-                sb.append(col).append("={sum=[").append(ci[0]).append(", ").append(ci[1]).append("]}");
+                sb.append(col).append("={sum=[").append(ci[0]).append(", ").append(ci[1]).append("]");
+                if (countCIs != null && countCIs.containsKey(col)) {
+                    double[] countCI = countCIs.get(col);
+                    sb.append(", count=[").append(countCI[0]).append(", ").append(countCI[1]).append("]");
+                }
+                sb.append("}");
             }
         }
         sb.append("}");

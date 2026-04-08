@@ -181,7 +181,7 @@ public class ScenarioRunnerTest {
                 continue;
             }
 
-            Map<Integer, double[]> confIntervals = aqr.getConfidenceIntervals();
+            Map<Integer, double[]> confIntervals = aqr.getSumConfidenceIntervals();
             assertNotNull(confIntervals, "confidence intervals must be present");
 
             for (Map.Entry<Integer, double[]> e : confIntervals.entrySet()) {
