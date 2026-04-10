@@ -154,6 +154,27 @@ public class Valinor implements AutoCloseable {
         grid.split();
     }
 
+    /**
+     * Initializes the index from the CSV file.
+     * <p>
+     * <b>Init flow overview (3 adaptive paths):</b>
+     * <pre>
+     *  Phase 1 — Parallel CSV scan (ParallelCsvScanner):
+     *    Path A (in-memory):       heap chunks, used when 32N+meta AND 36N fit in 85% heap
+     *    Path B (disk-streaming):  per-thread temp files, used when scan or partition peak
+     *                              exceeds 85% heap but steady-state 24N fits
+     *    Path C (bucket-streaming): per-bucket files for mmap, used when 24N exceeds 85% heap
+     *
+     *  Phase 1.5 — Prefix sums from per-tile counts
+     *
+     *  Phase 2 — Partition (SharedPointStore.partition):
+     *    Path A: parallel histogram scatter from T heap chunks      (peak 36N)
+     *    Path B: parallel histogram scatter from T disk files       (peak 28N)
+     *    Path C: bucket-by-bucket scatter into mmap files           (peak ~0)
+     *
+     *  Phase 3 — Wire tiles to shared store slices
+     * </pre>
+     */
     public QueryResults initialize(Query q0) {
         long initOverallStart = System.nanoTime();
         generateGrid(q0);
@@ -256,15 +277,22 @@ public class Valinor implements AutoCloseable {
             // Adopt scan results into a SharedPointStore
             SharedPointStore store;
             if (scanResult.bucketMode) {
-                // Bucket-mmap: scatter per-thread bucket files into mmap arrays
+                // Path C: bucket-mmap — scatter per-thread bucket files into mmap arrays
                 LOG.info("Using bucket-mmap partition path ({} buckets), mmap dir: {}",
                         scanResult.numBuckets, mmapDir);
                 store = SharedPointStore.createForBucketMmap(
                         validCount, scanResult.bucketDir,
                         scanResult.numBuckets, scanResult.tilesPerBucket,
                         scanResult.numScanThreads, mmapDir);
+            } else if (scanResult.diskXsFiles != null) {
+                // Path B: disk-chunk — scatter directly from per-thread scan files
+                LOG.info("Using disk-scatter partition path ({} chunks)", scanResult.diskChunkSizes.length);
+                store = SharedPointStore.createForDiskChunks(
+                        validCount, scanResult.diskXsFiles, scanResult.diskYsFiles,
+                        scanResult.diskOffsetsFiles, scanResult.diskTileIdFiles,
+                        scanResult.diskChunkSizes);
             } else {
-                // Normal path: chunked arrays on heap (zero-copy adoption)
+                // Path A: in-memory — chunked arrays on heap (zero-copy adoption)
                 store = new SharedPointStore(
                         scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
                         scanResult.tileIdChunks, scanResult.chunkSizes, validCount);
@@ -299,6 +327,7 @@ public class Valinor implements AutoCloseable {
                     starts[t] = starts[t - 1] + counts[t - 1];
                 }
             }
+            long prefixSumEnd = System.nanoTime();
 
             // Release scanner and large scan-result fields so GC can reclaim
             // per-thread arrays and StatsAccumulators before partition allocates.
@@ -306,9 +335,10 @@ public class Valinor implements AutoCloseable {
             scanResult = null;
             scanner = null;
 
-            // --- Phase 2: partition by tile ---
-            // tileIds already set in store constructor
+            // --- Phase 1.5b: explicit GC before partition ---
+            long gcStart = System.nanoTime();
             System.gc();
+            long gcEndNanos = System.nanoTime();
 
             LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);
             long partStart = System.nanoTime();
@@ -335,7 +365,8 @@ public class Valinor implements AutoCloseable {
             initTimingBreakdown.put("partitionPath", store.getPartitionPath());
             initTimingBreakdown.put("mmapMode", store.isMmapMode() ? 1.0 : 0.0);
             initTimingBreakdown.put("scan", (scanEndNanos - phase1Start) / 1e9);
-            initTimingBreakdown.put("setup", (partStart - scanEndNanos) / 1e9);
+            initTimingBreakdown.put("prefixSum", (prefixSumEnd - scanEndNanos) / 1e9);
+            initTimingBreakdown.put("gc", (gcEndNanos - gcStart) / 1e9);
             initTimingBreakdown.put("partition", (partEndNanos - partStart) / 1e9);
             initTimingBreakdown.put("wire", (wireEndNanos - wireStart) / 1e9);
 

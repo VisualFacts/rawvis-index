@@ -32,15 +32,20 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
  * per-tile counts and measure statistics.  After all threads join, the results
  * are merged into a single {@link ScanResult} in file order.
  * <p>
- * Three storage strategies are used adaptively:
+ * Three storage strategies are used adaptively based on memory pressure:
  * <ul>
- *   <li><b>In-memory</b> (default): thread-local fastutil primitive lists</li>
- *   <li><b>Disk-streaming</b>: for large datasets where thread-local arrays
- *       would exceed heap, values are streamed to per-attribute temp files</li>
- *   <li><b>Bucket-streaming</b>: for very large datasets where even the
- *       steady-state arrays (xs + ys + offsets) don't fit in heap, values are
- *       streamed to per-tileRange bucket files so the subsequent scatter into
- *       mmap is cache-friendly (no page thrashing)</li>
+ *   <li><b>Path A — In-memory</b> (default): thread-local fastutil lists on heap.
+ *       Used when both scan peak (32N + metadata) and partition peak (36N) fit
+ *       in 85% of max heap.  Partition uses parallel histogram scatter from
+ *       T heap chunks.</li>
+ *   <li><b>Path B — Disk-streaming</b>: thread-local data streamed to T×4
+ *       per-attribute temp files, metadata stays on heap.  Used when scan or
+ *       partition peak exceeds 85% heap but steady-state (24N) fits.
+ *       Partition scatters directly from the T per-thread files in parallel
+ *       — no intermediate merge to heap.</li>
+ *   <li><b>Path C — Bucket-streaming</b>: data streamed to B×T per-bucket files
+ *       for cache-friendly mmap scatter.  Used when even 24N exceeds 85% heap.
+ *       Final arrays live in mmap files, not on the Java heap.</li>
  * </ul>
  */
 public final class ParallelCsvScanner {
@@ -113,78 +118,122 @@ public final class ParallelCsvScanner {
     // ======================================================================
 
     public static final class ScanResult {
-        /** Per-thread chunk arrays. For the disk path, this is a single chunk. Null for bucket mode. */
-        public final double[][] xsChunks;
-        public final double[][] ysChunks;
-        public final long[][] offsetsChunks;
-        /** Per-thread tile ID chunks — parallel to xs/ys/offsets chunks. Null for bucket mode. */
-        public final int[][] tileIdChunks;
-        /** Number of valid elements in each chunk. Null for bucket mode. */
-        public final int[] chunkSizes;
 
         public final int validCount;
         public final long maxRowLength;
 
         /** Per-tile counts (index = tile index, value = number of points). */
         public final int[] tileCounts;
-
-        /**
-         * Per-tile, per-measure stats: [tileIndex][measureIndex].
-         * An entry is null if no non-NaN values were seen for that measure on that tile.
-         */
+        /** Per-tile, per-measure stats: [tileIndex][measureIndex]. Null if no non-NaN values for that cell. */
         public final StatsAccumulator[][] tileStats;
-
         /** Per-tile, per-measure processed point counts (includes NaN). */
         public final int[][] tileStatsPointCounts;
-
         /** Scan path used: "in-memory", "disk-streaming", or "bucket-streaming". */
         public final String scanPath;
 
-        // ---- Bucket mode fields (non-null only when bucketMode=true) ----
+        // ---- Path A: in-memory heap chunks (null for paths B and C) ----
+
+        /** Per-thread chunk arrays on heap. */
+        public final double[][] xsChunks;
+        public final double[][] ysChunks;
+        public final long[][] offsetsChunks;
+        public final int[][] tileIdChunks;
+        public final int[] chunkSizes;
+
+        // ---- Path B: disk-streaming per-thread files (null for paths A and C) ----
+
+        /** Per-thread xs temp file paths. */
+        public final Path[] diskXsFiles;
+        public final Path[] diskYsFiles;
+        public final Path[] diskOffsetsFiles;
+        public final Path[] diskTileIdFiles;
+        /** Number of valid elements per thread (parallel to disk*Files). */
+        public final int[] diskChunkSizes;
+
+        // ---- Path C: bucket-streaming (null for paths A and B) ----
 
         /** When true, point data is in per-thread per-bucket files for cache-friendly mmap scatter. */
         public final boolean bucketMode;
         /** Directory containing bucket files: scan_t{t}_b{k}.bin */
         public final Path bucketDir;
-        /** Number of buckets (power of 2). */
         public final int numBuckets;
-        /** Tiles per bucket: ceil(numTiles / numBuckets). */
         public final int tilesPerBucket;
-        /** Number of scan threads (= number of per-bucket files to read). */
         public final int numScanThreads;
 
+        /** Path A constructor: heap chunks. */
         ScanResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
-                   int[][] tileIdChunks,
-                   int[] chunkSizes, int validCount, long maxRowLength,
-                   int[] tileCounts, StatsAccumulator[][] tileStats,
-                   int[][] tileStatsPointCounts,
+                   int[][] tileIdChunks, int[] chunkSizes,
+                   int validCount, long maxRowLength,
+                   int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
                    String scanPath) {
-            this(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
-                 validCount, maxRowLength, tileCounts, tileStats, tileStatsPointCounts,
-                 scanPath,
-                 false, null, 0, 0, 0);
-        }
-
-        ScanResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
-                   int[][] tileIdChunks,
-                   int[] chunkSizes, int validCount, long maxRowLength,
-                   int[] tileCounts, StatsAccumulator[][] tileStats,
-                   int[][] tileStatsPointCounts,
-                   String scanPath,
-                   boolean bucketMode, Path bucketDir, int numBuckets,
-                   int tilesPerBucket, int numScanThreads) {
-            this.xsChunks = xsChunks;
-            this.ysChunks = ysChunks;
-            this.offsetsChunks = offsetsChunks;
-            this.tileIdChunks = tileIdChunks;
-            this.chunkSizes = chunkSizes;
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
             this.tileStats = tileStats;
             this.tileStatsPointCounts = tileStatsPointCounts;
             this.scanPath = scanPath;
-            this.bucketMode = bucketMode;
+            // Path A fields
+            this.xsChunks = xsChunks;
+            this.ysChunks = ysChunks;
+            this.offsetsChunks = offsetsChunks;
+            this.tileIdChunks = tileIdChunks;
+            this.chunkSizes = chunkSizes;
+            // Other paths null
+            this.diskXsFiles = null; this.diskYsFiles = null;
+            this.diskOffsetsFiles = null; this.diskTileIdFiles = null;
+            this.diskChunkSizes = null;
+            this.bucketMode = false; this.bucketDir = null;
+            this.numBuckets = 0; this.tilesPerBucket = 0; this.numScanThreads = 0;
+        }
+
+        /** Path B constructor: per-thread disk files. */
+        ScanResult(Path[] diskXsFiles, Path[] diskYsFiles, Path[] diskOffsetsFiles,
+                   Path[] diskTileIdFiles, int[] diskChunkSizes,
+                   int validCount, long maxRowLength,
+                   int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
+                   String scanPath) {
+            this.validCount = validCount;
+            this.maxRowLength = maxRowLength;
+            this.tileCounts = tileCounts;
+            this.tileStats = tileStats;
+            this.tileStatsPointCounts = tileStatsPointCounts;
+            this.scanPath = scanPath;
+            // Path A fields null
+            this.xsChunks = null; this.ysChunks = null;
+            this.offsetsChunks = null; this.tileIdChunks = null;
+            this.chunkSizes = null;
+            // Path B fields
+            this.diskXsFiles = diskXsFiles;
+            this.diskYsFiles = diskYsFiles;
+            this.diskOffsetsFiles = diskOffsetsFiles;
+            this.diskTileIdFiles = diskTileIdFiles;
+            this.diskChunkSizes = diskChunkSizes;
+            // Path C null
+            this.bucketMode = false; this.bucketDir = null;
+            this.numBuckets = 0; this.tilesPerBucket = 0; this.numScanThreads = 0;
+        }
+
+        /** Path C constructor: bucket mode. */
+        ScanResult(int validCount, long maxRowLength,
+                   int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
+                   String scanPath,
+                   Path bucketDir, int numBuckets, int tilesPerBucket, int numScanThreads) {
+            this.validCount = validCount;
+            this.maxRowLength = maxRowLength;
+            this.tileCounts = tileCounts;
+            this.tileStats = tileStats;
+            this.tileStatsPointCounts = tileStatsPointCounts;
+            this.scanPath = scanPath;
+            // Path A null
+            this.xsChunks = null; this.ysChunks = null;
+            this.offsetsChunks = null; this.tileIdChunks = null;
+            this.chunkSizes = null;
+            // Path B null
+            this.diskXsFiles = null; this.diskYsFiles = null;
+            this.diskOffsetsFiles = null; this.diskTileIdFiles = null;
+            this.diskChunkSizes = null;
+            // Path C fields
+            this.bucketMode = true;
             this.bucketDir = bucketDir;
             this.numBuckets = numBuckets;
             this.tilesPerBucket = tilesPerBucket;
@@ -237,7 +286,13 @@ public final class ParallelCsvScanner {
         long estimatedPointData = (24L + 2L * IndexConfig.TILE_ID_BYTES) * totalCapacity;
         long estimatedMetadata = (long) numThreads * (long) numTiles * (24L + 76L * measureCount);
         long estimatedPeak = estimatedPointData + estimatedMetadata;
-        boolean useDiskScan = estimatedPeak > (long) (maxHeap * 0.85);
+        long estimatedPartitionPeak = 36L * totalCapacity; // 3 arrays + 1 new + tileIds during scatter
+
+        // Use disk if EITHER the scan peak or the partition peak won't fit.
+        // This ensures the disk-streaming path is always used when partition
+        // would need to spill, avoids the heap→disk→heap→disk round-trip.
+        boolean useDiskScan = estimatedPeak > (long) (maxHeap * 0.85)
+                || estimatedPartitionPeak > (long) (maxHeap * 0.85);
 
         // Determine if mmap will be needed (steady-state point data > 85% heap)
         long estimatedSteadyState = 24L * totalCapacity;
@@ -269,12 +324,13 @@ public final class ParallelCsvScanner {
         final int fNumBuckets = numBuckets;
         final int fTilesPerBucket = tilesPerBucket;
 
-        LOG.info("Parallel scan: {} threads, {} scan path, estimated peak={} MB (point data={} MB, metadata={} MB), maxHeap={} MB{}",
+        LOG.info("Parallel scan: {} threads, {} scan path, estimated peak={} MB (point data={} MB, metadata={} MB, partition={}), maxHeap={} MB{}",
                 numThreads,
                 bucket ? "bucket-streaming" : (useDiskScan ? "disk-streaming" : "in-memory"),
                 estimatedPeak / (1024 * 1024),
                 estimatedPointData / (1024 * 1024),
                 estimatedMetadata / (1024 * 1024),
+                estimatedPartitionPeak / (1024 * 1024),
                 maxHeap / (1024 * 1024),
                 bucket ? String.format(", buckets=%d, tilesPerBucket=%d", numBuckets, tilesPerBucket) : "");
 
@@ -324,18 +380,19 @@ public final class ParallelCsvScanner {
         LOG.info("Parallel scan complete: {} valid points in {} s",
                 totalValid, String.format("%.3f", scanSec));
 
-        // 5. Merge results
+        // 5. Merge results (stats only for disk/bucket paths; zero-copy for in-memory)
         long t1 = System.nanoTime();
         ScanResult result;
         String scanPath;
         if (bucket) {
-            // Bucket path: no merge needed for point data — files stay on disk
             scanPath = "bucket-streaming";
             result = buildBucketResult(results, totalValid, globalMaxRowLen,
                     numBuckets, tilesPerBucket, scanPath);
         } else if (useDiskScan) {
+            // Path B: keep per-thread files for direct scatter during partition.
+            // Only merge per-tile stats here — no point data is loaded to heap.
             scanPath = "disk-streaming";
-            result = mergeDisk(results, totalValid, globalMaxRowLen, scanPath);
+            result = buildDiskChunkResult(results, totalValid, globalMaxRowLen, scanPath);
         } else {
             scanPath = "in-memory";
             result = adoptChunks(results, totalValid, globalMaxRowLen, scanPath);
@@ -697,12 +754,9 @@ public final class ParallelCsvScanner {
         int[][] globalPointCounts = new int[numTiles][measureCount];
         mergePerTileStats(results, globalStats, globalPointCounts);
 
-        return new ScanResult(
-                null, null, null, null, null,
-                totalValid, maxRowLen,
+        return new ScanResult(totalValid, maxRowLen,
                 globalCounts, globalStats, globalPointCounts,
                 scanPath,
-                true,  // bucketMode
                 tmpDir, numBuckets, tilesPerBucket, results.length);
     }
 
@@ -782,74 +836,46 @@ public final class ParallelCsvScanner {
     }
 
     // ======================================================================
-    //  Merge: disk-streaming path
+    //  Merge: disk-streaming path — keep file references, merge stats only
     // ======================================================================
 
-    private ScanResult mergeDisk(ChunkResult[] results, int totalValid, long maxRowLen,
-                                 String scanPath) throws IOException {
-        try {
-            // Merge xs from disk
-            double[] globalXs = new double[totalValid];
-            int offset = 0;
-            for (ChunkResult cr : results) {
-                if (cr.validCount > 0) {
-                    readDoublesFromFile(cr.tmpXs, globalXs, offset, cr.validCount);
-                }
-                offset += cr.validCount;
-                safeDelete(cr.tmpXs);
-                cr.tmpXs = null;
-            }
+    /**
+     * Builds a ScanResult for the disk-streaming path (Path B).
+     * Point data stays in per-thread temp files; only per-tile stats are merged.
+     * The file paths are passed through to SharedPointStore for direct scatter
+     * during partition — avoiding the old mergeDisk heap round-trip.
+     */
+    private ScanResult buildDiskChunkResult(ChunkResult[] results, int totalValid,
+                                            long maxRowLen, String scanPath) {
+        int numChunks = results.length;
+        Path[] xsFiles = new Path[numChunks];
+        Path[] ysFiles = new Path[numChunks];
+        Path[] offsetsFiles = new Path[numChunks];
+        Path[] tileIdFiles = new Path[numChunks];
+        int[] chunkSizes = new int[numChunks];
 
-            // Merge ys from disk
-            double[] globalYs = new double[totalValid];
-            offset = 0;
-            for (ChunkResult cr : results) {
-                if (cr.validCount > 0) {
-                    readDoublesFromFile(cr.tmpYs, globalYs, offset, cr.validCount);
-                }
-                offset += cr.validCount;
-                safeDelete(cr.tmpYs);
-                cr.tmpYs = null;
-            }
-
-            // Merge offsets from disk
-            long[] globalOffsets = new long[totalValid];
-            offset = 0;
-            for (ChunkResult cr : results) {
-                if (cr.validCount > 0) {
-                    readLongsFromFile(cr.tmpOffsets, globalOffsets, offset, cr.validCount);
-                }
-                offset += cr.validCount;
-                safeDelete(cr.tmpOffsets);
-                cr.tmpOffsets = null;
-            }
-
-            // Merge tileIds from disk
-            int[] globalTileIds = new int[totalValid];
-            offset = 0;
-            for (ChunkResult cr : results) {
-                if (cr.validCount > 0) {
-                    readIntsFromFile(cr.tmpTileIds, globalTileIds, offset, cr.validCount);
-                }
-                offset += cr.validCount;
-                safeDelete(cr.tmpTileIds);
-                cr.tmpTileIds = null;
-            }
-
-            return buildResult(
-                    new double[][] { globalXs }, new double[][] { globalYs },
-                    new long[][] { globalOffsets }, new int[][] { globalTileIds },
-                    new int[] { totalValid },
-                    totalValid, maxRowLen, results, scanPath);
-        } finally {
-            // Cleanup any remaining temp files on error
-            for (ChunkResult cr : results) {
-                safeDelete(cr.tmpXs);
-                safeDelete(cr.tmpYs);
-                safeDelete(cr.tmpOffsets);
-                safeDelete(cr.tmpTileIds);
-            }
+        for (int i = 0; i < numChunks; i++) {
+            ChunkResult cr = results[i];
+            xsFiles[i] = cr.tmpXs;
+            ysFiles[i] = cr.tmpYs;
+            offsetsFiles[i] = cr.tmpOffsets;
+            tileIdFiles[i] = cr.tmpTileIds;
+            chunkSizes[i] = cr.validCount;
+            // Null out so cleanup in error paths doesn't double-delete
+            cr.tmpXs = null;
+            cr.tmpYs = null;
+            cr.tmpOffsets = null;
+            cr.tmpTileIds = null;
         }
+
+        int[] globalCounts = mergePerTileCounts(results);
+        StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
+        int[][] globalPointCounts = new int[numTiles][measureCount];
+        mergePerTileStats(results, globalStats, globalPointCounts);
+
+        return new ScanResult(xsFiles, ysFiles, offsetsFiles, tileIdFiles, chunkSizes,
+                totalValid, maxRowLen,
+                globalCounts, globalStats, globalPointCounts, scanPath);
     }
 
     // ======================================================================
@@ -900,76 +926,8 @@ public final class ParallelCsvScanner {
     }
 
     // ======================================================================
-    //  Disk I/O helpers
+    //  Utilities
     // ======================================================================
-
-    private static void readDoublesFromFile(Path path, double[] dest, int destOffset, int count) throws IOException {
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer buf = ByteBuffer.allocate(Math.min(SPILL_BUF, count * 8)).order(ByteOrder.nativeOrder());
-            int remaining = count;
-            int pos = destOffset;
-            while (remaining > 0) {
-                buf.clear();
-                int toRead = Math.min(remaining, buf.capacity() / 8);
-                buf.limit(toRead * 8);
-                int bytesRead = 0;
-                while (buf.hasRemaining()) {
-                    int n = ch.read(buf);
-                    if (n < 0) break;
-                    bytesRead += n;
-                }
-                buf.flip();
-                while (buf.remaining() >= 8) {
-                    dest[pos++] = buf.getDouble();
-                }
-                remaining -= toRead;
-            }
-        }
-    }
-
-    private static void readLongsFromFile(Path path, long[] dest, int destOffset, int count) throws IOException {
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer buf = ByteBuffer.allocate(Math.min(SPILL_BUF, count * 8)).order(ByteOrder.nativeOrder());
-            int remaining = count;
-            int pos = destOffset;
-            while (remaining > 0) {
-                buf.clear();
-                int toRead = Math.min(remaining, buf.capacity() / 8);
-                buf.limit(toRead * 8);
-                while (buf.hasRemaining()) {
-                    int n = ch.read(buf);
-                    if (n < 0) break;
-                }
-                buf.flip();
-                while (buf.remaining() >= 8) {
-                    dest[pos++] = buf.getLong();
-                }
-                remaining -= toRead;
-            }
-        }
-    }
-
-    private static void readIntsFromFile(Path path, int[] dest, int destOffset, int count) throws IOException {
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer buf = ByteBuffer.allocate(Math.min(SPILL_BUF, count * Integer.BYTES)).order(ByteOrder.nativeOrder());
-            int remaining = count;
-            int pos = destOffset;
-            while (remaining > 0) {
-                buf.clear();
-                int toRead = Math.min(remaining, buf.capacity() / Integer.BYTES);
-                buf.limit(toRead * Integer.BYTES);
-                while (buf.hasRemaining()) {
-                    int n = ch.read(buf);
-                    if (n < 0) break;
-                }
-                buf.flip();
-                while (buf.remaining() >= Integer.BYTES) {
-                    dest[pos++] = buf.getInt();
-                }
-                remaining -= toRead;
-            }
-        }
-    }
 
     private static void safeDelete(Path p) {
         if (p != null) {

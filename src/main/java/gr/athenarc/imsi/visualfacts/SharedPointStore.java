@@ -21,9 +21,11 @@ import gr.athenarc.imsi.visualfacts.config.IndexConfig;
  * <p>
  * Lifecycle:
  * <ol>
- *   <li>Phase 1 (CSV scan): points written sequentially via {@link #set(int, double, double, long)}</li>
+ *   <li>Phase 1 (CSV scan): data arrives as T heap chunks (Path A) or T×4 temp
+ *       files (Path B) or B×T bucket files (Path C)</li>
  *   <li>Phase 1.5: prefix-sums computed from per-tile counts</li>
- *   <li>Phase 2 ({@link #partition}): per-array sequential scatter (stable, cache-friendly)</li>
+ *   <li>Phase 2 ({@link #partition}): parallel histogram scatter into contiguous
+ *       arrays (Paths A/B) or bucket-by-bucket scatter into mmap (Path C)</li>
  *   <li>Phase 3: each tile wired to its slice via {@link Tile#setSlice}</li>
  * </ol>
  */
@@ -50,14 +52,17 @@ public class SharedPointStore implements AutoCloseable {
     /**
      * Tile IDs for partition — set via constructor (from scan) or
      * {@link #takeTileIds} before {@link #partition},
-     * cleared internally after partition completes.  Holding tileIds as a field
-     * (rather than a method parameter) allows the spill path to null and GC the
-     * array before the final scatter pass, staying under G1's reserve limit.
+     * cleared internally after partition completes.
      */
     private int[] tileIds;
 
-    /** Whether the most recent {@link #partition} call used disk-spill. */
-    private boolean partitionSpilled;
+    // ---- Disk-chunk mode: point data in per-thread scan files (Path B) ----
+    private boolean diskChunkMode;
+    private Path[] diskXsFiles;
+    private Path[] diskYsFiles;
+    private Path[] diskOffsetsFiles;
+    private Path[] diskTileIdFiles;
+    private int[] diskChunkSizes;
 
     // ---- Mmap mode: point data backed by memory-mapped files ----
     private boolean mmapMode;
@@ -73,30 +78,10 @@ public class SharedPointStore implements AutoCloseable {
     private int tilesPerBucket;
     private int numScanThreads;
 
-    /** Which partition path was used: "in-memory", "disk-spill", or "bucket-mmap". */
+    /** Which partition path was used: "in-memory", "disk-scatter", or "bucket-mmap". */
     private String partitionPath;
 
-    public boolean didPartitionSpill() { return partitionSpilled; }
-
     public String getPartitionPath() { return partitionPath; }
-
-    public SharedPointStore(int capacity) {
-        this.capacity = capacity;
-        this.xs = new double[capacity];
-        this.ys = new double[capacity];
-        this.offsets = new long[capacity];
-    }
-
-    /**
-     * Creates a store by adopting pre-built arrays (used by parallel scanner).
-     * The caller MUST NOT retain references to the passed arrays.
-     */
-    public SharedPointStore(double[] xs, double[] ys, long[] offsets, int validCount) {
-        this.xs = xs;
-        this.ys = ys;
-        this.offsets = offsets;
-        this.capacity = validCount;
-    }
 
     /**
      * Creates a store from chunked per-thread arrays (zero-copy adoption).
@@ -156,7 +141,27 @@ public class SharedPointStore implements AutoCloseable {
         return store;
     }
 
-    /** Private no-arg constructor for factory method. */
+    /**
+     * Creates a store for disk-chunk mode (Path B).  Point data resides in
+     * per-thread temp files produced by the disk-streaming scanner.
+     * {@link #partition} scatters directly from these files — no heap merge.
+     */
+    public static SharedPointStore createForDiskChunks(
+            int capacity, Path[] diskXsFiles, Path[] diskYsFiles,
+            Path[] diskOffsetsFiles, Path[] diskTileIdFiles,
+            int[] diskChunkSizes) {
+        SharedPointStore store = new SharedPointStore();
+        store.capacity = capacity;
+        store.diskChunkMode = true;
+        store.diskXsFiles = diskXsFiles;
+        store.diskYsFiles = diskYsFiles;
+        store.diskOffsetsFiles = diskOffsetsFiles;
+        store.diskTileIdFiles = diskTileIdFiles;
+        store.diskChunkSizes = diskChunkSizes;
+        return store;
+    }
+
+    /** Private no-arg constructor for factory methods. */
     private SharedPointStore() {}
 
     public int getCapacity() { return capacity; }
@@ -185,32 +190,25 @@ public class SharedPointStore implements AutoCloseable {
         return pos >= 0 ? pos : -pos - 2;
     }
 
-    /** Writes a point at position {@code i} (used during Phase 1 sequential scan). */
-    public void set(int i, double x, double y, long offset) {
-        xs[i] = x;
-        ys[i] = y;
-        offsets[i] = offset;
-    }
-
     /**
-     * Takes ownership of the tileIds array.  The caller MUST null its own
-     * reference after this call so that the array can be GC'd from inside
-     * {@link #partition} when the spill path needs the memory.
+     * Takes ownership of the tileIds array for Path A in-memory partition.
+     * The caller should null its own reference after this call.
      */
     public void takeTileIds(int[] ids) {
         this.tileIds = ids;
     }
 
     /**
-     * Stable per-array sequential scatter partition.
+     * Parallel histogram scatter partition.
      * After completion, tile {@code t}'s points occupy
      * {@code [starts[t], starts[t] + counts[t])}.
      * <p>
-     * Requires {@link #takeTileIds} to have been called first.
-     * Automatically selects between a pure in-memory path (zero overhead) and a
-     * disk-spill path when the temporary array allocation would exceed available
-     * heap.  The spill path also frees tileIds before the final scatter to stay
-     * within G1GC's usable heap.
+     * Dispatches to the appropriate path:
+     * <ul>
+     *   <li>Path C (bucket-mmap): scatter bucket files into mmap</li>
+     *   <li>Path B (disk-scatter): parallel scatter from per-thread scan files</li>
+     *   <li>Path A (in-memory): parallel histogram scatter from heap chunks</li>
+     * </ul>
      *
      * @param n         number of valid points (elements [0, n) are partitioned)
      * @param starts    prefix-sum array: starts[t] = first index for tile t
@@ -220,44 +218,25 @@ public class SharedPointStore implements AutoCloseable {
         if (mmapMode && bucketMode) {
             LOG.info("Partition using bucket-mmap path for {} points ({} buckets)", n, numBuckets);
             partitionBucketsToMmap(n, starts, numTiles);
-            partitionSpilled = true;
             partitionPath = "bucket-mmap";
+            return;
+        }
+
+        if (diskChunkMode) {
+            LOG.info("Partition using disk-scatter path for {} points ({} chunks)", n, diskChunkSizes.length);
+            partitionFromDiskChunks(n, starts, numTiles);
+            partitionPath = "disk-scatter";
             return;
         }
 
         if (this.tileIds == null) {
             throw new IllegalStateException("takeTileIds() must be called before partition()");
         }
-
-        // Peak memory during in-memory partition:
-        //   3 existing arrays (24n bytes) + 1 new array (8n) + tileIds (TILE_ID_BYTES * n)
-        long peakInMemory = 4L * n * 8 + (long) n * IndexConfig.TILE_ID_BYTES;
-        long maxHeap = Runtime.getRuntime().maxMemory();
-
-        if (peakInMemory > (long) (maxHeap * 0.85)) {
-            LOG.info("Partition peak ~{} GB exceeds 85% of max heap {} GB; using disk-spill path",
-                    String.format("%.1f", peakInMemory / (1024.0 * 1024 * 1024)),
-                    String.format("%.1f", maxHeap / (1024.0 * 1024 * 1024)));
-            partitionWithSpill(n, starts, numTiles);
-            partitionSpilled = true;
-            partitionPath = "disk-spill";
-        } else {
-            partitionInMemory(n, starts, numTiles);
-            partitionSpilled = false;
-            partitionPath = "in-memory";
-        }
-        this.tileIds = null; // no longer needed
-    }
-
-    /** Dispatches to chunked or contiguous in-memory partition. */
-    private void partitionInMemory(int n, int[] starts, int numTiles) {
-        final int[] tid = this.tileIds;
-        if (chunked) {
-            partitionChunkedInMemory(n, starts, numTiles, tid);
-        } else {
-            partitionContiguousInMemory(n, starts, numTiles, tid);
-        }
+        LOG.info("Partition using in-memory path for {} points ({} chunks)", n, xsChunks.length);
+        partitionChunkedInMemory(n, starts, numTiles, this.tileIds);
+        this.tileIds = null;
         this.capacity = n;
+        partitionPath = "in-memory";
     }
 
     /**
@@ -345,360 +324,210 @@ public class SharedPointStore implements AutoCloseable {
         return dest;
     }
 
-    /** Original contiguous scatter partition (used by legacy non-parallel path). */
-    private void partitionContiguousInMemory(int n, int[] starts, int numTiles, int[] tid) {
-        int[] cursors;
-
-        // Pass 1: scatter xs
-        cursors = Arrays.copyOf(starts, numTiles);
-        double[] newXs = new double[n];
-        for (int i = 0; i < n; i++) {
-            newXs[cursors[tid[i]]++] = xs[i];
-        }
-        this.xs = newXs;
-
-        // Pass 2: scatter ys
-        cursors = Arrays.copyOf(starts, numTiles);
-        double[] newYs = new double[n];
-        for (int i = 0; i < n; i++) {
-            newYs[cursors[tid[i]]++] = ys[i];
-        }
-        this.ys = newYs;
-
-        // Pass 3: scatter offsets
-        cursors = Arrays.copyOf(starts, numTiles);
-        long[] newOffsets = new long[n];
-        for (int i = 0; i < n; i++) {
-            newOffsets[cursors[tid[i]]++] = offsets[i];
-        }
-        this.offsets = newOffsets;
-    }
+    // ======================================================================
+    //  Path B: parallel scatter from per-thread disk files
+    // ======================================================================
 
     /**
-     * Disk-spill partition: spills each array to its own temp file, with
-     * explicit GC between each so that G1 reclaims 4 GB progressively.
-     * Then scatters each array from disk into a freshly allocated partitioned array.
-     * <p>
-     * Key: tileIds is also spilled to disk and freed before the 3rd scatter,
-     * so the peak during any single scatter never exceeds xs + ys + dest = 24N,
-     * staying safely under G1's 10% reserve at 14 GB max heap.
-     * <p>
-     * Heap trace for N points (each array = 8N bytes, tileIds = TILE_ID_BYTES × N):
-     * <pre>
-     *   Before:  xs + ys + offsets + tileIds             = (24 + TID)N
-     *   Spill xs,  null, gc:  ys + offsets + tileIds     = (16 + TID)N
-     *   Spill ys,  null, gc:  offsets + tileIds          = (8 + TID)N
-     *   Spill off, null, gc:  tileIds                    = TID × N   ← trough
-     *   Scatter xs (tileIds in memory):  xs_new + tileIds = (8 + TID)N
-     *   Scatter ys (tileIds in memory):  xs + ys + tileIds= (16 + TID)N
-     *   Spill tileIds, null, gc:         xs + ys          = 16N
-     *   Scatter offsets (tileIds from disk): xs+ys+off    = 24N ← peak
-     * </pre>
-     * where TID = {@link IndexConfig#TILE_ID_BYTES}.
+     * Partitions from per-thread scan files (Path B).
+     * <ol>
+     *   <li>Load tileIds from T per-thread files into T int[] chunks (4N bytes).</li>
+     *   <li>Per-chunk tile histograms + prefix-sum → disjoint write cursors.</li>
+     *   <li>Scatter xs in parallel: each thread reads its file, writes to dest.</li>
+     *   <li>Scatter ys the same way.</li>
+     *   <li>Scatter offsets the same way, then free tileId chunks.</li>
+     * </ol>
+     * Peak heap: tileIds(4N) + 2 completed arrays(16N) + 1 being built(8N) = 28N.
      */
-    private void partitionWithSpill(int n, int[] starts, int numTiles) {
-        Path tmpXs = null, tmpYs = null, tmpOff = null, tmpTid = null;
+    private void partitionFromDiskChunks(int n, int[] starts, int numTiles) {
+        final int numChunks = diskChunkSizes.length;
+
         try {
-            tmpXs  = Files.createTempFile("valinor_xs_",  ".bin");
-            tmpYs  = Files.createTempFile("valinor_ys_",  ".bin");
-            tmpOff = Files.createTempFile("valinor_off_", ".bin");
-            tmpTid = Files.createTempFile("valinor_tid_", ".bin");
-
+            // Step 1: load tileIds from per-thread files (parallel)
             long t0 = System.nanoTime();
+            int[][] tileIdChunks = new int[numChunks][];
+            final int[][] tidChunks = tileIdChunks;
+            final Path[] tidFiles = diskTileIdFiles;
+            final int[] chunkSizes = diskChunkSizes;
+            IOException[] loadErr = {null};
+            IntStream.range(0, numChunks).parallel().forEach(c -> {
+                try {
+                    tidChunks[c] = readIntsFromFile(tidFiles[c], chunkSizes[c]);
+                } catch (IOException e) {
+                    synchronized (loadErr) { if (loadErr[0] == null) loadErr[0] = e; }
+                }
+            });
+            if (loadErr[0] != null) throw loadErr[0];
+            LOG.debug("Loaded tileIds from {} files in {} s",
+                    numChunks, String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase A: Spill each data array to its own file, GC between each.
-            if (chunked) {
-                spillDoubleChunksToFile(this.xsChunks, this.chunkStarts, tmpXs);
-                this.xsChunks = null;
-            } else {
-                spillDoubleArrayToFile(this.xs, n, tmpXs);
-                this.xs = null;
+            // Step 2: per-chunk tile counts
+            int[][] chunkTileCounts = new int[numChunks][numTiles];
+            for (int c = 0; c < numChunks; c++) {
+                int[] tid = tileIdChunks[c];
+                int cSize = diskChunkSizes[c];
+                int[] counts = chunkTileCounts[c];
+                for (int j = 0; j < cSize; j++) {
+                    counts[tid[j]]++;
+                }
             }
-            forceGC("xs");
 
-            if (chunked) {
-                spillDoubleChunksToFile(this.ysChunks, this.chunkStarts, tmpYs);
-                this.ysChunks = null;
-            } else {
-                spillDoubleArrayToFile(this.ys, n, tmpYs);
-                this.ys = null;
+            // Step 3: per-chunk per-tile starting cursors (prefix sum across chunks)
+            int[][] chunkTileStarts = new int[numChunks][numTiles];
+            for (int t = 0; t < numTiles; t++) {
+                chunkTileStarts[0][t] = starts[t];
+                for (int c = 1; c < numChunks; c++) {
+                    chunkTileStarts[c][t] = chunkTileStarts[c - 1][t] + chunkTileCounts[c - 1][t];
+                }
             }
-            forceGC("ys");
 
-            if (chunked) {
-                spillLongChunksToFile(this.offsetsChunks, this.chunkStarts, tmpOff);
-                this.offsetsChunks = null;
-                this.chunkStarts = null;
-                this.chunked = false;
-            } else {
-                spillLongArrayToFile(this.offsets, n, tmpOff);
-                this.offsets = null;
-            }
-            forceGC("offsets");
-
-            LOG.debug("Spilled all data arrays to disk in {} s",
+            // Step 4: scatter xs from per-thread files in parallel
+            t0 = System.nanoTime();
+            this.xs = scatterDoublesFromDiskParallel(diskXsFiles, diskChunkSizes, n,
+                    numChunks, chunkTileStarts, tileIdChunks);
+            LOG.debug("Scattered xs from disk in {} s",
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase B: Scatter xs and ys using in-memory tileIds.
+            // Step 5: scatter ys
             t0 = System.nanoTime();
-            this.xs = scatterDoublesFromFile(tmpXs, n, this.tileIds, starts, numTiles);
-            this.ys = scatterDoublesFromFile(tmpYs, n, this.tileIds, starts, numTiles);
-            LOG.debug("Scattered xs + ys from disk in {} s",
+            this.ys = scatterDoublesFromDiskParallel(diskYsFiles, diskChunkSizes, n,
+                    numChunks, chunkTileStarts, tileIdChunks);
+            LOG.debug("Scattered ys from disk in {} s",
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase C: Spill tileIds to disk and free it before 3rd scatter.
-            spillIntArrayToFile(this.tileIds, n, tmpTid);
-            this.tileIds = null;
-            forceGC("tileIds");
-
-            // Phase D: Scatter offsets reading tileIds from disk in tandem.
+            // Step 6: scatter offsets, then free tileIds
             t0 = System.nanoTime();
-            this.offsets = scatterLongsWithDiskTileIds(tmpOff, tmpTid, n, starts, numTiles);
-            LOG.debug("Scattered offsets (tileIds from disk) in {} s",
+            this.offsets = scatterLongsFromDiskParallel(diskOffsetsFiles, diskChunkSizes, n,
+                    numChunks, chunkTileStarts, tileIdChunks);
+            //noinspection UnusedAssignment
+            tileIdChunks = null; // free 4N bytes
+            LOG.debug("Scattered offsets from disk in {} s",
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
             this.capacity = n;
 
         } catch (IOException e) {
-            throw new RuntimeException("Partition disk-spill I/O failed", e);
+            throw new RuntimeException("Disk-chunk partition I/O failed", e);
         } finally {
-            safeDelete(tmpXs);
-            safeDelete(tmpYs);
-            safeDelete(tmpOff);
-            safeDelete(tmpTid);
+            // Clean up temp files
+            for (Path p : diskXsFiles) safeDelete(p);
+            for (Path p : diskYsFiles) safeDelete(p);
+            for (Path p : diskOffsetsFiles) safeDelete(p);
+            for (Path p : diskTileIdFiles) safeDelete(p);
+            diskXsFiles = null;
+            diskYsFiles = null;
+            diskOffsetsFiles = null;
+            diskTileIdFiles = null;
+            diskChunkMode = false;
         }
     }
 
-    /** Calls System.gc() twice and logs heap state — two passes ensure humongous reclaim. */
-    private static void forceGC(String label) {
-        System.gc();
-        System.gc(); // second pass catches objects promoted during first
-        Runtime rt = Runtime.getRuntime();
-        long used = (rt.totalMemory() - rt.freeMemory()) / (1024L * 1024);
-        long max  = rt.maxMemory() / (1024L * 1024);
-        LOG.debug("After freeing {}: heap used={} MB / max={} MB", label, used, max);
+    /** Reads {@code count} ints from a binary file (native byte order). */
+    private static int[] readIntsFromFile(Path file, int count) throws IOException {
+        int[] arr = new int[count];
+        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
+            ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE).order(ByteOrder.nativeOrder());
+            int pos = 0;
+            while (pos < count) {
+                buf.clear();
+                int needed = (int) Math.min(SPILL_BUF_SIZE, (long) (count - pos) * Integer.BYTES);
+                buf.limit(needed);
+                while (buf.hasRemaining()) {
+                    if (ch.read(buf) < 0) throw new IOException("TileId file truncated at element " + pos);
+                }
+                buf.flip();
+                int chunk = buf.remaining() / Integer.BYTES;
+                for (int i = 0; i < chunk; i++) {
+                    arr[pos + i] = buf.getInt();
+                }
+                pos += chunk;
+            }
+        }
+        return arr;
+    }
+
+    /**
+     * Parallel scatter of doubles from T per-thread files.
+     * Each thread reads its file sequentially and writes to disjoint dest regions.
+     */
+    private static double[] scatterDoublesFromDiskParallel(
+            Path[] files, int[] chunkSizes, int n, int numChunks,
+            int[][] chunkTileStarts, int[][] tileIdChunks) throws IOException {
+        double[] dest = new double[n];
+        IOException[] error = {null};
+        IntStream.range(0, numChunks).parallel().forEach(c -> {
+            int cSize = chunkSizes[c];
+            if (cSize == 0) return;
+            try (FileChannel ch = FileChannel.open(files[c], StandardOpenOption.READ)) {
+                int[] cursors = chunkTileStarts[c].clone();
+                int[] tid = tileIdChunks[c];
+                ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE).order(ByteOrder.nativeOrder());
+                int pos = 0;
+                while (pos < cSize) {
+                    buf.clear();
+                    int needed = (int) Math.min(SPILL_BUF_SIZE, (long) (cSize - pos) * 8);
+                    buf.limit(needed);
+                    while (buf.hasRemaining()) {
+                        if (ch.read(buf) < 0) throw new IOException("File truncated at element " + pos);
+                    }
+                    buf.flip();
+                    int chunk = buf.remaining() / 8;
+                    for (int j = 0; j < chunk; j++) {
+                        dest[cursors[tid[pos + j]]++] = buf.getDouble();
+                    }
+                    pos += chunk;
+                }
+            } catch (IOException e) {
+                synchronized (error) { if (error[0] == null) error[0] = e; }
+            }
+        });
+        if (error[0] != null) throw error[0];
+        return dest;
+    }
+
+    /**
+     * Parallel scatter of longs from T per-thread files.
+     * Each thread reads its file sequentially and writes to disjoint dest regions.
+     */
+    private static long[] scatterLongsFromDiskParallel(
+            Path[] files, int[] chunkSizes, int n, int numChunks,
+            int[][] chunkTileStarts, int[][] tileIdChunks) throws IOException {
+        long[] dest = new long[n];
+        IOException[] error = {null};
+        IntStream.range(0, numChunks).parallel().forEach(c -> {
+            int cSize = chunkSizes[c];
+            if (cSize == 0) return;
+            try (FileChannel ch = FileChannel.open(files[c], StandardOpenOption.READ)) {
+                int[] cursors = chunkTileStarts[c].clone();
+                int[] tid = tileIdChunks[c];
+                ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE).order(ByteOrder.nativeOrder());
+                int pos = 0;
+                while (pos < cSize) {
+                    buf.clear();
+                    int needed = (int) Math.min(SPILL_BUF_SIZE, (long) (cSize - pos) * 8);
+                    buf.limit(needed);
+                    while (buf.hasRemaining()) {
+                        if (ch.read(buf) < 0) throw new IOException("File truncated at element " + pos);
+                    }
+                    buf.flip();
+                    int chunk = buf.remaining() / 8;
+                    for (int j = 0; j < chunk; j++) {
+                        dest[cursors[tid[pos + j]]++] = buf.getLong();
+                    }
+                    pos += chunk;
+                }
+            } catch (IOException e) {
+                synchronized (error) { if (error[0] == null) error[0] = e; }
+            }
+        });
+        if (error[0] != null) throw error[0];
+        return dest;
     }
 
     private static void safeDelete(Path p) {
         if (p != null) {
             try { Files.deleteIfExists(p); } catch (IOException ignored) { }
         }
-    }
-
-    // ---- Spill I/O helpers ----
-
-    /** Writes a double[] to a file (sequential, platform byte-order). */
-    private static void spillDoubleArrayToFile(double[] arr, int len, Path file) throws IOException {
-        try (FileChannel ch = FileChannel.open(file,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            writeDoublesToChannel(ch, arr, len);
-        }
-    }
-
-    /** Writes a long[] to a file (sequential, platform byte-order). */
-    private static void spillLongArrayToFile(long[] arr, int len, Path file) throws IOException {
-        try (FileChannel ch = FileChannel.open(file,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            writeLongsToChannel(ch, arr, len);
-        }
-    }
-
-    /** Writes chunked double arrays sequentially to a single file. */
-    private static void spillDoubleChunksToFile(double[][] chunks, int[] chunkStarts, Path file) throws IOException {
-        try (FileChannel ch = FileChannel.open(file,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            for (int c = 0; c < chunks.length; c++) {
-                int cSize = chunkStarts[c + 1] - chunkStarts[c];
-                writeDoublesToChannel(ch, chunks[c], cSize);
-                chunks[c] = null; // free each chunk as we go
-            }
-        }
-    }
-
-    /** Writes chunked long arrays sequentially to a single file. */
-    private static void spillLongChunksToFile(long[][] chunks, int[] chunkStarts, Path file) throws IOException {
-        try (FileChannel ch = FileChannel.open(file,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            for (int c = 0; c < chunks.length; c++) {
-                int cSize = chunkStarts[c + 1] - chunkStarts[c];
-                writeLongsToChannel(ch, chunks[c], cSize);
-                chunks[c] = null;
-            }
-        }
-    }
-
-    /**
-     * Writes an int[] to a file (sequential, platform byte-order).
-     * <p>Uses putInt — assumes TILE_ID_BYTES == Integer.BYTES.
-     * See static assertion in {@link ParallelCsvScanner}.
-     */
-    private static void spillIntArrayToFile(int[] arr, int len, Path file) throws IOException {
-        try (FileChannel ch = FileChannel.open(file,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-            int pos = 0;
-            while (pos < len) {
-                buf.clear();
-                int chunk = Math.min(SPILL_BUF_SIZE / Integer.BYTES, len - pos);
-                for (int i = 0; i < chunk; i++) {
-                    buf.putInt(arr[pos + i]);
-                }
-                buf.flip();
-                while (buf.hasRemaining()) {
-                    ch.write(buf);
-                }
-                pos += chunk;
-            }
-        }
-    }
-
-    /** Writes a double[] sequentially to an open channel. */
-    private static void writeDoublesToChannel(FileChannel ch, double[] arr, int len) throws IOException {
-        ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-        int pos = 0;
-        while (pos < len) {
-            buf.clear();
-            int chunk = Math.min(SPILL_BUF_SIZE / 8, len - pos);
-            for (int i = 0; i < chunk; i++) {
-                buf.putDouble(arr[pos + i]);
-            }
-            buf.flip();
-            while (buf.hasRemaining()) {
-                ch.write(buf);
-            }
-            pos += chunk;
-        }
-    }
-
-    /** Writes a long[] sequentially to an open channel. */
-    private static void writeLongsToChannel(FileChannel ch, long[] arr, int len) throws IOException {
-        ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-        int pos = 0;
-        while (pos < len) {
-            buf.clear();
-            int chunk = Math.min(SPILL_BUF_SIZE / 8, len - pos);
-            for (int i = 0; i < chunk; i++) {
-                buf.putLong(arr[pos + i]);
-            }
-            buf.flip();
-            while (buf.hasRemaining()) {
-                ch.write(buf);
-            }
-            pos += chunk;
-        }
-    }
-
-    /**
-     * Reads N doubles from a file, scattering them into a partitioned array.
-     */
-    private static double[] scatterDoublesFromFile(Path file, int n,
-            int[] tileIds, int[] starts, int numTiles) throws IOException {
-        int[] cursors = Arrays.copyOf(starts, numTiles);
-        double[] dest = new double[n];
-        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
-            ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-            int pos = 0;
-            while (pos < n) {
-                buf.clear();
-                int needed = (int) Math.min(SPILL_BUF_SIZE, (long) (n - pos) * 8);
-                buf.limit(needed);
-                while (buf.hasRemaining()) {
-                    if (ch.read(buf) < 0) throw new IOException("Spill file truncated at element " + pos);
-                }
-                buf.flip();
-                int chunk = buf.remaining() / 8;
-                for (int i = 0; i < chunk; i++) {
-                    dest[cursors[tileIds[pos + i]]++] = buf.getDouble();
-                }
-                pos += chunk;
-            }
-        }
-        return dest;
-    }
-
-    /**
-     * Reads N longs from a file, scattering them into a partitioned array.
-     */
-    private static long[] scatterLongsFromFile(Path file, int n,
-            int[] tileIds, int[] starts, int numTiles) throws IOException {
-        int[] cursors = Arrays.copyOf(starts, numTiles);
-        long[] dest = new long[n];
-        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
-            ByteBuffer buf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-            int pos = 0;
-            while (pos < n) {
-                buf.clear();
-                int needed = (int) Math.min(SPILL_BUF_SIZE, (long) (n - pos) * 8);
-                buf.limit(needed);
-                while (buf.hasRemaining()) {
-                    if (ch.read(buf) < 0) throw new IOException("Spill file truncated at element " + pos);
-                }
-                buf.flip();
-                int chunk = buf.remaining() / 8;
-                for (int i = 0; i < chunk; i++) {
-                    dest[cursors[tileIds[pos + i]]++] = buf.getLong();
-                }
-                pos += chunk;
-            }
-        }
-        return dest;
-    }
-
-    /**
-     * Scatters N longs from {@code srcFile} into a partitioned array, reading
-     * tile IDs from {@code tileIdsFile} in tandem (both files are read
-     * sequentially, one chunk at a time).
-     * <p>
-     * Uses getInt for tile IDs &mdash; assumes TILE_ID_BYTES == Integer.BYTES.
-     * See static assertion in {@link ParallelCsvScanner}.
-     * <p>
-     * Used when tileIds has been freed from heap to stay within G1's usable headroom.
-     */
-    private static long[] scatterLongsWithDiskTileIds(Path srcFile, Path tileIdsFile,
-            int n, int[] starts, int numTiles) throws IOException {
-        int[] cursors = Arrays.copyOf(starts, numTiles);
-        long[] dest = new long[n];
-        try (FileChannel srcCh = FileChannel.open(srcFile, StandardOpenOption.READ);
-             FileChannel tidCh = FileChannel.open(tileIdsFile, StandardOpenOption.READ)) {
-            ByteBuffer srcBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE);
-            // For K source elements (8 bytes each), we need K tileId ints (TILE_ID_BYTES each)
-            ByteBuffer tidBuf = ByteBuffer.allocateDirect(SPILL_BUF_SIZE / (8 / IndexConfig.TILE_ID_BYTES));
-            int pos = 0;
-            while (pos < n) {
-                int chunk = Math.min(SPILL_BUF_SIZE / 8, n - pos);
-
-                // Read source longs
-                srcBuf.clear();
-                srcBuf.limit(chunk * 8);
-                while (srcBuf.hasRemaining()) {
-                    if (srcCh.read(srcBuf) < 0)
-                        throw new IOException("Source file truncated at element " + pos);
-                }
-                srcBuf.flip();
-
-                // Read corresponding tile IDs
-                tidBuf.clear();
-                tidBuf.limit(chunk * IndexConfig.TILE_ID_BYTES);
-                while (tidBuf.hasRemaining()) {
-                    if (tidCh.read(tidBuf) < 0)
-                        throw new IOException("TileIds file truncated at element " + pos);
-                }
-                tidBuf.flip();
-
-                // Scatter
-                for (int i = 0; i < chunk; i++) {
-                    int tid = tidBuf.getInt();
-                    dest[cursors[tid]++] = srcBuf.getLong();
-                }
-                pos += chunk;
-            }
-        }
-        return dest;
     }
 
     /**
