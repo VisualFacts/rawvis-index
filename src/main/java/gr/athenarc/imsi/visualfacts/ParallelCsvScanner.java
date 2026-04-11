@@ -159,6 +159,8 @@ public final class ParallelCsvScanner {
         public final int numBuckets;
         public final int tilesPerBucket;
         public final int numScanThreads;
+        /** Per-thread tile counts for parallel partition: [thread][tileIndex]. Null for paths A and B. */
+        public final int[][] perThreadTileCounts;
 
         /** Path A constructor: heap chunks. */
         ScanResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
@@ -184,6 +186,7 @@ public final class ParallelCsvScanner {
             this.diskChunkSizes = null;
             this.bucketMode = false; this.bucketDir = null;
             this.numBuckets = 0; this.tilesPerBucket = 0; this.numScanThreads = 0;
+            this.perThreadTileCounts = null;
         }
 
         /** Path B constructor: per-thread disk files. */
@@ -211,13 +214,15 @@ public final class ParallelCsvScanner {
             // Path C null
             this.bucketMode = false; this.bucketDir = null;
             this.numBuckets = 0; this.tilesPerBucket = 0; this.numScanThreads = 0;
+            this.perThreadTileCounts = null;
         }
 
         /** Path C constructor: bucket mode. */
         ScanResult(int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
                    String scanPath,
-                   Path bucketDir, int numBuckets, int tilesPerBucket, int numScanThreads) {
+                   Path bucketDir, int numBuckets, int tilesPerBucket, int numScanThreads,
+                   int[][] perThreadTileCounts) {
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
@@ -238,6 +243,7 @@ public final class ParallelCsvScanner {
             this.numBuckets = numBuckets;
             this.tilesPerBucket = tilesPerBucket;
             this.numScanThreads = numScanThreads;
+            this.perThreadTileCounts = perThreadTileCounts;
         }
     }
 
@@ -749,6 +755,12 @@ public final class ParallelCsvScanner {
     private ScanResult buildBucketResult(ChunkResult[] results, int totalValid,
                                          long maxRowLen, int numBuckets, int tilesPerBucket,
                                          String scanPath) {
+        // Preserve per-thread tile counts for parallel partition
+        int[][] perThreadTileCounts = new int[results.length][];
+        for (int t = 0; t < results.length; t++) {
+            perThreadTileCounts[t] = results[t].tileCounts.clone();
+        }
+
         int[] globalCounts = mergePerTileCounts(results);
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
         int[][] globalPointCounts = new int[numTiles][measureCount];
@@ -757,7 +769,8 @@ public final class ParallelCsvScanner {
         return new ScanResult(totalValid, maxRowLen,
                 globalCounts, globalStats, globalPointCounts,
                 scanPath,
-                tmpDir, numBuckets, tilesPerBucket, results.length);
+                tmpDir, numBuckets, tilesPerBucket, results.length,
+                perThreadTileCounts);
     }
 
     /**

@@ -71,7 +71,7 @@ public class SharedPointStore implements AutoCloseable {
     private Path mmapDir;
 
     /** Interleave stride: 3 eight-byte elements per point (x, y, offset). */
-    private static final int MMAP_STRIDE = 3;
+    private static final long MMAP_STRIDE = 3L;
 
     // ---- Bucket mmap mode: per-thread per-bucket files ----
     private boolean bucketMode;
@@ -79,6 +79,8 @@ public class SharedPointStore implements AutoCloseable {
     private int numBuckets;
     private int tilesPerBucket;
     private int numScanThreads;
+    /** Per-thread tile counts from scan: [thread][tileIndex]. Used for parallel partition. */
+    private int[][] perThreadTileCounts;
 
     /** Which partition path was used: "in-memory", "disk-scatter", or "bucket-mmap". */
     private String partitionPath;
@@ -130,7 +132,7 @@ public class SharedPointStore implements AutoCloseable {
      */
     public static SharedPointStore createForBucketMmap(
             int capacity, Path bucketDir, int numBuckets, int tilesPerBucket,
-            int numScanThreads, Path mmapDir) {
+            int numScanThreads, Path mmapDir, int[][] perThreadTileCounts) {
         SharedPointStore store = new SharedPointStore();
         store.capacity = capacity;
         store.mmapMode = true;
@@ -140,6 +142,7 @@ public class SharedPointStore implements AutoCloseable {
         store.tilesPerBucket = tilesPerBucket;
         store.numScanThreads = numScanThreads;
         store.mmapDir = mmapDir;
+        store.perThreadTileCounts = perThreadTileCounts;
         return store;
     }
 
@@ -567,7 +570,7 @@ public class SharedPointStore implements AutoCloseable {
     /** Swaps elements at absolute positions a and b across all three arrays. */
     private void swap(int a, int b) {
         if (mmapMode) {
-            int ai = MMAP_STRIDE * a, bi = MMAP_STRIDE * b;
+            long ai = MMAP_STRIDE * a, bi = MMAP_STRIDE * b;
             double tx = mmapData.getDouble(ai);     mmapData.putDouble(ai,     mmapData.getDouble(bi));     mmapData.putDouble(bi,     tx);
             double ty = mmapData.getDouble(ai + 1); mmapData.putDouble(ai + 1, mmapData.getDouble(bi + 1)); mmapData.putDouble(bi + 1, ty);
             long  to  = mmapData.getLong(ai + 2);   mmapData.putLong(ai + 2,   mmapData.getLong(bi + 2));   mmapData.putLong(bi + 2,   to);
@@ -586,16 +589,22 @@ public class SharedPointStore implements AutoCloseable {
     private static final int BUCKET_RECORD_BYTES = 8 + 8 + 8 + IndexConfig.TILE_ID_BYTES;
 
     /**
-     * Scatters per-thread per-bucket files into mmap files, bucket by bucket.
+     * Scatters per-thread per-bucket files into a single interleaved mmap file,
+     * bucket by bucket, with parallel scatter within each bucket.
      * <p>
      * Each bucket covers a contiguous range of tile IDs, so the mmap write
      * target for each bucket fits in page cache (~750 MB working set for
      * B=32, N=1B with interleaved layout).  No tileIds array is needed on
      * heap — tileIds are read inline from bucket records.
      * <p>
+     * Parallelism: the outer loop over buckets is sequential (preserves page
+     * cache locality).  Within each bucket, all T scan threads scatter their
+     * files in parallel using disjoint write cursors computed from per-thread
+     * tile count prefix sums.
+     * <p>
      * Layout: single interleaved mmap file with stride 3 (x, y, offset per point).
      * <p>
-     * Heap during scatter: only cursors (~1 MB) + read buffer (8 MB).
+     * Heap during scatter: per-thread cursors (T × numTiles × 4 bytes) + T read buffers (T × 8 MB).
      */
     private void partitionBucketsToMmap(int n, int[] starts, int numTiles) {
         try {
@@ -603,65 +612,88 @@ public class SharedPointStore implements AutoCloseable {
             long t0 = System.nanoTime();
             this.mmapData = MmapArray.create(mmapDir.resolve("valinor_points.mmap"), MMAP_STRIDE * n);
             LOG.info("Mmap file created (interleaved, {} GB) in {} s",
-                    String.format("%.1f", (long) MMAP_STRIDE * n * 8 / (1024.0 * 1024 * 1024)),
+                    String.format("%.1f", MMAP_STRIDE * n * 8 / (1024.0 * 1024 * 1024)),
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase B: scatter bucket by bucket
+            // Phase B: compute per-thread per-tile disjoint write cursors
             t0 = System.nanoTime();
-            int[] cursors = Arrays.copyOf(starts, numTiles);
+            int[][] threadTileStarts = new int[numScanThreads][numTiles];
+            for (int tile = 0; tile < numTiles; tile++) {
+                threadTileStarts[0][tile] = starts[tile];
+                for (int t = 1; t < numScanThreads; t++) {
+                    threadTileStarts[t][tile] = threadTileStarts[t - 1][tile]
+                            + perThreadTileCounts[t - 1][tile];
+                }
+            }
+            LOG.debug("Per-thread cursor prefix sums computed in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            // Phase C: scatter bucket by bucket, parallel within each bucket
+            t0 = System.nanoTime();
+            IOException[] scatterErr = {null};
 
             for (int b = 0; b < numBuckets; b++) {
-                // Read each thread's bucket-b file and scatter into mmap
-                for (int t = 0; t < numScanThreads; t++) {
-                    Path bucketFile = bucketDir.resolve(String.format("scan_t%d_b%d.bin", t, b));
-                    if (!Files.exists(bucketFile)) continue;
-                    long fileSize = Files.size(bucketFile);
-                    if (fileSize == 0) {
+                final int bucket = b;
+                IntStream.range(0, numScanThreads).parallel().forEach(t -> {
+                    if (scatterErr[0] != null) return;
+                    Path bucketFile = bucketDir.resolve(String.format("scan_t%d_b%d.bin", t, bucket));
+                    try {
+                        if (!Files.exists(bucketFile)) return;
+                        long fileSize = Files.size(bucketFile);
+                        if (fileSize == 0) {
+                            safeDelete(bucketFile);
+                            return;
+                        }
+
+                        int[] cursors = threadTileStarts[t];
+                        try (FileChannel ch = FileChannel.open(bucketFile, StandardOpenOption.READ)) {
+                            int alignedBuf = (SPILL_BUF_SIZE / BUCKET_RECORD_BYTES) * BUCKET_RECORD_BYTES;
+                            ByteBuffer buf = ByteBuffer.allocateDirect(alignedBuf)
+                                    .order(ByteOrder.nativeOrder());
+                            long remaining = fileSize;
+                            while (remaining > 0) {
+                                buf.clear();
+                                int toRead = (int) Math.min(alignedBuf, remaining);
+                                buf.limit(toRead);
+                                while (buf.hasRemaining()) {
+                                    if (ch.read(buf) < 0) break;
+                                }
+                                buf.flip();
+
+                                int records = buf.remaining() / BUCKET_RECORD_BYTES;
+                                for (int r = 0; r < records; r++) {
+                                    double x = buf.getDouble();
+                                    double y = buf.getDouble();
+                                    long offset = buf.getLong();
+                                    int tileId = buf.getInt();
+                                    long dest = MMAP_STRIDE * cursors[tileId]++;
+                                    mmapData.putDouble(dest,     x);
+                                    mmapData.putDouble(dest + 1, y);
+                                    mmapData.putLong(dest + 2,   offset);
+                                }
+                                remaining -= (long) records * BUCKET_RECORD_BYTES;
+                            }
+                        }
                         safeDelete(bucketFile);
-                        continue;
-                    }
-
-                    try (FileChannel ch = FileChannel.open(bucketFile, StandardOpenOption.READ)) {
-                        // Round buffer capacity down to a multiple of BUCKET_RECORD_BYTES
-                        // so every read consumes complete records (no leftover partial records).
-                        int alignedBuf = (SPILL_BUF_SIZE / BUCKET_RECORD_BYTES) * BUCKET_RECORD_BYTES;
-                        ByteBuffer buf = ByteBuffer.allocateDirect(alignedBuf)
-                                .order(ByteOrder.nativeOrder());
-                        long remaining = fileSize;
-                        while (remaining > 0) {
-                            buf.clear();
-                            int toRead = (int) Math.min(alignedBuf, remaining);
-                            buf.limit(toRead);
-                            while (buf.hasRemaining()) {
-                                if (ch.read(buf) < 0) break;
-                            }
-                            buf.flip();
-
-                            int records = buf.remaining() / BUCKET_RECORD_BYTES;
-                            for (int r = 0; r < records; r++) {
-                                double x = buf.getDouble();
-                                double y = buf.getDouble();
-                                long offset = buf.getLong();
-                                int tileId = buf.getInt();
-                                int dest = MMAP_STRIDE * cursors[tileId]++;
-                                mmapData.putDouble(dest,     x);
-                                mmapData.putDouble(dest + 1, y);
-                                mmapData.putLong(dest + 2,   offset);
-                            }
-                            remaining -= (long) records * BUCKET_RECORD_BYTES;
+                    } catch (IOException e) {
+                        synchronized (scatterErr) {
+                            if (scatterErr[0] == null) scatterErr[0] = e;
                         }
                     }
-                    safeDelete(bucketFile);
-                }
+                });
+
+                if (scatterErr[0] != null) throw scatterErr[0];
 
                 if (b % 8 == 7 || b == numBuckets - 1) {
                     LOG.debug("Bucket scatter progress: {}/{} buckets", b + 1, numBuckets);
                 }
             }
 
-            LOG.info("Bucket scatter complete ({} buckets) in {} s",
-                    numBuckets, String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+            LOG.info("Bucket scatter complete ({} buckets, {} threads parallel) in {} s",
+                    numBuckets, numScanThreads,
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
+            this.perThreadTileCounts = null; // free
             this.capacity = n;
 
         } catch (IOException e) {

@@ -18,8 +18,13 @@ import org.apache.logging.log4j.Logger;
  * ({@code Integer.MAX_VALUE} bytes), the file is divided into segments
  * of up to {@link #SEGMENT_SIZE} bytes.
  * <p>
+ * Element indices and count are {@code long} to support interleaved layouts
+ * where the logical element count exceeds {@code Integer.MAX_VALUE}
+ * (e.g. 3 × 1B = 3B elements for an interleaved x/y/offset array).
+ * <p>
  * Thread safety: absolute-positioned reads are thread-safe (each call
- * computes the segment and offset independently). Writes are single-writer only.
+ * computes the segment and offset independently). Writes at disjoint
+ * positions from different threads are safe.
  */
 public final class MmapArray implements AutoCloseable {
 
@@ -33,9 +38,9 @@ public final class MmapArray implements AutoCloseable {
 
     private MappedByteBuffer[] segments;
     private final Path filePath;
-    private final int count;
+    private final long count;
 
-    private MmapArray(Path filePath, int count, MappedByteBuffer[] segments) {
+    private MmapArray(Path filePath, long count, MappedByteBuffer[] segments) {
         this.filePath = filePath;
         this.count = count;
         this.segments = segments;
@@ -46,8 +51,8 @@ public final class MmapArray implements AutoCloseable {
      * The file is created at {@code file}, pre-sized to {@code count * 8} bytes,
      * and memory-mapped in 1 GiB segments.
      */
-    public static MmapArray create(Path file, int count) throws IOException {
-        long totalBytes = (long) count * 8;
+    public static MmapArray create(Path file, long count) throws IOException {
+        long totalBytes = count * 8;
 
         // Delete any stale file from a previous crashed run
         Files.deleteIfExists(file);
@@ -73,19 +78,19 @@ public final class MmapArray implements AutoCloseable {
         return new MmapArray(file, count, segs);
     }
 
-    public int getCount() { return count; }
+    public long getCount() { return count; }
 
     // ---- Double access (absolute element index) ----
 
-    public double getDouble(int i) {
-        long bytePos = (long) i * 8;
+    public double getDouble(long i) {
+        long bytePos = i * 8;
         int seg = (int) (bytePos >>> SEGMENT_SHIFT);
         int off = (int) (bytePos & (SEGMENT_SIZE - 1));
         return segments[seg].getDouble(off);
     }
 
-    public void putDouble(int i, double v) {
-        long bytePos = (long) i * 8;
+    public void putDouble(long i, double v) {
+        long bytePos = i * 8;
         int seg = (int) (bytePos >>> SEGMENT_SHIFT);
         int off = (int) (bytePos & (SEGMENT_SIZE - 1));
         segments[seg].putDouble(off, v);
@@ -93,15 +98,15 @@ public final class MmapArray implements AutoCloseable {
 
     // ---- Long access (absolute element index) ----
 
-    public long getLong(int i) {
-        long bytePos = (long) i * 8;
+    public long getLong(long i) {
+        long bytePos = i * 8;
         int seg = (int) (bytePos >>> SEGMENT_SHIFT);
         int off = (int) (bytePos & (SEGMENT_SIZE - 1));
         return segments[seg].getLong(off);
     }
 
-    public void putLong(int i, long v) {
-        long bytePos = (long) i * 8;
+    public void putLong(long i, long v) {
+        long bytePos = i * 8;
         int seg = (int) (bytePos >>> SEGMENT_SHIFT);
         int off = (int) (bytePos & (SEGMENT_SIZE - 1));
         segments[seg].putLong(off, v);

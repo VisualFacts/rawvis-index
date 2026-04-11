@@ -283,7 +283,8 @@ public class Valinor implements AutoCloseable {
                 store = SharedPointStore.createForBucketMmap(
                         validCount, scanResult.bucketDir,
                         scanResult.numBuckets, scanResult.tilesPerBucket,
-                        scanResult.numScanThreads, mmapDir);
+                        scanResult.numScanThreads, mmapDir,
+                        scanResult.perThreadTileCounts);
             } else if (scanResult.diskXsFiles != null) {
                 // Path B: disk-chunk — scatter directly from per-thread scan files
                 LOG.info("Using disk-scatter partition path ({} chunks)", scanResult.diskChunkSizes.length);
