@@ -64,12 +64,14 @@ public class SharedPointStore implements AutoCloseable {
     private Path[] diskTileIdFiles;
     private int[] diskChunkSizes;
 
-    // ---- Mmap mode: point data backed by memory-mapped files ----
+    // ---- Mmap mode: point data backed by a single interleaved memory-mapped file ----
+    // Layout per point i: [x @ 3i, y @ 3i+1, offset @ 3i+2] (24 bytes)
     private boolean mmapMode;
-    private MmapArray mmapXs;
-    private MmapArray mmapYs;
-    private MmapArray mmapOffsets;
+    private MmapArray mmapData;
     private Path mmapDir;
+
+    /** Interleave stride: 3 eight-byte elements per point (x, y, offset). */
+    private static final int MMAP_STRIDE = 3;
 
     // ---- Bucket mmap mode: per-thread per-bucket files ----
     private boolean bucketMode;
@@ -169,17 +171,17 @@ public class SharedPointStore implements AutoCloseable {
     public boolean isMmapMode() { return mmapMode; }
 
     public double getX(int i) {
-        if (mmapMode) return mmapXs.getDouble(i);
+        if (mmapMode) return mmapData.getDouble(MMAP_STRIDE * i);
         if (chunked) { int c = chunkFor(i); return xsChunks[c][i - chunkStarts[c]]; }
         return xs[i];
     }
     public double getY(int i) {
-        if (mmapMode) return mmapYs.getDouble(i);
+        if (mmapMode) return mmapData.getDouble(MMAP_STRIDE * i + 1);
         if (chunked) { int c = chunkFor(i); return ysChunks[c][i - chunkStarts[c]]; }
         return ys[i];
     }
     public long getOffset(int i) {
-        if (mmapMode) return mmapOffsets.getLong(i);
+        if (mmapMode) return mmapData.getLong(MMAP_STRIDE * i + 2);
         if (chunked) { int c = chunkFor(i); return offsetsChunks[c][i - chunkStarts[c]]; }
         return offsets[i];
     }
@@ -565,9 +567,10 @@ public class SharedPointStore implements AutoCloseable {
     /** Swaps elements at absolute positions a and b across all three arrays. */
     private void swap(int a, int b) {
         if (mmapMode) {
-            double tx = mmapXs.getDouble(a); mmapXs.putDouble(a, mmapXs.getDouble(b)); mmapXs.putDouble(b, tx);
-            double ty = mmapYs.getDouble(a); mmapYs.putDouble(a, mmapYs.getDouble(b)); mmapYs.putDouble(b, ty);
-            long  to = mmapOffsets.getLong(a); mmapOffsets.putLong(a, mmapOffsets.getLong(b)); mmapOffsets.putLong(b, to);
+            int ai = MMAP_STRIDE * a, bi = MMAP_STRIDE * b;
+            double tx = mmapData.getDouble(ai);     mmapData.putDouble(ai,     mmapData.getDouble(bi));     mmapData.putDouble(bi,     tx);
+            double ty = mmapData.getDouble(ai + 1); mmapData.putDouble(ai + 1, mmapData.getDouble(bi + 1)); mmapData.putDouble(bi + 1, ty);
+            long  to  = mmapData.getLong(ai + 2);   mmapData.putLong(ai + 2,   mmapData.getLong(bi + 2));   mmapData.putLong(bi + 2,   to);
             return;
         }
         double tx = xs[a]; xs[a] = xs[b]; xs[b] = tx;
@@ -586,20 +589,21 @@ public class SharedPointStore implements AutoCloseable {
      * Scatters per-thread per-bucket files into mmap files, bucket by bucket.
      * <p>
      * Each bucket covers a contiguous range of tile IDs, so the mmap write
-     * target for each bucket fits in page cache (~250 MB working set for
-     * B=32, N=1B).  No tileIds array is needed on heap — tileIds are read
-     * inline from bucket records.
+     * target for each bucket fits in page cache (~750 MB working set for
+     * B=32, N=1B with interleaved layout).  No tileIds array is needed on
+     * heap — tileIds are read inline from bucket records.
+     * <p>
+     * Layout: single interleaved mmap file with stride 3 (x, y, offset per point).
      * <p>
      * Heap during scatter: only cursors (~1 MB) + read buffer (8 MB).
      */
     private void partitionBucketsToMmap(int n, int[] starts, int numTiles) {
         try {
-            // Phase A: create mmap files
+            // Phase A: create single interleaved mmap file (3 elements per point)
             long t0 = System.nanoTime();
-            this.mmapXs = MmapArray.create(mmapDir.resolve("valinor_xs.mmap"), n);
-            this.mmapYs = MmapArray.create(mmapDir.resolve("valinor_ys.mmap"), n);
-            this.mmapOffsets = MmapArray.create(mmapDir.resolve("valinor_off.mmap"), n);
-            LOG.info("Mmap files created in {} s",
+            this.mmapData = MmapArray.create(mmapDir.resolve("valinor_points.mmap"), MMAP_STRIDE * n);
+            LOG.info("Mmap file created (interleaved, {} GB) in {} s",
+                    String.format("%.1f", (long) MMAP_STRIDE * n * 8 / (1024.0 * 1024 * 1024)),
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
             // Phase B: scatter bucket by bucket
@@ -639,10 +643,10 @@ public class SharedPointStore implements AutoCloseable {
                                 double y = buf.getDouble();
                                 long offset = buf.getLong();
                                 int tileId = buf.getInt();
-                                int dest = cursors[tileId]++;
-                                mmapXs.putDouble(dest, x);
-                                mmapYs.putDouble(dest, y);
-                                mmapOffsets.putLong(dest, offset);
+                                int dest = MMAP_STRIDE * cursors[tileId]++;
+                                mmapData.putDouble(dest,     x);
+                                mmapData.putDouble(dest + 1, y);
+                                mmapData.putLong(dest + 2,   offset);
                             }
                             remaining -= (long) records * BUCKET_RECORD_BYTES;
                         }
@@ -667,8 +671,6 @@ public class SharedPointStore implements AutoCloseable {
 
     @Override
     public void close() {
-        if (mmapXs != null) { mmapXs.close(); mmapXs = null; }
-        if (mmapYs != null) { mmapYs.close(); mmapYs = null; }
-        if (mmapOffsets != null) { mmapOffsets.close(); mmapOffsets = null; }
+        if (mmapData != null) { mmapData.close(); mmapData = null; }
     }
 }

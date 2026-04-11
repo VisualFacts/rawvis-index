@@ -310,13 +310,13 @@ public final class ParallelCsvScanner {
         int tilesPerBucket = 0;
         if (useBucketScan) {
             // Target: each bucket's mmap output region fits comfortably in page cache.
-            // region_per_bucket = N * 8 / B  (one array at a time during scatter)
-            // Target 256 MB per region with 4× safety margin → 64 MB effective target
-            long targetRegion = 256L * 1024 * 1024;
-            int bRaw = Math.max(1, (int) Math.ceil(8.0 * totalCapacity / targetRegion));
+            // Interleaved layout: region_per_bucket = N * 24 / B (all 3 attrs together)
+            // Target 768 MB per region (fits in typical page cache budget)
+            long targetRegion = 768L * 1024 * 1024;
+            int bRaw = Math.max(1, (int) Math.ceil(24.0 * totalCapacity / targetRegion));
             numBuckets = Integer.highestOneBit(bRaw);
             if (numBuckets < bRaw) numBuckets <<= 1;
-            numBuckets = Math.max(4, Math.min(numBuckets, 32));
+            numBuckets = Math.max(4, Math.min(numBuckets, 64));
             tilesPerBucket = (numTiles + numBuckets - 1) / numBuckets;
         }
 
