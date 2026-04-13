@@ -1,5 +1,6 @@
 package gr.athenarc.imsi.visualfacts.util.csv;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public final class ZsvNative {
@@ -110,6 +111,38 @@ public final class ZsvNative {
             ByteBuffer present1,
             byte[] nullstr
     );
+
+    // ---- O_DIRECT file I/O ----
+
+    /**
+     * Opens a file with O_WRONLY | O_DIRECT for page-cache-bypassing writes.
+     * @return file descriptor (must be closed with {@link #directClose})
+     */
+    public static native int directOpen(String path) throws IOException;
+
+    /**
+     * Allocates a page-aligned native buffer as a DirectByteBuffer.
+     * Must be freed with {@link #freeAligned}.
+     */
+    public static native ByteBuffer allocAligned(int size, int alignment) throws IOException;
+
+    /** Frees a buffer allocated by {@link #allocAligned}. */
+    public static native void freeAligned(ByteBuffer buf);
+
+    /**
+     * Writes data from an aligned DirectByteBuffer to a file at the given offset.
+     * All of offset, length, and buffer address must satisfy O_DIRECT alignment (4096).
+     */
+    public static native void directPwrite(int fd, ByteBuffer buf, int bufOffset, int length, long fileOffset) throws IOException;
+
+    /** Closes a file descriptor opened by {@link #directOpen}. */
+    public static native void directClose(int fd);
+
+    /**
+     * Pre-allocates disk blocks for the file via {@code posix_fallocate}.
+     * Eliminates per-write block allocation and journal overhead on ext4.
+     */
+    public static native void fallocateFile(int fd, long length) throws IOException;
 
     private ZsvNative() {
     }

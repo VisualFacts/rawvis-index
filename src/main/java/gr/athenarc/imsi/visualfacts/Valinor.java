@@ -170,7 +170,7 @@ public class Valinor implements AutoCloseable {
      *  Phase 2 — Partition (SharedPointStore.partition):
      *    Path A: parallel histogram scatter from T heap chunks      (peak 36N)
      *    Path B: parallel histogram scatter from T disk files       (peak 28N)
-     *    Path C: bucket-by-bucket scatter into mmap files           (peak ~0)
+     *    Path C: counting-sort + O_DIRECT write into mmap file    (peak ~T×maxBucketSize×24)
      *
      *  Phase 3 — Wire tiles to shared store slices
      * </pre>
@@ -338,7 +338,17 @@ public class Valinor implements AutoCloseable {
 
             // --- Phase 1.5b: explicit GC before partition ---
             long gcStart = System.nanoTime();
-            System.gc();
+            {
+                Runtime rt = Runtime.getRuntime();
+                long committedBefore = rt.totalMemory();
+                long usedBefore = committedBefore - rt.freeMemory();
+                System.gc();
+                long committedAfter = rt.totalMemory();
+                long usedAfter = committedAfter - rt.freeMemory();
+                LOG.info("Pre-partition GC: committed {} MB → {} MB, used {} MB → {} MB",
+                        committedBefore / (1024L * 1024), committedAfter / (1024L * 1024),
+                        usedBefore / (1024L * 1024), usedAfter / (1024L * 1024));
+            }
             long gcEndNanos = System.nanoTime();
 
             LOG.info("Partitioning {} points across {} tiles", validCount, numTiles);

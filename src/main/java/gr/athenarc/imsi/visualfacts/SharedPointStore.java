@@ -1,6 +1,7 @@
 package gr.athenarc.imsi.visualfacts;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -14,6 +15,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import gr.athenarc.imsi.visualfacts.config.IndexConfig;
+import gr.athenarc.imsi.visualfacts.util.csv.ZsvNative;
 
 /**
  * Shared backing store for point data (x, y, file-offset).
@@ -588,112 +590,259 @@ public class SharedPointStore implements AutoCloseable {
     /** Bytes per bucket record: x(8) + y(8) + offset(8) + tileId(4) = 28. */
     private static final int BUCKET_RECORD_BYTES = 8 + 8 + 8 + IndexConfig.TILE_ID_BYTES;
 
+    /** Bytes per interleaved point: x(8) + y(8) + offset(8) = 24. */
+    private static final int POINT_BYTES = 24;
+
     /**
-     * Scatters per-thread per-bucket files into a single interleaved mmap file,
-     * bucket by bucket, with parallel scatter within each bucket.
+     * Scatters per-thread per-bucket files into a single interleaved file,
+     * bucket by bucket.
      * <p>
-     * Each bucket covers a contiguous range of tile IDs, so the mmap write
-     * target for each bucket fits in page cache (~750 MB working set for
-     * B=32, N=1B with interleaved layout).  No tileIds array is needed on
-     * heap — tileIds are read inline from bucket records.
+     * Each bucket is processed in two stages:
+     * <ol>
+     *   <li>Parallel counting-sort: each scan thread reads its bucket file
+     *       and scatters records into pre-allocated tile-sorted heap arrays.</li>
+     *   <li>Single-threaded sequential O_DIRECT write: sorted records are
+     *       gathered in tile order and appended to the output file, bypassing
+     *       the page cache entirely via {@code O_DIRECT} + {@code posix_fallocate}.
+     *       Sequential writes achieve ~900 MB/s on NVMe vs ~285 MB/s with
+     *       parallel interleaved streams.</li>
+     * </ol>
+     * O_DIRECT keeps the entire cgroup page-cache budget available for
+     * bucket-file reads.  Combined with FADV_DONTNEED on the CSV during scan,
+     * this keeps the bucket files warm in page cache so the partition reads
+     * from RAM instead of cold NVMe.
      * <p>
-     * Parallelism: the outer loop over buckets is sequential (preserves page
-     * cache locality).  Within each bucket, all T scan threads scatter their
-     * files in parallel using disjoint write cursors computed from per-thread
-     * tile count prefix sums.
-     * <p>
-     * Layout: single interleaved mmap file with stride 3 (x, y, offset per point).
-     * <p>
-     * Heap during scatter: per-thread cursors (T × numTiles × 4 bytes) + T read buffers (T × 8 MB).
+     * Layout: single interleaved file with stride 3 (x, y, offset per point).
+     * The file is mmap'd read-write after writing for query-time access.
      */
     private void partitionBucketsToMmap(int n, int[] starts, int numTiles) {
+        Path mmapFile = mmapDir.resolve("valinor_points.mmap");
         try {
-            // Phase A: create single interleaved mmap file (3 elements per point)
+            // Phase A: create and pre-size the output file (no mmap yet).
             long t0 = System.nanoTime();
-            this.mmapData = MmapArray.create(mmapDir.resolve("valinor_points.mmap"), MMAP_STRIDE * n);
-            LOG.info("Mmap file created (interleaved, {} GB) in {} s",
-                    String.format("%.1f", MMAP_STRIDE * n * 8 / (1024.0 * 1024 * 1024)),
-                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
-
-            // Phase B: compute per-thread per-tile disjoint write cursors
-            t0 = System.nanoTime();
-            int[][] threadTileStarts = new int[numScanThreads][numTiles];
-            for (int tile = 0; tile < numTiles; tile++) {
-                threadTileStarts[0][tile] = starts[tile];
-                for (int t = 1; t < numScanThreads; t++) {
-                    threadTileStarts[t][tile] = threadTileStarts[t - 1][tile]
-                            + perThreadTileCounts[t - 1][tile];
-                }
+            long totalBytes = MMAP_STRIDE * (long) n * 8;
+            Files.deleteIfExists(mmapFile);
+            try (RandomAccessFile raf = new RandomAccessFile(mmapFile.toFile(), "rw")) {
+                // Just create the file; fallocate will allocate blocks below.
+                raf.setLength(0);
             }
-            LOG.debug("Per-thread cursor prefix sums computed in {} s",
+            LOG.info("Output file created ({} GB) in {} s",
+                    String.format("%.1f", totalBytes / (1024.0 * 1024 * 1024)),
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            // Phase C: scatter bucket by bucket, parallel within each bucket
+            // Phase C: counting-sort + sequential O_DIRECT write, bucket by bucket.
+            // O_DIRECT bypasses the page cache for output writes, leaving the
+            // entire cgroup page-cache budget available for bucket-file reads.
+            // Sequential writes achieve ~900 MB/s on NVMe vs ~285 MB/s with
+            // 20 parallel interleaved streams.
             t0 = System.nanoTime();
-            IOException[] scatterErr = {null};
 
-            for (int b = 0; b < numBuckets; b++) {
-                final int bucket = b;
-                IntStream.range(0, numScanThreads).parallel().forEach(t -> {
-                    if (scatterErr[0] != null) return;
-                    Path bucketFile = bucketDir.resolve(String.format("scan_t%d_b%d.bin", t, bucket));
-                    try {
-                        if (!Files.exists(bucketFile)) return;
-                        long fileSize = Files.size(bucketFile);
-                        if (fileSize == 0) {
+            int outFd = -1;
+            // Single aligned write buffer for sequential O_DIRECT writes.
+            // Buffer = LCM(POINT_BYTES=24, 4096) * 512 = 6 MB,
+            // perfectly aligned to both 24-byte records and 4096-byte blocks.
+            final int DIRECT_BUF_SIZE = 12288 * 512;
+            ByteBuffer directBuf = null;
+            try {
+                outFd = ZsvNative.directOpen(mmapFile.toAbsolutePath().toString());
+                long paddedBytes = (totalBytes + 4095L) & ~4095L;
+                ZsvNative.fallocateFile(outFd, paddedBytes);
+                LOG.info("fallocate completed ({} GB)",
+                        String.format("%.1f", paddedBytes / (1024.0 * 1024 * 1024)));
+                directBuf = ZsvNative.allocAligned(DIRECT_BUF_SIZE, 4096);
+                directBuf.order(ByteOrder.nativeOrder());
+
+                IOException[] scatterErr = {null};
+
+                // Pre-allocate per-thread sort arrays once.
+                int maxRecordsPerThread = 0;
+                for (int b = 0; b < numBuckets; b++) {
+                    int ft = b * tilesPerBucket;
+                    int tib = (b < numBuckets - 1) ? tilesPerBucket : numTiles - ft;
+                    for (int t = 0; t < numScanThreads; t++) {
+                        int cnt = 0;
+                        for (int j = 0; j < tib; j++) cnt += perThreadTileCounts[t][ft + j];
+                        maxRecordsPerThread = Math.max(maxRecordsPerThread, cnt);
+                    }
+                }
+                double[][] preSortX   = new double[numScanThreads][];
+                double[][] preSortY   = new double[numScanThreads][];
+                long[][]   preSortOff = new long[numScanThreads][];
+                int[][]    preLocalOffsets = new int[numScanThreads][];
+                for (int t = 0; t < numScanThreads; t++) {
+                    preSortX[t]   = new double[maxRecordsPerThread];
+                    preSortY[t]   = new double[maxRecordsPerThread];
+                    preSortOff[t] = new long[maxRecordsPerThread];
+                    preLocalOffsets[t] = new int[tilesPerBucket + 1];
+                }
+                // Pre-allocate DirectByteBuffers to avoid native memory churn.
+                int alignedReadBuf = (SPILL_BUF_SIZE / BUCKET_RECORD_BYTES)
+                        * BUCKET_RECORD_BYTES;
+                ByteBuffer[] preReadBufs = new ByteBuffer[numScanThreads];
+                for (int t = 0; t < numScanThreads; t++) {
+                    preReadBufs[t] = ByteBuffer.allocateDirect(alignedReadBuf)
+                            .order(ByteOrder.nativeOrder());
+                }
+                LOG.debug("Pre-allocated per-thread sort arrays: {} MB total ({} records/thread × {} threads)",
+                        (long) maxRecordsPerThread * (8 + 8 + 8) * numScanThreads / (1024 * 1024),
+                        maxRecordsPerThread, numScanThreads);
+
+                long sortNanos = 0, writeNanos = 0;
+                long writePos = 0;
+
+                for (int b = 0; b < numBuckets; b++) {
+                    final int bucket = b;
+                    final int firstTile = bucket * tilesPerBucket;
+                    final int tilesInBucket = (bucket < numBuckets - 1)
+                            ? tilesPerBucket
+                            : numTiles - firstTile;
+
+                    // C.1+C.2: parallel counting-sort
+                    long bSortStart = System.nanoTime();
+                    boolean[] threadHasData = new boolean[numScanThreads];
+
+                    IntStream.range(0, numScanThreads).parallel().forEach(t -> {
+                        if (scatterErr[0] != null) return;
+                        Path bucketFile = bucketDir.resolve(
+                                String.format("scan_t%d_b%d.bin", t, bucket));
+                        try {
+                            if (!Files.exists(bucketFile)) return;
+                            long fileSize = Files.size(bucketFile);
+                            if (fileSize == 0) {
+                                safeDelete(bucketFile);
+                                return;
+                            }
+
+                            int[] localOffsets = preLocalOffsets[t];
+                            localOffsets[0] = 0;
+                            for (int j = 0; j < tilesInBucket; j++) {
+                                localOffsets[j + 1] = localOffsets[j]
+                                        + perThreadTileCounts[t][firstTile + j];
+                            }
+
+                            double[] sortX   = preSortX[t];
+                            double[] sortY   = preSortY[t];
+                            long[]   sortOff = preSortOff[t];
+                            int[] localCur = Arrays.copyOf(localOffsets, tilesInBucket);
+
+                            try (FileChannel ch = FileChannel.open(bucketFile,
+                                    StandardOpenOption.READ)) {
+                                ByteBuffer buf = preReadBufs[t];
+                                int bufCap = buf.capacity();
+                                long remaining = fileSize;
+                                while (remaining > 0) {
+                                    buf.clear();
+                                    int toRead = (int) Math.min(bufCap, remaining);
+                                    buf.limit(toRead);
+                                    while (buf.hasRemaining()) {
+                                        if (ch.read(buf) < 0) break;
+                                    }
+                                    buf.flip();
+
+                                    int records = buf.remaining() / BUCKET_RECORD_BYTES;
+                                    for (int r = 0; r < records; r++) {
+                                        double x = buf.getDouble();
+                                        double y = buf.getDouble();
+                                        long offset = buf.getLong();
+                                        int tileId = buf.getInt();
+
+                                        int pos = localCur[tileId - firstTile]++;
+                                        sortX[pos]   = x;
+                                        sortY[pos]   = y;
+                                        sortOff[pos] = offset;
+                                    }
+                                    remaining -= (long) records * BUCKET_RECORD_BYTES;
+                                }
+                            }
+
+                            threadHasData[t] = true;
                             safeDelete(bucketFile);
-                            return;
-                        }
-
-                        int[] cursors = threadTileStarts[t];
-                        try (FileChannel ch = FileChannel.open(bucketFile, StandardOpenOption.READ)) {
-                            int alignedBuf = (SPILL_BUF_SIZE / BUCKET_RECORD_BYTES) * BUCKET_RECORD_BYTES;
-                            ByteBuffer buf = ByteBuffer.allocateDirect(alignedBuf)
-                                    .order(ByteOrder.nativeOrder());
-                            long remaining = fileSize;
-                            while (remaining > 0) {
-                                buf.clear();
-                                int toRead = (int) Math.min(alignedBuf, remaining);
-                                buf.limit(toRead);
-                                while (buf.hasRemaining()) {
-                                    if (ch.read(buf) < 0) break;
-                                }
-                                buf.flip();
-
-                                int records = buf.remaining() / BUCKET_RECORD_BYTES;
-                                for (int r = 0; r < records; r++) {
-                                    double x = buf.getDouble();
-                                    double y = buf.getDouble();
-                                    long offset = buf.getLong();
-                                    int tileId = buf.getInt();
-                                    long dest = MMAP_STRIDE * cursors[tileId]++;
-                                    mmapData.putDouble(dest,     x);
-                                    mmapData.putDouble(dest + 1, y);
-                                    mmapData.putLong(dest + 2,   offset);
-                                }
-                                remaining -= (long) records * BUCKET_RECORD_BYTES;
+                        } catch (IOException e) {
+                            synchronized (scatterErr) {
+                                if (scatterErr[0] == null) scatterErr[0] = e;
                             }
                         }
-                        safeDelete(bucketFile);
-                    } catch (IOException e) {
-                        synchronized (scatterErr) {
-                            if (scatterErr[0] == null) scatterErr[0] = e;
+                    });
+
+                    if (scatterErr[0] != null) throw scatterErr[0];
+                    sortNanos += System.nanoTime() - bSortStart;
+
+                    // C.3: single-threaded sequential O_DIRECT write.
+                    // Sequential writes achieve ~900 MB/s on this NVMe vs ~285 MB/s
+                    // with 20 interleaved streams.  The CPU serialization overhead
+                    // (~14s total) is dominated by the I/O saving (~53s).
+                    long bWriteStart = System.nanoTime();
+                    for (int j = 0; j < tilesInBucket; j++) {
+                        for (int t = 0; t < numScanThreads; t++) {
+                            if (!threadHasData[t]) continue;
+                            int start = preLocalOffsets[t][j];
+                            int end   = preLocalOffsets[t][j + 1];
+                            for (int f = start; f < end; f++) {
+                                if (directBuf.remaining() < POINT_BYTES) {
+                                    directBuf.flip();
+                                    int len = directBuf.remaining();
+                                    ZsvNative.directPwrite(outFd, directBuf,
+                                            0, len, writePos);
+                                    writePos += len;
+                                    directBuf.clear();
+                                }
+                                directBuf.putDouble(preSortX[t][f]);
+                                directBuf.putDouble(preSortY[t][f]);
+                                directBuf.putLong(preSortOff[t][f]);
+                            }
                         }
                     }
-                });
+                    writeNanos += System.nanoTime() - bWriteStart;
 
-                if (scatterErr[0] != null) throw scatterErr[0];
-
-                if (b % 8 == 7 || b == numBuckets - 1) {
-                    LOG.debug("Bucket scatter progress: {}/{} buckets", b + 1, numBuckets);
+                    if (b % 8 == 7 || b == numBuckets - 1) {
+                        long wallSoFar = System.nanoTime() - t0;
+                        Runtime rt = Runtime.getRuntime();
+                        long committed = rt.totalMemory() / (1024L * 1024);
+                        LOG.debug("Bucket scatter progress: {}/{} buckets (sort={} s, write={} s, wall={} s, heap={} MB)",
+                                b + 1, numBuckets,
+                                String.format("%.1f", sortNanos / 1e9),
+                                String.format("%.1f", writeNanos / 1e9),
+                                String.format("%.1f", wallSoFar / 1e9),
+                                committed);
+                    }
                 }
+
+                // Final O_DIRECT flush — pad partial buffer to 4096 alignment
+                long actualBytes = writePos + directBuf.position();
+                if (actualBytes != totalBytes) {
+                    throw new IOException(String.format(
+                            "Partition data mismatch: expected %d bytes but wrote %d (diff=%d)",
+                            totalBytes, actualBytes, totalBytes - actualBytes));
+                }
+                if (directBuf.position() > 0) {
+                    int pos = directBuf.position();
+                    int padded = (pos + 4095) & ~4095;
+                    while (directBuf.position() < padded) directBuf.put((byte) 0);
+                    directBuf.flip();
+                    ZsvNative.directPwrite(outFd, directBuf, 0,
+                            directBuf.remaining(), writePos);
+                }
+            } finally {
+                if (outFd >= 0) ZsvNative.directClose(outFd);
+                if (directBuf != null) ZsvNative.freeAligned(directBuf);
             }
 
-            LOG.info("Bucket scatter complete ({} buckets, {} threads parallel) in {} s",
+            // Truncate to exact size (remove O_DIRECT alignment padding)
+            try (RandomAccessFile raf2 = new RandomAccessFile(mmapFile.toFile(), "rw")) {
+                raf2.setLength(totalBytes);
+            }
+
+            LOG.info("Counting-sort + O_DIRECT write complete ({} buckets, {} threads) in {} s",
                     numBuckets, numScanThreads,
                     String.format("%.3f", (System.nanoTime() - t0) / 1e9));
 
-            this.perThreadTileCounts = null; // free
+            // Phase D: memory-map the written file for query-time access
+            t0 = System.nanoTime();
+            this.mmapData = MmapArray.open(mmapFile, MMAP_STRIDE * (long) n);
+            LOG.info("Mmap opened for reading in {} s",
+                    String.format("%.3f", (System.nanoTime() - t0) / 1e9));
+
+            this.perThreadTileCounts = null;
             this.capacity = n;
 
         } catch (IOException e) {

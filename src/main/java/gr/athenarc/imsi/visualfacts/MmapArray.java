@@ -2,6 +2,7 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
@@ -67,11 +68,41 @@ public final class MmapArray implements AutoCloseable {
             for (int i = 0; i < numSegments; i++) {
                 long offset = (long) i * SEGMENT_SIZE;
                 long size = Math.min(SEGMENT_SIZE, totalBytes - offset);
-                segs[i] = ch.map(FileChannel.MapMode.READ_WRITE, offset, size);
+                segs[i] = (MappedByteBuffer) ch.map(FileChannel.MapMode.READ_WRITE, offset, size)
+                        .order(ByteOrder.nativeOrder());
             }
         }
 
         LOG.debug("Mmap created (NIO): {} ({} elements, {} GB, {} segments)",
+                file.getFileName(), count,
+                String.format("%.1f", totalBytes / (1024.0 * 1024 * 1024)),
+                numSegments);
+        return new MmapArray(file, count, segs);
+    }
+
+    /**
+     * Opens an existing file as a read-write mmap array.
+     * Use after writing the file via O_DIRECT to avoid page-fault storms
+     * during the write phase.  Opened read-write because query-time
+     * sub-partition ({@code swap}) needs write access.
+     */
+    public static MmapArray open(Path file, long count) throws IOException {
+        long totalBytes = count * 8;
+        int numSegments = (int) ((totalBytes + SEGMENT_SIZE - 1) / SEGMENT_SIZE);
+        if (numSegments == 0) numSegments = 1;
+        MappedByteBuffer[] segs = new MappedByteBuffer[numSegments];
+
+        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
+            FileChannel ch = raf.getChannel();
+            for (int i = 0; i < numSegments; i++) {
+                long offset = (long) i * SEGMENT_SIZE;
+                long size = Math.min(SEGMENT_SIZE, totalBytes - offset);
+                segs[i] = (MappedByteBuffer) ch.map(FileChannel.MapMode.READ_WRITE, offset, size)
+                        .order(ByteOrder.nativeOrder());
+            }
+        }
+
+        LOG.debug("Mmap opened (NIO, read-write): {} ({} elements, {} GB, {} segments)",
                 file.getFileName(), count,
                 String.format("%.1f", totalBytes / (1024.0 * 1024 * 1024)),
                 numSegments);

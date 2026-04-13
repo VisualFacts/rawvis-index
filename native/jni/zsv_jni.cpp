@@ -45,6 +45,8 @@ typedef struct
 
     char *nullstr;        // NULL or heap-allocated null-string (e.g. "\\N")
     int   nullstr_len;    // length of nullstr (0 = no nullstr configured)
+
+    int64_t fadvise_offset; // absolute byte offset up to which FADV_DONTNEED was issued
 } reader_t;
 
 static reader_t *handle_to_reader(jlong handle)
@@ -156,6 +158,7 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_open(
     r->eof = 0;
     r->start_offset = 0;
     r->end_offset   = -1; // full-file read
+    r->fadvise_offset = 0;
 
     jsize selCount = env->GetArrayLength(jselCols);
     if (selCount <= 0)
@@ -272,6 +275,7 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_openAtOffset(
     r->eof = 0;
     r->start_offset = (int64_t)jstartOffset;
     r->end_offset   = (int64_t)jendOffset;   // -1 = read to EOF
+    r->fadvise_offset = (int64_t)jstartOffset;
 
     jsize selCount = env->GetArrayLength(jselCols);
     if (selCount <= 0)
@@ -504,7 +508,139 @@ Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_nextBatchDoubles(
         return 0;
     }
 
+#ifdef __linux__
+    // Drop page cache for the CSV bytes we just consumed.  This prevents the
+    // 102 GB CSV from evicting the 28 GB of bucket files that the partition
+    // phase needs to read back from cache.
+    if (rowsRead > 0)
+    {
+        size_t cum = zsv_cum_scanned_length(r->parser);
+        int64_t abs_pos = r->start_offset + (int64_t)cum;
+        // Round down to page boundary (4 KB) — fadvise requires page alignment
+        int64_t aligned = abs_pos & ~((int64_t)4095);
+        if (aligned > r->fadvise_offset)
+        {
+            posix_fadvise(fileno(r->f), r->fadvise_offset,
+                          aligned - r->fadvise_offset, POSIX_FADV_DONTNEED);
+            r->fadvise_offset = aligned;
+        }
+    }
+#endif
+
     return rowsRead;
+}
+
+// ==============================================================
+// O_DIRECT file I/O
+// ==============================================================
+
+JNIEXPORT jint JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_directOpen(
+    JNIEnv *env, jclass cls, jstring jpath)
+{
+    (void)cls;
+#ifdef __linux__
+    if (!jpath) { throw_ioe(env, "directOpen: path must not be null"); return -1; }
+    const char *path = env->GetStringUTFChars(jpath, NULL);
+    if (!path) return -1;
+    int fd = open(path, O_WRONLY | O_DIRECT);
+    env->ReleaseStringUTFChars(jpath, path);
+    if (fd < 0) {
+        throw_ioe(env, "directOpen: open(O_DIRECT) failed");
+        return -1;
+    }
+    return fd;
+#else
+    (void)env; (void)jpath;
+    throw_ioe(env, "directOpen: O_DIRECT not supported on this platform");
+    return -1;
+#endif
+}
+
+JNIEXPORT jobject JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_allocAligned(
+    JNIEnv *env, jclass cls, jint size, jint alignment)
+{
+    (void)cls;
+    void *buf = NULL;
+    if (posix_memalign(&buf, (size_t)alignment, (size_t)size) != 0 || !buf) {
+        throw_ioe(env, "allocAligned: posix_memalign failed");
+        return NULL;
+    }
+    memset(buf, 0, (size_t)size);
+    return env->NewDirectByteBuffer(buf, (jlong)size);
+}
+
+JNIEXPORT void JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_freeAligned(
+    JNIEnv *env, jclass cls, jobject bbuf)
+{
+    (void)cls;
+    if (!bbuf) return;
+    void *buf = env->GetDirectBufferAddress(bbuf);
+    if (buf) free(buf);
+}
+
+JNIEXPORT void JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_directPwrite(
+    JNIEnv *env, jclass cls, jint fd, jobject bbuf, jint bufOffset, jint length, jlong fileOffset)
+{
+    (void)cls;
+#ifdef __linux__
+    if (!bbuf) { throw_ioe(env, "directPwrite: null buffer"); return; }
+    char *base = (char *)env->GetDirectBufferAddress(bbuf);
+    if (!base) { throw_ioe(env, "directPwrite: GetDirectBufferAddress failed"); return; }
+    char *ptr = base + bufOffset;
+    size_t remaining = (size_t)length;
+    off_t off = (off_t)fileOffset;
+    while (remaining > 0) {
+        ssize_t n = pwrite(fd, ptr, remaining, off);
+        if (n < 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "directPwrite: pwrite failed errno=%d off=%ld len=%zu",
+                     errno, (long)off, remaining);
+            throw_ioe(env, msg);
+            return;
+        }
+        ptr += n;
+        off += n;
+        remaining -= (size_t)n;
+    }
+#else
+    (void)env; (void)fd; (void)bbuf; (void)bufOffset; (void)length; (void)fileOffset;
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_directClose(
+    JNIEnv *env, jclass cls, jint fd)
+{
+    (void)cls; (void)env;
+#ifdef __linux__
+    if (fd >= 0) {
+        close(fd);
+    }
+#else
+    (void)fd;
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_gr_athenarc_imsi_visualfacts_util_csv_ZsvNative_fallocateFile(
+    JNIEnv *env, jclass cls, jint fd, jlong length)
+{
+    (void)cls;
+#ifdef __linux__
+    int rc = posix_fallocate(fd, 0, (off_t)length);
+    if (rc != 0) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "fallocateFile: posix_fallocate failed (rc=%d)", rc);
+        throw_ioe(env, msg);
+    }
+#else
+    (void)env; (void)fd; (void)length;
+#endif
 }
 
 // ==============================================================
