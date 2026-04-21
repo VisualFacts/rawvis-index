@@ -10,7 +10,10 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -18,6 +21,7 @@ import org.apache.logging.log4j.Logger;
 import com.google.common.math.StatsAccumulator;
 
 import gr.athenarc.imsi.visualfacts.config.IndexConfig;
+import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
 import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
@@ -84,6 +88,8 @@ public final class ParallelCsvScanner {
     private final int totalCapacity;          // schema.getObjectCount()
     private final String nullstr;             // null-string for CSV parsing (e.g. "\\N"), or null
     private final Path tmpDir;                // directory for bucket/spill temp files (null → system default)
+    private final Rectangle q0Rect;           // q0 query rectangle (null if no q0)
+    private final List<Integer> q0MeasureCols; // q0 measure columns (null if no q0)
 
     public ParallelCsvScanner(File csvFile, char delimiter, boolean hasHeader,
                               int[] selectedColumns, int xPos, int yPos,
@@ -92,7 +98,7 @@ public final class ParallelCsvScanner {
                               Rectangle bounds, Grid grid,
                               IdentityHashMap<Tile, Integer> tileIndexMap, int numTiles,
                               int numThreads, int totalCapacity, String nullstr,
-                              Path tmpDir) {
+                              Path tmpDir, Query q0) {
         this.csvFile = csvFile;
         this.delimiter = delimiter;
         this.hasHeader = hasHeader;
@@ -111,6 +117,8 @@ public final class ParallelCsvScanner {
         this.totalCapacity = totalCapacity;
         this.nullstr = nullstr;
         this.tmpDir = tmpDir;
+        this.q0Rect = (q0 != null) ? q0.getRect() : null;
+        this.q0MeasureCols = (q0 != null) ? q0.getMeasureCols() : null;
     }
 
     // ======================================================================
@@ -130,6 +138,8 @@ public final class ParallelCsvScanner {
         public final int[][] tileStatsPointCounts;
         /** Scan path used: "in-memory", "disk-streaming", or "bucket-streaming". */
         public final String scanPath;
+        /** Q0 query statistics per measure (null if no q0). Key = measure column index. */
+        public final Map<Integer, StatsAccumulator> q0Stats;
 
         // ---- Path A: in-memory heap chunks (null for paths B and C) ----
 
@@ -167,13 +177,14 @@ public final class ParallelCsvScanner {
                    int[][] tileIdChunks, int[] chunkSizes,
                    int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
-                   String scanPath) {
+                   String scanPath, Map<Integer, StatsAccumulator> q0Stats) {
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
             this.tileStats = tileStats;
             this.tileStatsPointCounts = tileStatsPointCounts;
             this.scanPath = scanPath;
+            this.q0Stats = q0Stats;
             // Path A fields
             this.xsChunks = xsChunks;
             this.ysChunks = ysChunks;
@@ -194,10 +205,11 @@ public final class ParallelCsvScanner {
                    Path[] diskTileIdFiles, int[] diskChunkSizes,
                    int validCount, long maxRowLength,
                    int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
-                   String scanPath) {
+                   String scanPath, Map<Integer, StatsAccumulator> q0Stats) {
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
+            this.q0Stats = q0Stats;
             this.tileStats = tileStats;
             this.tileStatsPointCounts = tileStatsPointCounts;
             this.scanPath = scanPath;
@@ -222,13 +234,14 @@ public final class ParallelCsvScanner {
                    int[] tileCounts, StatsAccumulator[][] tileStats, int[][] tileStatsPointCounts,
                    String scanPath,
                    Path bucketDir, int numBuckets, int tilesPerBucket, int numScanThreads,
-                   int[][] perThreadTileCounts) {
+                   int[][] perThreadTileCounts, Map<Integer, StatsAccumulator> q0Stats) {
             this.validCount = validCount;
             this.maxRowLength = maxRowLength;
             this.tileCounts = tileCounts;
             this.tileStats = tileStats;
             this.tileStatsPointCounts = tileStatsPointCounts;
             this.scanPath = scanPath;
+            this.q0Stats = q0Stats;
             // Path A null
             this.xsChunks = null; this.ysChunks = null;
             this.offsetsChunks = null; this.tileIdChunks = null;
@@ -273,6 +286,9 @@ public final class ParallelCsvScanner {
         // Per-tile, per-measure stats (always computed)
         StatsAccumulator[][] tileStats;
         int[][] tileStatsPointCounts;
+
+        // Q0 query statistics per measure (null if no q0)
+        Map<Integer, StatsAccumulator> q0Stats;
 
         Throwable error;
     }
@@ -467,6 +483,10 @@ public final class ParallelCsvScanner {
         cr.tileCounts = new int[numTiles];
         cr.tileStats = new StatsAccumulator[numTiles][measureCount];
         cr.tileStatsPointCounts = new int[numTiles][measureCount];
+        // Initialize q0Stats if q0 is provided
+        if (q0Rect != null && q0MeasureCols != null) {
+            cr.q0Stats = new HashMap<>();
+        }
 
         // Estimate rows per thread for initial capacity (in-memory path)
         int estimatedRows = Math.max(1024, totalCapacity / numThreads);
@@ -556,6 +576,31 @@ public final class ParallelCsvScanner {
                         }
                     }
 
+                    // Accumulate q0 stats if point is within q0 rectangle
+                    if (q0Rect != null && q0MeasureCols != null && q0Rect.contains(x, y)) {
+                        for (Integer measureCol : q0MeasureCols) {
+                            // Find position of this measure in the row
+                            int measurePos = -1;
+                            for (int m = 0; m < mc; m++) {
+                                if (measurePositions[m] >= 0 && selectedColumns[measurePositions[m]] == measureCol) {
+                                    measurePos = measurePositions[m];
+                                    break;
+                                }
+                            }
+                            if (measurePos >= 0) {
+                                double val = row[measurePos];
+                                if (!Double.isNaN(val)) {
+                                    StatsAccumulator q0sa = cr.q0Stats.get(measureCol);
+                                    if (q0sa == null) {
+                                        q0sa = new StatsAccumulator();
+                                        cr.q0Stats.put(measureCol, q0sa);
+                                    }
+                                    q0sa.add(val);
+                                }
+                            }
+                        }
+                    }
+
                     // Store x, y, offset, tileId
                     if (useDisk) {
                         // Write to spill buffer, flush when full
@@ -632,6 +677,10 @@ public final class ParallelCsvScanner {
         cr.tileCounts = new int[numTiles];
         cr.tileStats = new StatsAccumulator[numTiles][measureCount];
         cr.tileStatsPointCounts = new int[numTiles][measureCount];
+        // Initialize q0Stats if q0 is provided
+        if (q0Rect != null && q0MeasureCols != null) {
+            cr.q0Stats = new HashMap<>();
+        }
 
         FileChannel[] bucketChannels = new FileChannel[numBuckets];
         ByteBuffer[] bucketBufs = new ByteBuffer[numBuckets];
@@ -703,6 +752,31 @@ public final class ParallelCsvScanner {
                         }
                     }
 
+                    // Accumulate q0 stats if point is within q0 rectangle
+                    if (q0Rect != null && q0MeasureCols != null && q0Rect.contains(x, y)) {
+                        for (Integer measureCol : q0MeasureCols) {
+                            // Find position of this measure in the row
+                            int measurePos = -1;
+                            for (int m = 0; m < mc; m++) {
+                                if (measurePositions[m] >= 0 && selectedColumns[measurePositions[m]] == measureCol) {
+                                    measurePos = measurePositions[m];
+                                    break;
+                                }
+                            }
+                            if (measurePos >= 0) {
+                                double val = row[measurePos];
+                                if (!Double.isNaN(val)) {
+                                    StatsAccumulator q0sa = cr.q0Stats.get(measureCol);
+                                    if (q0sa == null) {
+                                        q0sa = new StatsAccumulator();
+                                        cr.q0Stats.put(measureCol, q0sa);
+                                    }
+                                    q0sa.add(val);
+                                }
+                            }
+                        }
+                    }
+
                     // Write to the appropriate bucket
                     int bucket = tileIdx / tilesPerBucket;
                     ByteBuffer buf = bucketBufs[bucket];
@@ -765,12 +839,14 @@ public final class ParallelCsvScanner {
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
         int[][] globalPointCounts = new int[numTiles][measureCount];
         mergePerTileStats(results, globalStats, globalPointCounts);
+        
+        Map<Integer, StatsAccumulator> globalQ0Stats = mergeQ0Stats(results);
 
         return new ScanResult(totalValid, maxRowLen,
                 globalCounts, globalStats, globalPointCounts,
                 scanPath,
                 tmpDir, numBuckets, tilesPerBucket, results.length,
-                perThreadTileCounts);
+                perThreadTileCounts, globalQ0Stats);
     }
 
     /**
@@ -885,10 +961,12 @@ public final class ParallelCsvScanner {
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
         int[][] globalPointCounts = new int[numTiles][measureCount];
         mergePerTileStats(results, globalStats, globalPointCounts);
+        
+        Map<Integer, StatsAccumulator> globalQ0Stats = mergeQ0Stats(results);
 
         return new ScanResult(xsFiles, ysFiles, offsetsFiles, tileIdFiles, chunkSizes,
                 totalValid, maxRowLen,
-                globalCounts, globalStats, globalPointCounts, scanPath);
+                globalCounts, globalStats, globalPointCounts, scanPath, globalQ0Stats);
     }
 
     // ======================================================================
@@ -924,6 +1002,29 @@ public final class ParallelCsvScanner {
         }
     }
 
+    private Map<Integer, StatsAccumulator> mergeQ0Stats(ChunkResult[] results) {
+        Map<Integer, StatsAccumulator> globalQ0Stats = null;
+        for (ChunkResult cr : results) {
+            if (cr.q0Stats != null && !cr.q0Stats.isEmpty()) {
+                if (globalQ0Stats == null) {
+                    globalQ0Stats = new HashMap<>();
+                }
+                for (Map.Entry<Integer, StatsAccumulator> entry : cr.q0Stats.entrySet()) {
+                    Integer measureCol = entry.getKey();
+                    StatsAccumulator local = entry.getValue();
+                    if (local == null || local.count() == 0) continue;
+                    StatsAccumulator global = globalQ0Stats.get(measureCol);
+                    if (global == null) {
+                        global = new StatsAccumulator();
+                        globalQ0Stats.put(measureCol, global);
+                    }
+                    global.addAll(local.snapshot());
+                }
+            }
+        }
+        return globalQ0Stats;
+    }
+
     private ScanResult buildResult(double[][] xsChunks, double[][] ysChunks, long[][] offsetsChunks,
                                    int[][] tileIdChunks,
                                    int[] chunkSizes, int totalValid, long maxRowLen,
@@ -933,9 +1034,11 @@ public final class ParallelCsvScanner {
         StatsAccumulator[][] globalStats = new StatsAccumulator[numTiles][measureCount];
         int[][] globalPointCounts = new int[numTiles][measureCount];
         mergePerTileStats(results, globalStats, globalPointCounts);
+        
+        Map<Integer, StatsAccumulator> globalQ0Stats = mergeQ0Stats(results);
 
         return new ScanResult(xsChunks, ysChunks, offsetsChunks, tileIdChunks, chunkSizes,
-                totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts, scanPath);
+                totalValid, maxRowLen, globalCounts, globalStats, globalPointCounts, scanPath, globalQ0Stats);
     }
 
     // ======================================================================

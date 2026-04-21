@@ -255,6 +255,8 @@ public class Valinor implements AutoCloseable {
             tmpDir = null;
         }
 
+        Map<Integer, StatsAccumulator> q0StatsFromScan = null;
+
         try {
             // --- Phase 1: parallel CSV scan → merged arrays + per-tile counts/stats ---
             long phase1Start = System.nanoTime();
@@ -264,7 +266,7 @@ public class Valinor implements AutoCloseable {
                     selectedColumns, xPos, yPos,
                     filterPositions, filterArray, measurePositions,
                     grid.getBounds(), grid, tileIndexMap, numTiles,
-                    scanThreads, capacity, schema.getNullstr(), tmpDir);
+                    scanThreads, capacity, schema.getNullstr(), tmpDir, q0);
 
             ParallelCsvScanner.ScanResult scanResult = scanner.scan();
             long scanEndNanos = System.nanoTime();
@@ -333,6 +335,7 @@ public class Valinor implements AutoCloseable {
             // Release scanner and large scan-result fields so GC can reclaim
             // per-thread arrays and StatsAccumulators before partition allocates.
             String scanPath = scanResult.scanPath;
+            q0StatsFromScan = scanResult.q0Stats;
             scanResult = null;
             scanner = null;
 
@@ -417,11 +420,23 @@ public class Valinor implements AutoCloseable {
             initTimingBreakdown.put("total", (System.nanoTime() - initOverallStart) / 1e9);
         }
         
+        // Create QueryResults and populate with q0 stats if available
+        QueryResults queryResults;
         if (isExactMode()) {
-            return new QueryResults(q0);
+            queryResults = new QueryResults(q0);
         } else {
-            return new ApproximateQueryResults(q0);
+            queryResults = new ApproximateQueryResults(q0);
         }
+        
+        // Populate q0 statistics from the scan
+        if (q0StatsFromScan != null && q0 != null) {
+            for (Map.Entry<Integer, StatsAccumulator> entry : q0StatsFromScan.entrySet()) {
+                queryResults.adjustStats(entry.getKey(), entry.getValue().snapshot());
+            }
+            LOG.info("Q0 evaluation complete during initialization: {}", queryResults.getStats());
+        }
+        
+        return queryResults;
     }
 
     public int getObjectsIndexed() {
