@@ -227,15 +227,17 @@ public class Experiments {
                     csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                             "Leaf tiles",
                             "Overlapped tiles",
-                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
-                            "Init Timing",
+                            "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
+                            "I/Os", "Time (sec)", "Total Count", "Query Result",
+                            "run", "Init Timing",
                             "Index Mem Deep Size (bytes)");
                 } else {
                     csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
                             "Leaf tiles",
                             "Overlapped tiles",
-                            "Fully Contained Tiles", "I/Os", "Time (sec)", "Total Count", "Query Result",
-                            "Init Timing");
+                            "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
+                            "I/Os", "Time (sec)", "Total Count", "Query Result",
+                            "run", "Init Timing");
                 }
             }
 
@@ -272,10 +274,12 @@ public class Experiments {
                 csvWriter.addValue(valinor.getLeafTileCount());
                 csvWriter.addValue(queryResults.getTileCount());
                 csvWriter.addValue(queryResults.getFullyContainedTileCount());
+                csvWriter.addValue(queryResults.getFullyContainedTileWithoutStatsCount());
                 csvWriter.addValue(queryResults.getIoCount());
                 csvWriter.addValue(stopwatch.elapsed(TimeUnit.NANOSECONDS) / Math.pow(10d, 9));
                 csvWriter.addValue(queryResults.getTotalCount());
                 csvWriter.addValue(queryResults.getStats());
+                csvWriter.addValue(run);
                 // Init timing breakdown (only for query 0)
                 csvWriter.addValue(i == 0 && valinor.getInitTimingBreakdown() != null
                         ? valinor.getInitTimingBreakdown().toString() : "");

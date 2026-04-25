@@ -476,14 +476,15 @@ public class Valinor implements AutoCloseable {
         }
 
         List<AbstractNodePointIterator> rawIterators = new ArrayList<>();
-        int fullyContainedTilesCount = 0;
+        int fullyContainedWithStatsCount = 0;
+        int fullyContainedWithoutStatsCount = 0;
 
         List<Tile> leafTiles = this.grid.getOverlappedLeafTiles(query);
 
         for (Tile leafTile : leafTiles) {
             // Short-circuited non-leaf tile with frozen exact stats
             if (leafTile.hasFrozenStats()) {
-                fullyContainedTilesCount++;
+                fullyContainedWithStatsCount++;
                 queryResults.addTotalCount(leafTile.getFrozenPointCount());
                 query.getMeasureCols().forEach(measureCol -> {
                     queryResults.adjustStats(measureCol,
@@ -494,9 +495,6 @@ public class Valinor implements AutoCloseable {
 
             ContainmentExaminer containmentExaminer = getContainmentExaminer(leafTile, rect);
             boolean isFullyContained = containmentExaminer == null;
-            if (isFullyContained) {
-                fullyContainedTilesCount++;
-            }
 
             List<QueryNode> queryNodes = leafTile.getQueryNodes(query, containmentExaminer, schema);
             int count = 0;
@@ -519,6 +517,7 @@ public class Valinor implements AutoCloseable {
             for (QueryNode queryNode : queryNodes) {
                 Tile qnTile = queryNode.getTile();
                 if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
+                    fullyContainedWithStatsCount++;
                     queryResults.addTotalCount(queryNode.getIntersectionCount());
                     query.getMeasureCols().forEach(measureCol -> {
                         StatsAccumulator acc = queryNode.getTile().getStats(schema.getMeasureIndex(measureCol));
@@ -527,6 +526,9 @@ public class Valinor implements AutoCloseable {
                         }
                     });
                 } else {
+                    if (isFullyContained) {
+                        fullyContainedWithoutStatsCount++;
+                    }
                     rawIterators.add(new NodePointsIterator(queryNode));
                 }
             }
@@ -587,7 +589,8 @@ public class Valinor implements AutoCloseable {
 
         queryResults.addTotalCount(ioCount);
         queryResults.setTileCount(leafTiles.size());
-        queryResults.setFullyContainedTileCount(fullyContainedTilesCount);
+        queryResults.setFullyContainedTileCount(fullyContainedWithStatsCount);
+        queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedWithoutStatsCount);
         queryResults.setIoCount(ioCount);
 
         return queryResults;
