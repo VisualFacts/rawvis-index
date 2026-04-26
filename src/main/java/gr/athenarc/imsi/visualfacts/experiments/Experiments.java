@@ -3,6 +3,8 @@ package gr.athenarc.imsi.visualfacts.experiments;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,13 +32,18 @@ import gr.athenarc.imsi.visualfacts.config.IndexConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
+import gr.athenarc.imsi.visualfacts.experiments.config.InitialQueryConfig;
+import gr.athenarc.imsi.visualfacts.experiments.config.WorkloadConfig;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBSQLQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.PhasedQuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SQLQueryGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.SpatialReservoir;
+import gr.athenarc.imsi.visualfacts.experiments.util.ExtentCalibrator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.UniformRandomQueryGenerator;
 import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
@@ -193,6 +200,9 @@ public class Experiments {
             case "generatePilotDBSqlFile":
                 generatePilotDBSqlFile();
                 break;
+            case "generateAndSaveQuerySequence":
+                generateAndSaveQuerySequence();
+                break;
             case "synth10":
                 generator = new SyntheticDatasetGenerator(100000000, 10, Arrays.asList(2, 3, 4, 5, 6, 7), 10, outFile);
                 generator.generate();
@@ -245,10 +255,7 @@ public class Experiments {
 
             valinor = new Valinor(schema, 0, false, initMode);
 
-            // Build initial query from scenario config
-            Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Query q0 = new Query(rect, schema.getMeasureCols());
-            List<Query> sequence = generateQuerySequence(q0, schema);
+            List<Query> sequence = generateQuerySequence(schema);
 
             int totalQueries = sequence.size();
             for (int i = 0; i < totalQueries; i++) {
@@ -349,10 +356,7 @@ public class Experiments {
 
             index = new Valinor(schema, errorBound, samplingOnly, initMode);
 
-            // Build initial query from scenario config
-            Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Query q0 = new Query(rect, schema.getMeasureCols());
-            List<Query> sequence = generateQuerySequence(q0, schema);
+            List<Query> sequence = generateQuerySequence(schema);
 
             int totalQueries = sequence.size();
             for (int i = 0; i < totalQueries; i++) {
@@ -422,7 +426,26 @@ public class Experiments {
         }
     }
 
-    private List<Query> generateQuerySequence(Query q0, Schema schema) throws IOException {
+    private List<Query> generateQuerySequence(Schema schema) throws IOException {
+        // Non-exploration workload (random) takes precedence.
+        if (scenarioConfig.hasWorkload()) {
+            WorkloadConfig wc = scenarioConfig.getWorkload();
+            String type = wc.getType().toLowerCase();
+            LOG.info("Using '{}' workload generator: {}", type, wc);
+            switch (type) {
+                case "random":
+                    return buildRandomWorkload(wc, schema);
+                default:
+                    throw new IllegalArgumentException("Unknown workload type: " + wc.getType()
+                            + " (supported: random)");
+            }
+        }
+
+        InitialQueryConfig q0Config = scenarioConfig.getQ0();
+        Preconditions.checkArgument(q0Config != null,
+            "Exploratory scenarios require q0, but scenario '%s' has none", scenario);
+        Query q0 = new Query(q0Config.toRectangle(), schema.getMeasureCols());
+
         // Use phased generator if phases are configured
         if (scenarioConfig.isPhased()) {
             LOG.info("Using phased query sequence generator with {} phases", scenarioConfig.getPhases().size());
@@ -439,6 +462,39 @@ public class Experiments {
         QuerySequenceGenerator sequenceGenerator = new QuerySequenceGenerator(minShift, maxShift,
                 zoomFactor, scenarioConfig.getDirectionWeights());
         return sequenceGenerator.generateQuerySequence(q0, seqCount, schema);
+    }
+
+    private List<Query> buildRandomWorkload(WorkloadConfig wc, Schema schema) throws IOException {
+        Rectangle bounds = schema.getBounds();
+        double sigma = wc.getSelectivity();
+        String mode = wc.getExtentMode() == null
+                ? WorkloadConfig.EXTENT_MODE_CALIBRATED
+                : wc.getExtentMode();
+        SpatialReservoir reservoir = null;
+        double[] extent;
+        if (WorkloadConfig.EXTENT_MODE_CLOSED_FORM.equalsIgnoreCase(mode)) {
+            extent = ExtentCalibrator.closedForm(sigma, bounds);
+            LOG.info("Random workload (closedForm): σ={} → sx={}, sy={} (bounds={})",
+                    sigma, extent[0], extent[1], bounds);
+        } else if (WorkloadConfig.EXTENT_MODE_CALIBRATED.equalsIgnoreCase(mode)) {
+            int reservoirSize = wc.getReservoirSize() != null ? wc.getReservoirSize() : 100_000;
+            Path cacheDir = Paths.get("experiments", "query_sequences", "reservoirs");
+            reservoir = SpatialReservoir.loadOrBuild(
+                    schema, scenarioConfig.getDataset(), cacheDir, reservoirSize, wc.getSeed());
+            extent = ExtentCalibrator.calibrate(reservoir, bounds, sigma);
+            LOG.info("Random workload (calibrated): σ={} → sx={}, sy={} (reservoir size={})",
+                    sigma, extent[0], extent[1], reservoir.size());
+        } else {
+            throw new IllegalArgumentException("Unknown extentMode: " + mode
+                    + " (supported: calibrated, closedForm)");
+        }
+        if (reservoir != null) {
+            ExtentCalibrator.SelectivityStats stats =
+                    ExtentCalibrator.stats(reservoir, bounds, extent[0], extent[1]);
+            LOG.info("Random workload realised per-query selectivity (over reservoir): {}", stats);
+        }
+        return new UniformRandomQueryGenerator(wc.getSeed(), extent[0], extent[1], bounds, reservoir)
+                .generateQuerySequence(wc.getSeqCount(), schema);
     }
 
     private static String formatBbox(Rectangle rect) {
@@ -490,10 +546,7 @@ public class Experiments {
         }
 
         try {
-            // Build initial query from scenario config
-            Rectangle rect = scenarioConfig.getQ0().toRectangle();
-            Query q0 = new Query(rect, schema.getMeasureCols());
-            List<Query> sequence = generateQuerySequence(q0, schema);
+            List<Query> sequence = generateQuerySequence(schema);
 
             // Determine execution mode
             DuckDBQueryExecutor.ExecutionMode mode = parseExecutionMode(duckDbMode);
@@ -614,10 +667,7 @@ public class Experiments {
         requireScenario("generatePilotDBSqlFile");
         Preconditions.checkNotNull(outFile, "No out file specified.");
 
-        // Build initial query and generate sequence
-        Rectangle rect = scenarioConfig.getQ0().toRectangle();
-        Query q0 = new Query(rect, schema.getMeasureCols());
-        List<Query> sequence = generateQuerySequence(q0, schema);
+        List<Query> sequence = generateQuerySequence(schema);
 
         // Determine column naming format via DuckDB introspection
         String readCsvOptions = DuckDBSQLQueryGenerator.buildReadCsvOptions(schema.getHasHeader(), schema.getNullstr());
@@ -676,6 +726,29 @@ public class Experiments {
         }
 
         LOG.info("Generated PilotDB SQL file with {} queries to {}", sequence.size(), outFile);
+    }
+
+    private void generateAndSaveQuerySequence() throws IOException {
+        requireScenario("generateAndSaveQuerySequence");
+        Preconditions.checkNotNull(outFile, "No out file specified.");
+
+        List<Query> sequence = generateQuerySequence(schema);
+        File file = new File(outFile);
+        File parent = file.getParentFile();
+        if (parent != null) {
+            parent.mkdirs();
+        }
+        try (FileWriter writer = new FileWriter(file, false)) {
+            for (Query query : sequence) {
+                Rectangle rect = query.getRect();
+                writer.write(String.format("(%s..%s),(%s..%s)|{}|[]|%s|%s%n",
+                        rect.getXRange().lowerEndpoint(), rect.getXRange().upperEndpoint(),
+                        rect.getYRange().lowerEndpoint(), rect.getYRange().upperEndpoint(),
+                        query.getMeasureCols().stream().map(String::valueOf).collect(Collectors.joining(",")),
+                        query.getUserOpType()));
+            }
+        }
+        LOG.info("Generated query sequence with {} queries to {}", sequence.size(), outFile);
     }
 
 }

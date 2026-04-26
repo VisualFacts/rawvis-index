@@ -41,6 +41,9 @@ public class ExplorationScenarioConfig {
     @JsonProperty("phases")
     private List<PhaseConfig> phases;
 
+    @JsonProperty("workload")
+    private WorkloadConfig workload;
+
     // Default constructor for Jackson
     public ExplorationScenarioConfig() {
     }
@@ -111,11 +114,26 @@ public class ExplorationScenarioConfig {
         this.phases = phases;
     }
 
+    public WorkloadConfig getWorkload() {
+        return workload;
+    }
+
+    public void setWorkload(WorkloadConfig workload) {
+        this.workload = workload;
+    }
+
     /**
      * Returns true if this scenario uses phased exploration (multi-phase workload).
      */
     public boolean isPhased() {
         return phases != null && !phases.isEmpty();
+    }
+
+    /**
+     * Returns true if this scenario uses a non-exploration workload (random).
+     */
+    public boolean hasWorkload() {
+        return workload != null && workload.getType() != null && !workload.getType().isEmpty();
     }
 
     @Override

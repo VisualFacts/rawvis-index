@@ -82,7 +82,14 @@ public class ScenarioRunnerTest {
         long seed = Long.parseLong(System.getProperty("query.seed", "42"));
         double selectivity = Double.parseDouble(System.getProperty("query.selectivity", "0.01"));
 
-        UniformRandomQueryGenerator generator = new UniformRandomQueryGenerator(seed, selectivity);
+        UniformRandomQueryGenerator generator = new UniformRandomQueryGenerator(
+            seed,
+            Math.sqrt(selectivity) * (schema.getBounds().getXRange().upperEndpoint()
+                    - schema.getBounds().getXRange().lowerEndpoint()),
+            Math.sqrt(selectivity) * (schema.getBounds().getYRange().upperEndpoint()
+                    - schema.getBounds().getYRange().lowerEndpoint()),
+            schema.getBounds(),
+            null);
         queries = generator.generate(queryCount, schema);
         LOG.info("Generated {} random queries (seed={}, selectivity={})", queries.size(), seed, selectivity);
 
