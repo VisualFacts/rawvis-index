@@ -509,14 +509,19 @@ public class Valinor implements AutoCloseable {
 
             if (count > THRESHOLD) {
                 leafTile.split();
+                // After splitting, recompute the containment examiner per child:
+                // a child of a partially-overlapping parent may itself be fully
+                // contained in the query, in which case its QueryNode must report
+                // isFullyContained()==true so the scan loop populates its stats.
                 queryNodes = leafTile.getOverlappedActualLeafTiles(query).stream()
-                        .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
+                        .flatMap(tile -> tile.getQueryNodes(query, getContainmentExaminer(tile, rect), schema).stream())
                         .collect(Collectors.toList());
             }
 
             for (QueryNode queryNode : queryNodes) {
                 Tile qnTile = queryNode.getTile();
-                if (isFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
+                boolean qnFullyContained = queryNode.isFullyContained();
+                if (qnFullyContained && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedWithStatsCount++;
                     queryResults.addTotalCount(queryNode.getIntersectionCount());
                     query.getMeasureCols().forEach(measureCol -> {
@@ -526,7 +531,7 @@ public class Valinor implements AutoCloseable {
                         }
                     });
                 } else {
-                    if (isFullyContained) {
+                    if (qnFullyContained) {
                         fullyContainedWithoutStatsCount++;
                     }
                     rawIterators.add(new NodePointsIterator(queryNode));
@@ -648,8 +653,13 @@ public class Valinor implements AutoCloseable {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (!isFullyContained && qnTile.getSize() > THRESHOLD) {
                     leafTile.split();
+                    // Recompute the containment examiner per child after the split:
+                    // a child of a partially-overlapping parent may itself be fully
+                    // contained, so its QueryNode must be built with examiner=null
+                    // to take the O(1) intersection fast path and to be classified
+                    // correctly in the bookkeeping below.
                     leafTile.getOverlappedActualLeafTiles(query).stream()
-                            .flatMap(tile -> tile.getQueryNodes(query, containmentExaminer, schema).stream())
+                            .flatMap(tile -> tile.getQueryNodes(query, getContainmentExaminer(tile, rect), schema).stream())
                             .forEach(qn -> {
                                 if (qn.isFullyContained()) {
                                     fullyContainedNodesWithoutStats.add(qn);
