@@ -6,8 +6,8 @@
 #   uv venv .venv-pilotdb --python 3.11
 #   source .venv-pilotdb/bin/activate
 #   uv pip install pyyaml duckdb
-#   git clone --depth 1 https://github.com/uiuc-kang-lab/PilotDB.git /tmp/PilotDB
-#   uv pip install -e /tmp/PilotDB
+#   git clone --depth 1 https://github.com/uiuc-kang-lab/PilotDB.git ~/PilotDB
+#   uv pip install -e ~/PilotDB
 #   uv pip install "sqlglot==26.30.0"   # PilotDB breaks with sqlglot >= 28
 
 # ---- Memory settings (override via env vars) ----
@@ -44,7 +44,9 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 # List of scenarios to run
 scenarios=(${SCENARIOS:-gaia_dr3_shuffled_pan})
-# All scenarios: synth10_pan synth50_pan taxi_pan taxi_zoom sdss_100cols_pan
+# All scenarios (see experiment_scenarios.yaml):
+#   exploration: synth10_300M_pan_sel1 synth50_pan_sel1 taxi_zoom gaia_dr3_pan ebird_us_pan
+#   random:      gaia_dr3_random ebird_us_random taxi_random synth10_300M_random_sel1
 
 # Define the number of measure columns to test
 num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
@@ -143,16 +145,25 @@ do
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 
-                sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
+                if sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
                     --setenv=DUCKDB_MEMORY_LIMIT="$DUCKDB_MEMORY_LIMIT" \
                     --setenv=DUCKDB_TEMP_DIR="$DUCKDB_TEMP_DIR" \
                     --working-directory="$PROJECT_ROOT" \
                     "$PROJECT_ROOT/.venv-pilotdb/bin/python" "$SCRIPT_DIR/run_pilotdb_queries.py" \
                     --sql-file "$sql_file" \
                     --error "$error_bound" \
-                    --out "$out_file"
-
-                echo "[run $run] Completed scenario=$scenario mcols=$num_measures error=$error_bound."
+                    --out "$out_file"; then
+                    if [[ -s "$out_file" ]]; then
+                        echo "[run $run] Completed scenario=$scenario mcols=$num_measures error=$error_bound."
+                    else
+                        echo "[run $run] FAILED scenario=$scenario mcols=$num_measures error=$error_bound: output file missing or empty ($out_file)."
+                        rm -f "$out_file"
+                    fi
+                else
+                    status=$?
+                    echo "[run $run] FAILED scenario=$scenario mcols=$num_measures error=$error_bound with exit=$status."
+                    rm -f "$out_file"
+                fi
             done
         done
     done

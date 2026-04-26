@@ -12,8 +12,8 @@
 #   # Run only VALINOR-S with specific error bounds:
 #   APPROACHES="valinor_s" ERROR_BOUNDS="0.05 0.1" ./exp_valinor.sh
 #
-#   # Run both approaches for taxi_pan with 2 runs:
-#   SCENARIOS="taxi_pan" NUM_RUNS=2 ./exp_valinor.sh
+#   # Run both approaches for taxi_zoom with 2 runs:
+#   SCENARIOS="taxi_zoom" NUM_RUNS=2 ./exp_valinor.sh
 #
 #   # Run only VALINOR-A, starting from run 3:
 #   APPROACHES="valinor_a" RUN_START=3 ./exp_valinor.sh
@@ -69,6 +69,16 @@ _mem_gb=${MEM_LIMIT%[Gg]}
 JVM_XMX=${JVM_XMX:-$(( _mem_gb - 2 ))G}
 _jvm_gb=${JVM_XMX%[Gg]}
 
+# Extra JVM options (e.g., -Dvalinor.mmap.dir=/tmp for mmap partition path)
+# Chronicle Bytes requires these --add-opens on Java 17+
+JVM_EXTRA_OPTS=${JVM_EXTRA_OPTS:-}
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/java.lang=ALL-UNNAMED"
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/java.io=ALL-UNNAMED"
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/java.util=ALL-UNNAMED"
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+JVM_EXTRA_OPTS="$JVM_EXTRA_OPTS --add-opens=java.base/java.nio=ALL-UNNAMED"
+
 echo "=== Memory budget (Valinor) ==="
 echo "  Cgroup cap (MEM_LIMIT):  $MEM_LIMIT"
 echo "  JVM heap cap (JVM_XMX):  $JVM_XMX"
@@ -80,8 +90,16 @@ approaches=(${APPROACHES:-valinor_a valinor_s})
 
 # List of scenarios to run
 scenarios=(${SCENARIOS:-gaia_dr3_pan})
-# All scenarios: synth10_{50M,100M,200M,500M}_pan_sel1 synth10_100M_pan_sel{001,01,5,10}
-#                synth50_pan_sel1 taxi_pan taxi_zoom gaia_dr3_pan
+# All scenarios:
+#   pan/zoom (visual exploration):
+#     synth10_{50M,100M,300M,500M,1B}_pan_sel1
+#     synth10_300M_pan_sel{001,01,5,10}
+#     synth50_pan_sel1 taxi_zoom gaia_dr3_pan ebird_us_pan
+#   random (uniform): gaia_dr3_random ebird_us_random taxi_random synth10_300M_random_sel1
+#
+# Convenience groupings (override SCENARIOS to use):
+#   SCENARIOS_EXPLORATION="synth10_300M_pan_sel1 taxi_zoom gaia_dr3_pan ebird_us_pan"
+#   SCENARIOS_RANDOM="gaia_dr3_random ebird_us_random taxi_random synth10_300M_random_sel1"
 
 # Error bounds to sweep
 error_bounds=(${ERROR_BOUNDS:-0 0.01 0.02 0.05 0.1})
@@ -104,6 +122,12 @@ num_runs=${NUM_RUNS:-1}
 # Start run index
 run_start=${RUN_START:-1}
 run_end=$((run_start + num_runs - 1))
+
+# Index construction parameters
+# RESOLUTION = partitions per axis for the initial uniform grid (G×G cells)
+resolution_list=(${RESOLUTION:-500})
+# SUBTILE_RATIO = fraction of G² cells that get query-biased sub-tiling
+subtile_ratio=${SUBTILE_RATIO:-0.2}
 
 # ---- Helper ----
 
@@ -139,6 +163,8 @@ do
     do
         for scenario in "${scenarios[@]}"
         do
+            for resolution in "${resolution_list[@]}"
+            do
             results_dir="${results_base}/${scenario}/${subdir}"
             mkdir -p "$results_dir"
             for num_measures in "${num_measures_list[@]}"
@@ -159,29 +185,46 @@ do
                         fi
                     fi
 
-                    out_file="${results_dir}results_mcols${num_measures}_error${error_bound}_run${run}.csv"
+                    # Build filename: include resolution and subtile ratio only if non-default
+                    out_name="results_mcols${num_measures}_error${error_bound}"
+                    out_name="${out_name}_res${resolution}_str${subtile_ratio}"
+                    out_name="${out_name}_run${run}.csv"
+                    out_file="${results_dir}${out_name}"
                     if [[ -f "$out_file" ]]; then
                         echo "Skipping existing result: $out_file"
                         continue
                     fi
-                    echo "[$approach] Running scenario=$scenario mcols=$num_measures error=$error_bound run=$run..."
+                    echo "[$approach] Running scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution str=$subtile_ratio run=$run..."
                     # Force cold disk reads for reproducible initialization timing
                     sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-                    sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
+                    if sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
                         "$JAVA" -Xmx"$JVM_XMX" -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 \
-                        -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+                        -Djava.library.path="$LIBPATH" $JVM_EXTRA_OPTS -jar target/experiments.jar \
                         -c timeApproximateQueries \
                         -scenario "$scenario" \
                         -configFile "$config_file" \
                         -initMode queryBiased \
                         -numMeasures $num_measures \
                         -errorBound $error_bound \
+                        -resolution $resolution \
+                        -subtileRatio $subtile_ratio \
                         -run $run \
                         $extra_args \
-                        -out "$out_file"
-                    echo "[$approach] Completed scenario=$scenario mcols=$num_measures error=$error_bound run=$run."
+                        -out "$out_file"; then
+                        if [[ -s "$out_file" ]]; then
+                            echo "[$approach] Completed scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run."
+                        else
+                            echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run: output file missing or empty ($out_file)."
+                            rm -f "$out_file"
+                        fi
+                    else
+                        status=$?
+                        echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run with exit=$status."
+                        rm -f "$out_file"
+                    fi
                 done
             done
+            done  # resolution
         done
     done
 done

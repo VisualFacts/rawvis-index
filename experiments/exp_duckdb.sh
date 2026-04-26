@@ -68,12 +68,15 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 
 # List of scenarios to run (override via env var)
+# All scenarios (see experiment_scenarios.yaml):
+#   exploration: synth10_300M_pan_sel1 synth50_pan_sel1 taxi_zoom gaia_dr3_pan ebird_us_pan
+#   random:      gaia_dr3_random ebird_us_random taxi_random synth10_300M_random_sel1
 scenarios=(${SCENARIOS:-gaia_dr3_pan})
 
 
 # DuckDB execution modes (override via env var)
-modes=(${MODES:-table})
-# Available modes: table directCSV spatialIndex
+modes=(${MODES:-tableProjected})
+# Available modes: tableProjected table directCSV spatialIndex
 
 # Define the number of measure columns to test (override via env var)
 num_measures_list=(${NUM_MEASURES:-1 2 4 6 8})
@@ -105,7 +108,7 @@ do
                 echo "Running DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run..."
                 # Force cold disk reads for reproducible initialization timing
                 sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
-                sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
+                if sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
                     --setenv=DUCKDB_MEMORY_LIMIT="$DUCKDB_MEMORY_LIMIT" \
                     --setenv=DUCKDB_TEMP_DIR="$DUCKDB_TEMP_DIR" \
                     "$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
@@ -115,8 +118,18 @@ do
                     -duckDbMode "$mode" \
                     -numMeasures $num_measures \
                     -run $run \
-                    -out "$out_file"
-                echo "Completed DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run."
+                    -out "$out_file"; then
+                    if [[ -s "$out_file" ]]; then
+                        echo "Completed DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run."
+                    else
+                        echo "FAILED DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run: output file missing or empty ($out_file)."
+                        rm -f "$out_file"
+                    fi
+                else
+                    status=$?
+                    echo "FAILED DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run with exit=$status."
+                    rm -f "$out_file"
+                fi
             done
         done
     done
