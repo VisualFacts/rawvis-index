@@ -1,6 +1,6 @@
 datasets:
   synth10_1M:
-    csv: /data-nonraid/maroulis/data/data_10_cols_1M.csv
+    csv: /data/smaroulis/synth10_1M.csv
     hasHeader: false
     delimiter: ','
     xColumn: 0
@@ -9,8 +9,8 @@ datasets:
     bounds: "0:1000,0:1000"
     objectCount: 1000000
     validationFilters: []
-  synth10:
-    csv: /data-nonraid/maroulis/data/data_10_cols.csv
+  synth10_100M:
+    csv: /home/smaroulis/data/synth10_100M.csv
     hasHeader: false
     delimiter: ','
     xColumn: 0
@@ -19,8 +19,28 @@ datasets:
     bounds: "0:1000,0:1000"
     objectCount: 100000000
     validationFilters: []
+  synth10_50M:
+    csv: /home/smaroulis/data/synth10_50M.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9]
+    bounds: "0:1000,0:1000"
+    objectCount: 50000000
+    validationFilters: []
+  synth10_300M:
+    csv: /home/smaroulis/data/synth10_300M.csv
+    hasHeader: false
+    delimiter: ','
+    xColumn: 0
+    yColumn: 1
+    measureCols: [2,3,4,5,6,7,8,9]
+    bounds: "0:1000,0:1000"
+    objectCount: 300000000
+    validationFilters: []
   synth10_500M:
-    csv: /data-nonraid/maroulis/data/data_10_cols_500M.csv
+    csv: /home/smaroulis/data/synth10_500M.csv
     hasHeader: false
     delimiter: ','
     xColumn: 0
@@ -29,19 +49,19 @@ datasets:
     bounds: "0:1000,0:1000"
     objectCount: 500000000
     validationFilters: []
-  synth50:
-    csv: /data-nonraid/maroulis/data/data_50_cols.csv
+  synth10_1B:
+    csv: /home/smaroulis/data/synth10_1B.csv
     hasHeader: false
     delimiter: ','
     xColumn: 0
     yColumn: 1
-    measureCols: [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49]
+    measureCols: [2,3,4,5,6,7,8,9]
     bounds: "0:1000,0:1000"
-    objectCount: 100000000
+    objectCount: 1000000000
     validationFilters: []
   taxi:
-    csv: /data-nonraid/maroulis/data/taxi_data/yellow_tripdata_2014_cleaned.csv
-    hasHeader: false
+    csv: /home/smaroulis/data/yellow_tripdata_2013_2014_cleaned.csv
+    hasHeader: true
     delimiter: ','
     xColumn: 5
     yColumn: 6
@@ -55,58 +75,13 @@ datasets:
     #   passenger_count(3): CV=0.49, discrete 1-9
     #   tip_amount(15):   CV=1.83, 57% zeros (cash not recorded)
     #   tolls_amount(16): CV=5.50, 97% zeros
+    # Data: merged 2013+2014, pre-cleaned (zero coords, invalid geo, total_amount<=0 or >500 removed)
     measureCols: [12, 17, 4, 3]
     bounds: "-74.106216:-73.842545,40.676993:40.839788"
-    objectCount: 165000000
-    validationFilters:
-      - "12<0"
-      - "12>400"
-      - "4>1000"
-  sdss:
-    csv: /data-nonraid/maroulis/data/sdss
-    hasHeader: false
-    delimiter: '\t'
-    nullstr: '\N'
-    xColumn: 397   # ra (Right Ascension)
-    yColumn: 398   # dec (Declination)
-    # Measure columns (0-indexed): psfFlux_u(41), psfFlux_r(43), psfMag_u(51), psfMag_r(53),
-    #   petroMag_u(71), petroMag_r(73), extinction_u(414), extinction_r(416)
-    # measureCols: [41, 43, 51, 53, 71, 73, 414, 416]
-    measureCols: [41, 43, 51, 53, 71, 73, 414, 416]    
-    bounds: "0:360,-9.67629:68.5575"
-    objectCount: 40921983
-    validationFilters: []
-  sdss_100cols:
-    csv: /data-nonraid/maroulis/data/sdss_100cols.tsv
-    hasHeader: false
-    delimiter: '\t'
-    nullstr: '\N'
-    xColumn: 77   # ra (Right Ascension) - original 397, in range 391-420 -> position 77 (70 + 7)
-    yColumn: 78   # dec (Declination) - original 398, in range 391-420 -> position 78 (70 + 8)
-    # 100 columns: original cols 30-99 (70 cols) + original cols 390-419 (30 cols)
-    # Measure column mapping (original -> new):
-    #   psfFlux_u(41->11), psfFlux_r(43->13), extinction_u(414->94), extinction_r(416->96)
-    # Excluded: psfMag_u, psfMag_r, petroMag_u, petroMag_r (contain -9999 sentinel values causing CV > 9)
-    measureCols: [94, 96, 11, 13]
-    bounds: "0:360,-9.67629:68.5575"
-    objectCount: 40921983
-    validationFilters: []
-  sdss_10cols:
-    csv: /data-nonraid/maroulis/data/sdss_10cols.tsv
-    hasHeader: false
-    delimiter: '\t'
-    nullstr: '\N'
-    xColumn: 6    # ra (Right Ascension) 397 -> 6
-    yColumn: 7    # dec (Declination) 398 -> 7
-    # Columns in pruned file (original index -> new index):
-    #   psfFlux_u(41->0), psfFlux_r(43->1), psfMag_u(51->2), psfMag_r(53->3),
-    #   petroMag_u(71->4), petroMag_r(73->5), extinction_u(414->8), extinction_r(416->9)
-    measureCols: [8, 9, 0, 1]
-    bounds: "0:360,-9.67629:68.5575"
-    objectCount: 40921983
+    objectCount: 331713605
     validationFilters: []
   gaia_dr3:
-    csv: /data-nonraid/maroulis/data/gaia/gaia_dr3_benchmark.csv
+    csv: /data/smaroulis/gaia_dr3_benchmark_shuffled.csv
     hasHeader: false
     delimiter: ','
     xColumn: 0    # ra (Right Ascension, degrees)
@@ -125,72 +100,43 @@ datasets:
     bounds: "0:360,-90:90"
     objectCount: 328022175
     validationFilters: []
-  gaia_dr3_shuffled:
-    csv: /data-nonraid/maroulis/data/gaia/gaia_dr3_benchmark_shuffled_250M.csv
-    hasHeader: false
-    delimiter: ','
-    xColumn: 0
-    yColumn: 1
-    measureCols: [5, 2, 6, 7, 3, 4, 8, 13]
-    bounds: "0:360,-90:90"
-    objectCount: 250000000
-    validationFilters: []
-  gaia_dr3_test:
-    csv: /data-nonraid/maroulis/data/gaia/gaia_dr3_benchmark_test_10pct.csv
-    hasHeader: false
-    delimiter: ','
-    xColumn: 0
-    yColumn: 1
-    measureCols: [5, 2, 6, 7, 3, 4, 8, 13]
-    bounds: "0:360,-90:90"
-    objectCount: 32802218
-    validationFilters: []
+  ebird_us:
+    csv: /data/smaroulis/ebd_US_2023_2026.txt
+    hasHeader: true
+    delimiter: '\t'
+    xColumn: 29    # LONGITUDE
+    yColumn: 28    # LATITUDE
+    # Columns (0-indexed): standard eBird Basic Dataset layout
+    #   10=OBSERVATION COUNT, 28=LATITUDE, 29=LONGITUDE,
+    #   40=DURATION MINUTES, 41=EFFORT DISTANCE KM, 43=NUMBER OBSERVERS
+    # Measure ordering by increasing CV (2023-2026 filtered, excludes 'X'):
+    #   DURATION(40): CV=1.03, 4.6% null, avg=89.9, median=63
+    #   DISTANCE(41): CV=1.66, 25.8% null, avg=3.13, median=1.65
+    #   NUM_OBSERVERS(43): CV=4.22, 0.25% null, avg=2.52, median=1
+    #   OBS_COUNT(10): CV=134.1, 2.0% "X"→NaN, avg=13.6, median=2
+    # Data: eBird US, Feb 2026 release, filtered to 2023-01-01..2026-02-28
+    #   ~420M rows, ~155 GB TSV, not sorted
+    #   Filtered to CONUS only (no Alaska, Hawaii, or territories)
+    #   Lat [24.03, 49.36], Lon [-125.96, -66.24]
+    measureCols: [40, 41, 43, 10]
+    nullstr: 'X'
+    bounds: "-125.96:-66.24,24.03:49.36"
+    objectCount: 420300000
+    validationFilters:
+      - "40>1440.0"    # Remove checklists > 24 hours (DURATION MINUTES)
+      - "43<1.0"       # Remove records with negative observers (NUMBER OBSERVERS)
 scenarios:
-  synth10_pan:
-    dataset: synth10
-    q0:
-      rect: "544:574,323:353"
-      filters: {}
-    minShift: 10
-    maxShift: 20
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth50_pan:
-    dataset: synth50
-    q0:
-      rect: "544:574,323:353"
-      filters: {}
-    minShift: 10
-    maxShift: 20
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  # Selectivity sweep for synth50 — 4 levels spanning 3 orders of magnitude.
-  # All share the same trajectory: centre (700, 170), constant shift=10% of bbox side,
-  # original N/W-biased direction weights. Centre chosen so the NW drift over 99 steps
-  # stays inside [0,1000]x[0,1000] even at 5% (verified with simulate_query_sequence.py).
-  synth50_pan_sel001:
-    dataset: synth50
+  # ── synth10: selectivity × scalability "plus" design ──────────────────────────
+  # Centre (700, 170), constant shift=10, N/W-biased direction weights.
+  # Selectivity axis: fix dataset at 300M rows, vary query rect size.
+  # Scalability axis: fix selectivity at 1%, vary dataset size.
+  # side = 1000 × √sel:  0.01%→10, 0.1%→≈32, 1%→100, 5%→≈224, 10%→≈316.
+
+  # --- Selectivity axis (300M rows) ---
+  synth10_300M_pan_sel001:
+    dataset: synth10_300M
     q0:
       rect: "695:705,165:175"   # 0.01% sel, side=10
-      filters: {}
     minShift: 10
     maxShift: 10
     zoomFactor: 0
@@ -204,11 +150,10 @@ scenarios:
       SW: 0.5
       W: 1.0
       NW: 1.0
-  synth50_pan_sel01:
-    dataset: synth50
+  synth10_300M_pan_sel01:
+    dataset: synth10_300M
     q0:
-      rect: "684:716,154:186"   # 0.10% sel, side≈32
-      filters: {}
+      rect: "684:716,154:186"   # 0.1% sel, side≈32
     minShift: 10
     maxShift: 10
     zoomFactor: 0
@@ -222,28 +167,27 @@ scenarios:
       SW: 0.5
       W: 1.0
       NW: 1.0
-  synth50_pan_sel1:
-    dataset: synth50
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-      filters: {}
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth50_pan_sel5:
-    dataset: synth50
+  synth10_300M_pan_sel5:
+    dataset: synth10_300M
     q0:
       rect: "588:812,58:282"    # 5% sel, side≈224
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
+  synth10_300M_pan_sel10:
+    dataset: synth10_300M
+    q0:
+      rect: "542:858,12:328"    # 10% sel, side≈316
       filters: {}
     minShift: 10
     maxShift: 10
@@ -259,13 +203,46 @@ scenarios:
       W: 1.0
       NW: 1.0
 
-  # 500M-row all-numeric synth10 dataset (~51 GB) — replicates gaia DR3 full shuffled I/O profile.
-  # Centre (700, 170), constant shift=10%, N/W-biased weights. Selectivity sweep matching synth50 levels.
-  synth10_500M_pan_sel01:
-    dataset: synth10_500M
+  # --- Scalability axis (1% selectivity) ---
+  synth10_50M_pan_sel1:
+    dataset: synth10_50M
     q0:
-      rect: "684:716,154:186"   # 0.1% sel, side≈32
-      filters: {}
+      rect: "650:750,120:220"   # 1% sel, side=100
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
+  synth10_100M_pan_sel1:
+    dataset: synth10_100M
+    q0:
+      rect: "650:750,120:220"   # 1% sel, side=100
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.0
+      NE: 0.5
+      E: 0.5
+      SE: 0.5
+      S: 0.5
+      SW: 0.5
+      W: 1.0
+      NW: 1.0
+  # synth10_300M_pan_sel1 — default synth10 dataset
+  synth10_300M_pan_sel1:
+    dataset: synth10_300M
+    q0:
+      rect: "650:750,120:220"   # 1% sel, side=100
     minShift: 10
     maxShift: 10
     zoomFactor: 0
@@ -283,7 +260,6 @@ scenarios:
     dataset: synth10_500M
     q0:
       rect: "650:750,120:220"   # 1% sel, side=100
-      filters: {}
     minShift: 10
     maxShift: 10
     zoomFactor: 0
@@ -297,12 +273,10 @@ scenarios:
       SW: 0.5
       W: 1.0
       NW: 1.0
-
-  taxi_pan:
-    dataset: taxi
+  synth10_1B_pan_sel1:
+    dataset: synth10_1B
     q0:
-      rect: "-73.99831454:-73.97500902,40.7151612032:40.73263959"
-      filters: {}
+      rect: "650:750,120:220"   # 1% sel, side=100
     minShift: 10
     maxShift: 10
     zoomFactor: 0
@@ -316,47 +290,9 @@ scenarios:
       SW: 0.5
       W: 1.0
       NW: 1.0
-
-  # Queries pan along Right Ascension within the primary SDSS imaging stripe (Dec ≈ -3° to 0°), where photometric data density is highest.
-  sdss_100cols_pan:
-    dataset: sdss_100cols
-    q0:
-      rect: "180:190,-3:0"
-      filters: {}
-    minShift: 5
-    maxShift: 12
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 0.2
-      NE: 0.8
-      E: 3.0
-      SE: 0.8
-      S: 0.2
-      SW: 0.3
-      W: 1.0
-      NW: 0.3
-
-  sdss_10cols_pan:
-    dataset: sdss_10cols
-    q0:
-      rect: "180:190,-3:0"
-      filters: {}
-    minShift: 5
-    maxShift: 12
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 0.2
-      NE: 0.8
-      E: 3.0
-      SE: 0.8
-      S: 0.2
-      SW: 0.3
-      W: 1.0
-      NW: 0.3
 
   # Gaia DR3 spatial benchmark (10% sample, 328M rows, 14 columns).
+
   # Scenario: astronomer surveys the Galactic plane starting from the GC (RA≈266°, Dec≈-29°),
   # scanning outward (NE in equatorial coords) to study stellar populations and dust structure.
   # Viewport: 10° x 6° (~0.093% of full-sky area, ~4-5M stars per query).
@@ -365,7 +301,6 @@ scenarios:
     dataset: gaia_dr3
     q0:
       rect: "261:271,-32:-26"
-      filters: {}
     minShift: 5
     maxShift: 12
     zoomFactor: 0
@@ -379,49 +314,6 @@ scenarios:
       SW: 0.7
       W: 0.5
       NW: 0.8
-
-  # Gaia DR3 shuffled — same query pattern on the randomly shuffled CSV.
-  # Used to evaluate DuckDB without zone-map advantage from RA-sorted ordering.
-  gaia_dr3_shuffled_pan:
-    dataset: gaia_dr3_shuffled
-    q0:
-      rect: "261:271,-32:-26"
-      filters: {}
-    minShift: 5
-    maxShift: 12
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 2.0
-      E: 1.5
-      SE: 0.8
-      S: 0.5
-      SW: 0.7
-      W: 0.5
-      NW: 0.8
-
-  # Gaia DR3 10% test subset — for quick validation of NaN handling and correctness.
-  # Same query pattern as gaia_dr3_pan but on the 10% modular sample (32.8M rows).
-  gaia_dr3_test_pan:
-    dataset: gaia_dr3_test
-    q0:
-      rect: "261:271,-32:-26"
-      filters: {}
-    minShift: 5
-    maxShift: 12
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 2.0
-      E: 1.5
-      SE: 0.8
-      S: 0.5
-      SW: 0.7
-      W: 0.5
-      NW: 0.8
-
   # Realistic exploration: analyst investigates taxi pickups in Manhattan.
   # Landscape viewport (0.12 x 0.06 deg, ~16:10 aspect at this latitude).
   # All pan phases are clamped to stay on Manhattan.
@@ -430,7 +322,6 @@ scenarios:
     dataset: taxi
     q0:
       rect: "-73.99:-73.94,40.745:40.77"
-      filters: {}
     phases:
       # Phase 1: Orient -- user pans a few times to center on Manhattan
       - name: orient
@@ -473,3 +364,76 @@ scenarios:
         maxShift: 15
         directionWeights: { N: 1, NE: 1, E: 1, SE: 1, S: 1, SW: 1, W: 1, NW: 1 }
         clampToBounds: "-74.05:-73.88,40.70:40.83"
+
+  # eBird US (2023-2026): ornithologist following spring migration from the
+  # Rio Grande Valley to the Mid-Atlantic.
+  # Start: South Texas coast / RGV (-98.5 to -95.5, 26 to 28) — the #1
+  #   birding destination in the US during spring, where neotropical migrants
+  #   first make landfall after crossing the Gulf of Mexico.
+  # Path: NE through the Central/Mississippi Flyway — Great Plains, Ozarks,
+  #   Ohio Valley, curving toward the Mid-Atlantic coast.
+  # Viewport: 3° × 2° (~300 km × 222 km) — continental-scale patterns.
+  # Shift 10-18%: slightly larger steps to cover more ground in 100 queries,
+  #   expected total displacement ~20° E, ~12° N → endpoint near Chesapeake.
+  # Selectivity: ~2-3% at start (RGV), rising to ~5-6% in the dense NE.
+  ebird_us_pan:
+    dataset: ebird_us
+    q0:
+      rect: "-98.5:-95.5,26:28"
+    minShift: 10
+    maxShift: 18
+    zoomFactor: 0
+    seqCount: 100
+    directionWeights:
+      N: 1.5
+      NE: 3.0
+      E: 2.0
+      SE: 0.3
+      S: 0.2
+      SW: 0.1
+      W: 0.2
+      NW: 0.3
+
+  # ── Non-exploration workloads (random) ─────────────────────────────────────
+  # --- Uniform random ------------------------------------
+  # Centres are sampled from a per-dataset spatial reservoir (single seeded
+  # CSV pass, cached under experiments/query_sequences/reservoirs/), so the
+  # query distribution follows the data distribution. The fixed (sx, sy) is
+  # calibrated so that the AVERAGE per-query selectivity equals `selectivity`.
+  # Per-query selectivity varies with local data
+  # density on real datasets; on the uniform synthetic dataset the closedForm
+  # mode collapses to plain uniform-domain queries with constant selectivity.
+  # Boundary policy: rectangles that overflow the bounding box are shifted
+  # inward (area preserved → mean selectivity preserved exactly).
+  gaia_dr3_random:
+    dataset: gaia_dr3
+    workload:
+      type: random
+      seqCount: 300
+      selectivity: 0.01
+      seed: 0
+
+  ebird_us_random:
+    dataset: ebird_us
+    workload:
+      type: random
+      seqCount: 300
+      selectivity: 0.01
+      seed: 0
+
+  taxi_random:
+    dataset: taxi
+    workload:
+      type: random
+      seqCount: 300
+      selectivity: 0.01
+      seed: 0
+
+  synth10_300M_random_sel1:
+    dataset: synth10_300M
+    workload:
+      type: random
+      seqCount: 300
+      selectivity: 0.01
+      extentMode: closedForm   # synthetic data is uniform: skip the reservoir build
+      seed: 0
