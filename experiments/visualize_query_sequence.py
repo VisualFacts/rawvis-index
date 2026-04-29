@@ -16,10 +16,10 @@ Usage:
         -out experiments/taxi_zoom_queries.txt
 
     # 2. Visualize:
-    python3 visualize_phased_sequence.py taxi_zoom_queries.txt
+    python3 visualize_query_sequence.py taxi_zoom_queries.txt
 
     # Or specify a scenario name to generate + visualize in one step:
-    python3 visualize_phased_sequence.py --scenario taxi_zoom
+    python3 visualize_query_sequence.py --scenario taxi_zoom
 """
 
 import json
@@ -183,14 +183,22 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
         <div id="query-list"></div>
     </div>
     <script>
-    const map = L.map('map').setView([40.76, -73.98], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
-    }).addTo(map);
-
     const queries = __QUERIES_JSON__;
     const phases = __PHASES_JSON__;
     const phaseColors = __COLORS_JSON__;
+    const coordinateMode = __COORDINATE_MODE__;
+
+    const map = coordinateMode === 'cartesian'
+        ? L.map('map', { crs: L.CRS.Simple, minZoom: -5 })
+        : L.map('map');
+
+    if (coordinateMode === 'geographic') {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
+        }).addTo(map);
+    } else {
+        document.getElementById('map').style.background = '#fafafa';
+    }
 
     let currentIdx = -1, playing = false, playTimer = null;
     const trailLayer = L.layerGroup().addTo(map);
@@ -318,8 +326,14 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 </html>'''
 
 
-def visualize(queries, output_file=None):
+def is_geographic(queries):
+    return all(-180 <= q["xLow"] <= 360 and -180 <= q["xHigh"] <= 360 and
+               -90 <= q["yLow"] <= 90 and -90 <= q["yHigh"] <= 90 for q in queries)
+
+
+def visualize(queries, output_file=None, open_browser=True):
     phases = detect_phases(queries)
+    coordinate_mode = "geographic" if is_geographic(queries) else "cartesian"
 
     # Build JSON data for the template
     queries_json = json.dumps([{
@@ -341,6 +355,7 @@ def visualize(queries, output_file=None):
     html = html.replace('__QUERIES_JSON__', queries_json)
     html = html.replace('__PHASES_JSON__', phases_json)
     html = html.replace('__COLORS_JSON__', colors_json)
+    html = html.replace('__COORDINATE_MODE__', json.dumps(coordinate_mode))
 
     if output_file is None:
         output_file = os.path.join(os.path.dirname(__file__), "query_sequence_map.html")
@@ -348,15 +363,17 @@ def visualize(queries, output_file=None):
         f.write(html)
 
     print(f"Map saved to {output_file}")
+    print(f"Coordinate mode: {coordinate_mode}")
     print(f"Total queries: {len(queries)}")
     for p in phases:
         count = p["end"] - p["start"] + 1
         print(f"  {p['op']}: {count} queries (#{p['start']}-#{p['end']})")
 
-    try:
-        webbrowser.open("file://" + os.path.abspath(output_file))
-    except Exception:
-        pass
+    if open_browser:
+        try:
+            webbrowser.open("file://" + os.path.abspath(output_file))
+        except Exception:
+            pass
 
     return output_file
 
@@ -369,6 +386,7 @@ if __name__ == "__main__":
     group.add_argument("query_file", nargs="?", help="Path to query file (from generateAndSaveQuerySequence)")
     group.add_argument("--scenario", help="Scenario name to generate and visualize (e.g. taxi_zoom)")
     parser.add_argument("-o", "--output", help="Output HTML file path")
+    parser.add_argument("--no-open", action="store_true", help="Do not open the generated HTML in a browser")
     args = parser.parse_args()
 
     if args.scenario:
@@ -380,4 +398,4 @@ if __name__ == "__main__":
 
     queries = load_queries(query_file)
     out = args.output or os.path.join(os.path.dirname(__file__), f"{os.path.splitext(os.path.basename(query_file))[0]}_map.html")
-    visualize(queries, out)
+    visualize(queries, out, open_browser=not args.no_open)
