@@ -44,6 +44,7 @@ import gr.athenarc.imsi.visualfacts.experiments.util.SpatialReservoir;
 import gr.athenarc.imsi.visualfacts.experiments.util.ExtentCalibrator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.UniformRandomQueryGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.ClusteredQueryGenerator;
 import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
@@ -99,6 +100,12 @@ public class Experiments {
 
     @Parameter(names = "--samplingOnly", description = "VALINOR-S baseline: disable aggregate metadata reuse, use plain sampling")
     private boolean samplingOnly = false;
+
+    @Parameter(names = "-maxQueries", description = "Truncate the generated query sequence to the first N queries. " +
+            "If unset or <= 0, runs the full sequence as configured in the scenario YAML. " +
+            "Use to run baselines (e.g. DuckDB, PilotDB) on a shorter prefix while letting Valinor consume the full workload; " +
+            "the truncated sequence is the deterministic prefix of the full one, so first-N queries are byte-identical across systems.")
+    private Integer maxQueries;
 
     @Parameter(names = "--help", help = true, description = "Displays help")
     private boolean help;
@@ -196,6 +203,9 @@ public class Experiments {
                 Preconditions.checkNotNull(duckDbMode,
                         "You must specify the duckDbMode parameter. Mode can be: directCSV, table, spatialIndex");
                 timeDuckDBQueries();
+                break;
+            case "printQuerySequenceCount":
+                printQuerySequenceCount();
                 break;
             case "generatePilotDBSqlFile":
                 generatePilotDBSqlFile();
@@ -427,6 +437,21 @@ public class Experiments {
     }
 
     private List<Query> generateQuerySequence(Schema schema) throws IOException {
+        List<Query> sequence = generateFullQuerySequence(schema);
+        if (maxQueries != null && maxQueries > 0 && maxQueries < sequence.size()) {
+            LOG.info("Truncating query sequence from {} to first {} queries (-maxQueries override)",
+                    sequence.size(), maxQueries);
+            sequence = new ArrayList<>(sequence.subList(0, maxQueries));
+        }
+        return sequence;
+    }
+
+    private void printQuerySequenceCount() throws IOException {
+        requireScenario("printQuerySequenceCount");
+        System.out.println("QUERY_SEQUENCE_COUNT=" + generateQuerySequence(schema).size());
+    }
+
+    private List<Query> generateFullQuerySequence(Schema schema) throws IOException {
         // Non-exploration workload (random) takes precedence.
         if (scenarioConfig.hasWorkload()) {
             WorkloadConfig wc = scenarioConfig.getWorkload();
@@ -435,9 +460,11 @@ public class Experiments {
             switch (type) {
                 case "random":
                     return buildRandomWorkload(wc, schema);
+                case "clustered":
+                    return buildClusteredWorkload(wc, schema);
                 default:
                     throw new IllegalArgumentException("Unknown workload type: " + wc.getType()
-                            + " (supported: random)");
+                            + " (supported: random, clustered)");
             }
         }
 
@@ -494,6 +521,47 @@ public class Experiments {
             LOG.info("Random workload realised per-query selectivity (over reservoir): {}", stats);
         }
         return new UniformRandomQueryGenerator(wc.getSeed(), extent[0], extent[1], bounds, reservoir)
+                .generateQuerySequence(wc.getSeqCount(), schema);
+    }
+
+    /**
+     * Clustered (Gaussian Mixture Foci) workload. Centres are sampled from
+     * {@code N(focus, σ_f · I)} per query. Extent (sx, sy) is calibrated
+     * exactly as for {@link #buildRandomWorkload}, so the only difference
+     * from the uniform-random workload is the centre distribution.
+     */
+    private List<Query> buildClusteredWorkload(WorkloadConfig wc, Schema schema) throws IOException {
+        Rectangle bounds = schema.getBounds();
+        double sigma = wc.getSelectivity();
+        String mode = wc.getExtentMode() == null
+                ? WorkloadConfig.EXTENT_MODE_CALIBRATED
+                : wc.getExtentMode();
+        SpatialReservoir reservoir = null;
+        double[] extent;
+        if (WorkloadConfig.EXTENT_MODE_CLOSED_FORM.equalsIgnoreCase(mode)) {
+            extent = ExtentCalibrator.closedForm(sigma, bounds);
+            LOG.info("Clustered workload (closedForm): σ={} → sx={}, sy={} (bounds={})",
+                    sigma, extent[0], extent[1], bounds);
+        } else if (WorkloadConfig.EXTENT_MODE_CALIBRATED.equalsIgnoreCase(mode)) {
+            int reservoirSize = wc.getReservoirSize() != null ? wc.getReservoirSize() : 100_000;
+            Path cacheDir = Paths.get("experiments", "query_sequences", "reservoirs");
+            reservoir = SpatialReservoir.loadOrBuild(
+                    schema, scenarioConfig.getDataset(), cacheDir, reservoirSize, wc.getSeed());
+            extent = ExtentCalibrator.calibrate(reservoir, bounds, sigma);
+            LOG.info("Clustered workload (calibrated): σ={} → sx={}, sy={} (reservoir size={})",
+                    sigma, extent[0], extent[1], reservoir.size());
+        } else {
+            throw new IllegalArgumentException("Unknown extentMode: " + mode
+                    + " (supported: calibrated, closedForm)");
+        }
+
+        double[][] foci = wc.parseFocusCenters();
+        LOG.info("Clustered workload: numFoci={}, focusSpreadFraction={}, foci={}",
+                wc.getNumFoci(), wc.getFocusSpreadFraction(),
+                foci == null ? "<sampled from bounds with seed>" : java.util.Arrays.deepToString(foci));
+
+        return new ClusteredQueryGenerator(wc.getSeed(), extent[0], extent[1], bounds,
+                wc.getNumFoci(), wc.getFocusSpreadFraction(), foci)
                 .generateQuerySequence(wc.getSeqCount(), schema);
     }
 

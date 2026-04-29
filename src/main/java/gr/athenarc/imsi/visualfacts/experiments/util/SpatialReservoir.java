@@ -20,7 +20,7 @@ import gr.athenarc.imsi.visualfacts.DataValidationFilter;
 import gr.athenarc.imsi.visualfacts.Rectangle;
 import gr.athenarc.imsi.visualfacts.Schema;
 import gr.athenarc.imsi.visualfacts.util.csv.CsvReaderConfig;
-import gr.athenarc.imsi.visualfacts.util.csv.UnivocityCsvDoubleRowReader;
+import gr.athenarc.imsi.visualfacts.util.csv.ZsvCsvDoubleRowReader;
 
 /**
  * A deterministic spatial sample of (x, y) points drawn from a dataset using
@@ -146,7 +146,7 @@ public final class SpatialReservoir {
         long rowsAccepted = 0;
         long progressEvery = 5_000_000L;
 
-        UnivocityCsvDoubleRowReader reader = new UnivocityCsvDoubleRowReader();
+        ZsvCsvDoubleRowReader reader = new ZsvCsvDoubleRowReader();
         try {
             reader.open(config);
             double[] row;
@@ -156,15 +156,16 @@ public final class SpatialReservoir {
                     LOG.info("  reservoir build: {} rows scanned, {} accepted",
                             rowsScanned, rowsAccepted);
                 }
-                if (row.length <= xPos || row.length <= yPos) continue;
                 double x = row[xPos];
                 double y = row[yPos];
                 if (Double.isNaN(x) || Double.isNaN(y)) continue;
                 if (x < xLo || x > xHi || y < yLo || y > yHi) continue;
+                // Validation filter semantics (matches ParallelCsvScanner):
+                // predicate TRUE  => row is invalid, drop it.
+                // predicate FALSE => row is valid, keep it.
                 boolean pass = true;
                 for (int i = 0; i < filterCount; i++) {
-                    int p = filterPos[i];
-                    if (p >= row.length || !filterArr[i].test(row[p])) {
+                    if (filterArr[i].test(row[filterPos[i]])) {
                         pass = false;
                         break;
                     }

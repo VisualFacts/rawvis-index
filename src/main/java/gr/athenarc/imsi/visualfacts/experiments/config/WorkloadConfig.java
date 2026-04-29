@@ -46,6 +46,24 @@ public class WorkloadConfig {
     @JsonProperty("reservoirSize")
     private Integer reservoirSize;
 
+    // ----- Clustered (GMF) workload knobs -----
+    // Used only when type == "clustered".
+
+    @JsonProperty("numFoci")
+    private int numFoci = 1;
+
+    /** Gaussian σ per axis as a fraction of the dataset extent. */
+    @JsonProperty("focusSpreadFraction")
+    private double focusSpreadFraction = 0.05;
+
+    /**
+     * Optional explicit focus centres, formatted as a list of "x,y" strings.
+     * If null/empty, foci are sampled uniformly inside the dataset bounds with
+     * the same seed (so the choice is reproducible).
+     */
+    @JsonProperty("focusCenters")
+    private java.util.List<String> focusCenters;
+
     public WorkloadConfig() {
     }
 
@@ -67,10 +85,44 @@ public class WorkloadConfig {
     public Integer getReservoirSize() { return reservoirSize; }
     public void setReservoirSize(Integer reservoirSize) { this.reservoirSize = reservoirSize; }
 
+    public int getNumFoci() { return numFoci; }
+    public void setNumFoci(int numFoci) { this.numFoci = numFoci; }
+
+    public double getFocusSpreadFraction() { return focusSpreadFraction; }
+    public void setFocusSpreadFraction(double focusSpreadFraction) {
+        this.focusSpreadFraction = focusSpreadFraction;
+    }
+
+    public java.util.List<String> getFocusCenters() { return focusCenters; }
+    public void setFocusCenters(java.util.List<String> focusCenters) {
+        this.focusCenters = focusCenters;
+    }
+
+    /**
+     * Parses {@link #focusCenters} into a {@code double[K][2]} array, or
+     * returns {@code null} if no explicit centres were configured.
+     */
+    public double[][] parseFocusCenters() {
+        if (focusCenters == null || focusCenters.isEmpty()) return null;
+        double[][] out = new double[focusCenters.size()][2];
+        for (int i = 0; i < focusCenters.size(); i++) {
+            String[] parts = focusCenters.get(i).split(",");
+            if (parts.length != 2) {
+                throw new IllegalArgumentException(
+                        "focusCenters[" + i + "] must be 'x,y', got '" + focusCenters.get(i) + "'");
+            }
+            out[i][0] = Double.parseDouble(parts[0].trim());
+            out[i][1] = Double.parseDouble(parts[1].trim());
+        }
+        return out;
+    }
+
     @Override
     public String toString() {
         return "WorkloadConfig{type='" + type + "', seqCount=" + seqCount
             + ", selectivity=" + selectivity + ", seed=" + seed
-            + ", extentMode=" + extentMode + ", reservoirSize=" + reservoirSize + "}";
+            + ", extentMode=" + extentMode + ", reservoirSize=" + reservoirSize
+            + ", numFoci=" + numFoci + ", focusSpreadFraction=" + focusSpreadFraction
+            + ", focusCenters=" + focusCenters + "}";
     }
 }
