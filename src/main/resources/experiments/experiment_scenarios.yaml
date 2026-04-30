@@ -126,170 +126,162 @@ datasets:
       - "40>1440.0"    # Remove checklists > 24 hours (DURATION MINUTES)
       - "43<1.0"       # Remove records with negative observers (NUMBER OBSERVERS)
 scenarios:
-  # ── synth10: selectivity × scalability "plus" design ──────────────────────────
-  # Centre (700, 170), constant shift=10, N/W-biased direction weights.
+  # ── synth10: clustered (Gaussian Mixture Foci, K=1) workload ──────────────
+  #
+  # All scenarios share:
+  #   - focus centred at the dataset midpoint (500, 500)
+  #   - focusSpreadFraction = 0.05 (σ = 50 per axis = 5% of the 1000-unit extent)
+  #   - extentMode = closedForm (synth data is uniform, so calibrated == closed-form)
+  #   - seqCount = 100 (matches the uniform-random + clustered budgets)
   # Selectivity axis: fix dataset at 300M rows, vary query rect size.
   # Scalability axis: fix selectivity at 1%, vary dataset size.
-  # side = 1000 × √sel:  0.01%→10, 0.1%→≈32, 1%→100, 5%→≈224, 10%→≈316.
 
   # --- Selectivity axis (300M rows) ---
-  synth10_300M_pan_sel001:
+  synth10_300M_clustered_sel001:
     dataset: synth10_300M
-    q0:
-      rect: "695:705,165:175"   # 0.01% sel, side=10
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_300M_pan_sel01:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.0001        # 0.01%
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_300M_clustered_sel01:
     dataset: synth10_300M
-    q0:
-      rect: "684:716,154:186"   # 0.1% sel, side≈32
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_300M_pan_sel5:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.001         # 0.1%
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_300M_clustered_sel1:
     dataset: synth10_300M
-    q0:
-      rect: "588:812,58:282"    # 5% sel, side≈224
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_300M_pan_sel10:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01          # 1% (default synth10 cell)
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_300M_clustered_sel5:
     dataset: synth10_300M
-    q0:
-      rect: "542:858,12:328"    # 10% sel, side≈316
-      filters: {}
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.05          # 5%
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_300M_clustered_sel10:
+    dataset: synth10_300M
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.10          # 10%
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
 
-  # --- Scalability axis (1% selectivity) ---
-  synth10_50M_pan_sel1:
+  # --- Scalability axis (1% selectivity, vary dataset size) ---
+  synth10_50M_clustered_sel1:
     dataset: synth10_50M
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_100M_pan_sel1:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_100M_clustered_sel1:
     dataset: synth10_100M
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  # synth10_300M_pan_sel1 — default synth10 dataset
-  synth10_300M_pan_sel1:
-    dataset: synth10_300M
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_500M_pan_sel1:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_500M_clustered_sel1:
     dataset: synth10_500M
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
-  synth10_1B_pan_sel1:
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+  synth10_1B_clustered_sel1:
     dataset: synth10_1B
-    q0:
-      rect: "650:750,120:220"   # 1% sel, side=100
-    minShift: 10
-    maxShift: 10
-    zoomFactor: 0
-    seqCount: 100
-    directionWeights:
-      N: 1.0
-      NE: 0.5
-      E: 0.5
-      SE: 0.5
-      S: 0.5
-      SW: 0.5
-      W: 1.0
-      NW: 1.0
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: closedForm
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["500,500"]
+
+  # ── Real-dataset clustered (Gaussian Mixture Foci, K=1) workloads ──────────
+  # Same generator as the synth10 clustered cells, but centred on each
+  # dataset's well-known density hotspot (matching the exploratory zoom-in
+  # target). focusSpreadFraction=0.05 of dataset extent gives a tight focus
+  # well inside the bbox; selectivity=0.01 (1%) and seqCount=100 align with
+  # the random and exploratory budgets for a clean A/B/C comparison.
+  # extentMode=calibrated uses the spatial reservoir to compensate for non-
+  # uniform data density when sizing the (sx, sy) extent.
+  taxi_clustered:
+    dataset: taxi
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: calibrated
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["-73.985,40.758"]    # Times Square
+
+  gaia_dr3_clustered:
+    dataset: gaia_dr3
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: calibrated
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["266.4,-29.0"]       # Galactic Centre (Sgr A*)
+
+  ebird_us_clustered:
+    dataset: ebird_us
+    workload:
+      type: clustered
+      seqCount: 500
+      selectivity: 0.01
+      extentMode: calibrated
+      seed: 0
+      numFoci: 1
+      focusSpreadFraction: 0.05
+      focusCenters: ["-74.95,38.95"]      # Cape May, NJ
 
   # Gaia DR3 spatial benchmark (10% sample, 328M rows, 14 columns).
 
@@ -314,84 +306,109 @@ scenarios:
       SW: 0.7
       W: 0.5
       NW: 0.8
-  # Realistic exploration: analyst investigates taxi pickups in Manhattan.
-  # Landscape viewport (0.12 x 0.06 deg, ~16:10 aspect at this latitude).
-  # All pan phases are clamped to stay on Manhattan.
-  # 100 queries total: q0 + 5 phases (5 + 3 + 60 + 3 + 28 = 99).
-  taxi_zoom:
+  # ── Exploratory scenarios (per-dataset narratives) ─────────────────────
+  # Each dataset gets the exploration pattern that fits its scale and
+  # natural use case. All scenarios use a fixed 10% shift per pan (a
+  # "meaningful viewport drag") and total exactly 100 queries.
+  # No clampToBounds: trajectories are designed (via q0 size + position +
+  # direction bias) to stay well inside the dataset bbox without any clamp.
+
+  # Taxi (NYC Yellow Cab pickups, Manhattan): 5-phase zoom narrative.
+  # An analyst opens the Manhattan overview, briefly orients, zooms 4x onto
+  # Times Square (-73.985, 40.758), explores Midtown block-by-block along
+  # the avenue grid (E-W bias), then zooms back out for a warm-index sweep.
+  # q0: 0.13 x 0.10 deg (Financial District to Harlem).
+  # investigate viewport after 4x zoom: ~0.033 x 0.025 deg (~3 city blocks).
+  # Symmetric direction weights (E:W and N:S balanced) keep the random walk
+  # centred on Times Square; the orient/re_overview phases use a soft safety
+  # clamp set to the Manhattan bbox so the wide viewport never crosses into
+  # the Hudson/East River.
+  taxi_exploratory:
     dataset: taxi
     q0:
-      rect: "-73.99:-73.94,40.745:40.77"
+      rect: "-74.03:-73.90,40.71:40.81"
     phases:
-      # Phase 1: Orient -- user pans a few times to center on Manhattan
       - name: orient
         operation: pan
         count: 5
-        minShift: 8
-        maxShift: 15
+        minShift: 10
+        maxShift: 10
         directionWeights: { N: 1, NE: 1, E: 1, SE: 1, S: 1, SW: 1, W: 1, NW: 1 }
-        clampToBounds: "-74.05:-73.88,40.70:40.83"
-
-      # Phase 2: Zoom into Times Square (cursor-anchored, 3 steps = 8x total)
-      # Viewport: 0.12x0.06 -> 0.015x0.0075 (~1.3km x 0.8km, neighborhood level)
+        # Soft safety rail at the dataset bbox: viewport stays inside Manhattan.
+        clampToBounds: "-74.106216:-73.842545,40.676993:40.839788"
       - name: zoom_into_hotspot
         operation: zoom_to_point
         target: "-73.985,40.758"
         zoomFactor: 0.5
-        count: 3
-
-      # Phase 3: Investigate -- panning block by block, E-W zigzag with mild S drift.
-      # Shifts of 10-20% at zoomed level = ~2-3 city blocks per step.
+        count: 2
       - name: investigate
         operation: pan
-        count: 60
+        count: 55
         minShift: 10
-        maxShift: 20
-        directionWeights: { N: 0.5, NE: 0.5, E: 3, SE: 1, S: 2, SW: 1, W: 3, NW: 0.5 }
-        clampToBounds: "-74.005:-73.965,40.735:40.77"
-
-      # Phase 4: Zoom back out to overview (center-anchored, 3 steps = 8x total)
+        maxShift: 10
+        # E-W bias along the avenue grid; N:S balanced; no net drift
+        directionWeights: { N: 0.5, NE: 0.5, E: 3, SE: 0.5, S: 0.5, SW: 0.5, W: 3, NW: 0.5 }
       - name: zoom_out
         operation: zoom_out
         zoomFactor: 2.0
-        count: 3
-
-      # Phase 5: Re-overview -- compare with Phase 1, index is now warm
+        count: 2
       - name: re_overview
         operation: pan
-        count: 28
-        minShift: 8
-        maxShift: 15
+        count: 35
+        minShift: 10
+        maxShift: 10
         directionWeights: { N: 1, NE: 1, E: 1, SE: 1, S: 1, SW: 1, W: 1, NW: 1 }
-        clampToBounds: "-74.05:-73.88,40.70:40.83"
+        clampToBounds: "-74.106216:-73.842545,40.676993:40.839788"
 
-  # eBird US (2023-2026): ornithologist following spring migration from the
-  # Rio Grande Valley to the Mid-Atlantic.
-  # Start: South Texas coast / RGV (-98.5 to -95.5, 26 to 28) — the #1
-  #   birding destination in the US during spring, where neotropical migrants
-  #   first make landfall after crossing the Gulf of Mexico.
-  # Path: NE through the Central/Mississippi Flyway — Great Plains, Ozarks,
-  #   Ohio Valley, curving toward the Mid-Atlantic coast.
-  # Viewport: 3° × 2° (~300 km × 222 km) — continental-scale patterns.
-  # Shift 10-18%: slightly larger steps to cover more ground in 100 queries,
-  #   expected total displacement ~20° E, ~12° N → endpoint near Chesapeake.
-  # Selectivity: ~2-3% at start (RGV), rising to ~5-6% in the dense NE.
-  ebird_us_pan:
+  # Gaia DR3 (10% sample, 328M stars): directional-pan narrative.
+  # An astronomer surveys the Galactic plane starting from a 10 x 6 deg
+  # window centred on Sagittarius/Scorpius near the Galactic Centre
+  # (RA 266, Dec -29), scanning outward along the plane (NE bias) over 99
+  # pans to study stellar populations and dust structure across the bulge
+  # and inner disk. With 100 fixed-10% pans and a moderate NE bias the
+  # final viewport sits well inside the all-sky bbox (0..360, -90..90).
+  gaia_dr3_exploratory:
+    dataset: gaia_dr3
+    q0:
+      rect: "261:271,-32:-26"
+    seqCount: 100
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 0
+    directionWeights:
+      N:  1.0
+      NE: 2.0
+      E:  1.5
+      SE: 0.8
+      S:  0.5
+      SW: 0.7
+      W:  0.5
+      NW: 0.8
+
+  # eBird US (2023-2026, 420M checklists): directional-pan narrative.
+  # An ornithologist follows spring migration from the Rio Grande Valley
+  # in South Texas (the #1 US spring birding hotspot, where neotropical
+  # migrants make landfall after crossing the Gulf) up the Central /
+  # Mississippi flyway to the Mid-Atlantic. q0 is a 3 x 2 deg window
+  # centred on the RGV; 99 fixed-10% pans with a strong NE bias scan the
+  # flyway, ending near the Chesapeake / Mid-Atlantic coast. Trajectory
+  # stays inside CONUS (lon -125.96..-66.24, lat 24.03..49.36).
+  ebird_us_exploratory:
     dataset: ebird_us
     q0:
       rect: "-98.5:-95.5,26:28"
-    minShift: 10
-    maxShift: 18
-    zoomFactor: 0
     seqCount: 100
+    minShift: 10
+    maxShift: 10
+    zoomFactor: 0
     directionWeights:
-      N: 1.5
+      N:  1.5
       NE: 3.0
-      E: 2.0
+      E:  2.0
       SE: 0.3
-      S: 0.2
+      S:  0.2
       SW: 0.1
-      W: 0.2
+      W:  0.2
       NW: 0.3
 
   # ── Non-exploration workloads (random) ─────────────────────────────────────
@@ -409,7 +426,7 @@ scenarios:
     dataset: gaia_dr3
     workload:
       type: random
-      seqCount: 300
+      seqCount: 500
       selectivity: 0.01
       seed: 0
 
@@ -417,7 +434,7 @@ scenarios:
     dataset: ebird_us
     workload:
       type: random
-      seqCount: 300
+      seqCount: 500
       selectivity: 0.01
       seed: 0
 
@@ -425,7 +442,7 @@ scenarios:
     dataset: taxi
     workload:
       type: random
-      seqCount: 300
+      seqCount: 500
       selectivity: 0.01
       seed: 0
 
@@ -433,7 +450,10 @@ scenarios:
     dataset: synth10_300M
     workload:
       type: random
-      seqCount: 300
+      # 500 queries: matches synth10_300M_clustered_sel1 so the random and
+      # clustered adaptation curves are directly comparable. Baselines are
+      # typically capped via MAX_QUERIES_DUCKDB / MAX_QUERIES_PILOTDB.
+      seqCount: 500
       selectivity: 0.01
       extentMode: closedForm   # synthetic data is uniform: skip the reservoir build
       seed: 0
