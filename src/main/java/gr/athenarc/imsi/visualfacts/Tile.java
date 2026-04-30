@@ -219,6 +219,8 @@ public abstract class Tile {
         size = 0;
         statsArray = null;
         statsPointCount = null;
+        outlierBitSet = null;
+        outlierIdxs = null;
     }
 
     // ---- Query node creation ----

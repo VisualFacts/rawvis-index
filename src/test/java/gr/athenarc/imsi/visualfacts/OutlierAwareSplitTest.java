@@ -23,6 +23,8 @@ class OutlierAwareSplitTest {
 
         tile.split();
 
+        assertNull(tile.getOutlierBitSet());
+        assertNull(tile.getOutlierIdxs());
         assertChildOutlier(tile, 200L, 7);
         assertChildOutlier(tile, 400L, 11);
         assertChildHasNoOutliers(tile, 100L);
