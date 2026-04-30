@@ -601,21 +601,12 @@ public final class ParallelCsvScanner {
                         }
                     }
 
-                    // Outlier-aware AQP (Phase 1): if enabled, offer this row's per-measure
-                    // values to the per-thread top-K min-heaps inside the OutlierIndex.
-                    // The vector array is materialized exactly once and shared across all
-                    // measures of this row to avoid M-fold allocation overhead.
+                    // Outlier-aware AQP (Phase 1): single per-thread heap of capacity K
+                    // ordered by max_m z² under per-thread Welford running stats.  No
+                    // allocation occurs unless this row is admitted (vector is materialized
+                    // inside offer() only on admission).
                     if (outlierIndex != null) {
-                        double[] vector = new double[mc];
-                        for (int m = 0; m < mc; m++) {
-                            vector[m] = (measurePositions[m] >= 0) ? row[measurePositions[m]] : Double.NaN;
-                        }
-                        for (int m = 0; m < mc; m++) {
-                            double val = vector[m];
-                            if (!Double.isNaN(val)) {
-                                outlierIndex.offer(threadIdx, m, val, offset, vector);
-                            }
-                        }
+                        outlierIndex.offer(threadIdx, row, measurePositions, offset);
                     }
 
                     // Accumulate q0 stats if point is within q0 rectangle
@@ -796,16 +787,7 @@ public final class ParallelCsvScanner {
 
                     // Outlier-aware AQP (Phase 1) — see scanChunk for the same logic.
                     if (outlierIndex != null) {
-                        double[] vector = new double[mc];
-                        for (int m = 0; m < mc; m++) {
-                            vector[m] = (measurePositions[m] >= 0) ? row[measurePositions[m]] : Double.NaN;
-                        }
-                        for (int m = 0; m < mc; m++) {
-                            double val = vector[m];
-                            if (!Double.isNaN(val)) {
-                                outlierIndex.offer(threadIdx, m, val, offset, vector);
-                            }
-                        }
+                        outlierIndex.offer(threadIdx, row, measurePositions, offset);
                     }
 
                     // Accumulate q0 stats if point is within q0 rectangle

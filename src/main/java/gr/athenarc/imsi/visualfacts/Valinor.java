@@ -462,6 +462,10 @@ public class Valinor implements AutoCloseable {
                     initTimingBreakdown.put("outlierPartition", partitionNs / 1e9);
                     initTimingBreakdown.put("outlierPoolSize", (double) poolSize);
                     initTimingBreakdown.put("outlierSelected", (double) outlierIndex.getSelectedCount());
+                    initTimingBreakdown.put("outlierReheapifies", (double) outlierIndex.getTotalReheapifies());
+                    initTimingBreakdown.put("outlierReheapifyTime", outlierIndex.getTotalReheapifyNanos() / 1e9);
+                    initTimingBreakdown.put("outlierMaxThreadReheapifies", (double) outlierIndex.getMaxThreadReheapifies());
+                    initTimingBreakdown.put("outlierMaxSigmaChangePct", outlierIndex.getMaxReheapifySigmaChangePct());
                 }
             }
         }
@@ -1016,7 +1020,8 @@ public class Valinor implements AutoCloseable {
     /**
      * Maximum CV cap to prevent pathological cases from requiring 100% sampling.
      */
-    private static final double MAX_CV_CAP = 2.0;
+    // private static final double MAX_CV_CAP = 2.0;
+    private static final double MAX_CV_CAP = Double.MAX_VALUE;
 
     /**
      * Returns the coefficient of variation (CV = std/mean) for a given measure column.

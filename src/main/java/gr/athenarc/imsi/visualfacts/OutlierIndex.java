@@ -2,15 +2,19 @@ package gr.athenarc.imsi.visualfacts;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.concurrent.atomic.LongAdder;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.math.StatsAccumulator;
 
+import it.unimi.dsi.fastutil.ints.IntComparator;
+import it.unimi.dsi.fastutil.ints.IntHeapPriorityQueue;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
 /**
@@ -22,26 +26,34 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
  * per-tile sampling population, and contribute exact (closed-form) sums at
  * query time.  The trimmed population has dramatically lower CV, which
  * tightens approximate-query confidence intervals at the cost of a small
- * up-front memory footprint (~88 bytes per outlier × M measures).
+ * up-front memory footprint.
  *
- * <p>Lifecycle (orchestrated by {@link Valinor}):
+ * <p><b>Construction (single CSV pass):</b>
  * <ol>
- *   <li><b>Phase 1 — collect</b>: per-thread top-K min-heaps are populated
- *       inline during the parallel CSV scan via {@link #offer}.  Each
- *       candidate carries the full M-vector of measure values so that
- *       Phase 3 needs no second I/O pass.</li>
- *   <li><b>Phase 2 — merge</b>: per-thread heaps are merged into a single
- *       global pool of unique candidates ({@link #mergeCandidates}).</li>
- *   <li><b>Phase 3 — score & top-K select</b>: each candidate gets a single
- *       static "outlierness" score = max over measures of its squared
- *       z-score; the top-K by score are retained ({@link #selectByScore}).
- *       This is O(|pool| · M + |pool| · log K) — orders of magnitude faster
- *       than the previous K-iteration greedy and produces equivalent
- *       results on heavy-tailed data where one measure dominates.</li>
- *   <li><b>Phase 5 — partition by tile</b>: a single linear pass over all
- *       tile rows assigns each selected outlier to its tile via byte-offset
- *       lookup ({@link #partitionByTile}).</li>
+ *   <li><b>Phase 1 — collect</b>: each scanner thread maintains a single
+ *       bounded min-heap of capacity {@link #k}, ordered by an admission
+ *       score equal to {@code max_m z²} computed from per-thread
+ *       Welford-running per-measure stats.  Vectors are allocated only on
+ *       admission, so rejected rows incur zero allocation.  Periodically
+ *       (every {@link #SIGMA_CHECK_INTERVAL} rows after the heap fills) the
+ *       thread checks whether any per-measure σ has drifted by more than
+ *       {@link #REHEAPIFY_THRESHOLD}; if so, every heap entry is re-scored
+ *       against the updated stats and the heap is rebuilt.  Reheapify events
+ *       are tracked as aggregate diagnostics and exposed in init timing rather
+ *       than logged individually from scanner threads.</li>
+ *   <li><b>Phase 2 — merge</b>: per-thread heaps are concatenated into a
+ *       single candidate pool ({@link #mergeCandidates}).</li>
+ *   <li><b>Phase 3 — select</b>: every candidate is re-scored against the
+ *       <i>exact</i> global per-measure stats and the top-K survive
+ *       ({@link #selectByScore}).</li>
+ *   <li><b>Phase 5 — partition</b>: a single linear pass over all tile rows
+ *       assigns each selected outlier to its tile via byte-offset lookup
+ *       ({@link #partitionByTile}).</li>
  * </ol>
+ *
+ * <p><b>Memory class:</b> {@code O(T·K)} candidates during scan (one heap of
+ * size K per thread), versus the previous {@code O(T·M·K)} pool with full
+ * vectors stored on every (thread, measure) heap.
  *
  * <p>This class is created only when {@code IndexConfig.OUTLIER_K > 0}.  The
  * pre-outlier code path is fully bypassed when the index is {@code null}.
@@ -49,6 +61,11 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 public final class OutlierIndex {
 
     private static final Logger LOG = LogManager.getLogger(OutlierIndex.class);
+
+    /** Rows between σ-drift checks, evaluated only when the per-thread heap is full. */
+    private static final int SIGMA_CHECK_INTERVAL = 8192;
+    /** Relative change in σ_m on any measure that triggers a reheapify. */
+    private static final double REHEAPIFY_THRESHOLD = 0.10;
 
     /** Number of outliers to retain globally. */
     private final int k;
@@ -58,18 +75,25 @@ public final class OutlierIndex {
     private final int numThreads;
 
     /**
-     * Per-thread, per-measure bounded min-heaps of size up to {@link #k}.
-     * Heap is ordered by {@code |value|} ascending so the smallest
-     * absolute-value element sits at the root and is the first to be evicted
-     * when a new larger candidate arrives.
-     *
-     * <p>Indexing: {@code heaps[threadIdx][measureIdx]}.
+     * One bounded min-heap per scanner thread, capacity = {@link #k}, ordered
+     * by {@link Candidate#value} ascending so the smallest-score (most
+     * evictable) candidate sits at the root.
      */
-    private final PriorityQueue<Candidate>[][] heaps;
+    private final PriorityQueue<Candidate>[] heaps;
 
-    /** Comparator: smallest |value| first (root = candidate to evict). */
-    private static final Comparator<Candidate> MIN_BY_ABS =
-            Comparator.comparingDouble(c -> Math.abs(c.value));
+    /** Comparator: smallest admission score first (root = candidate to evict). */
+    private static final Comparator<Candidate> MIN_BY_SCORE =
+            Comparator.comparingDouble(c -> c.value);
+
+    // -------- Per-thread Welford running stats (M values per thread) --------
+    private final long[][]   nCount;        // [T][M]
+    private final double[][] meanRun;       // [T][M]
+    private final double[][] m2Sum;         // [T][M]  sum of squared deviations
+    private final double[][] sigmaSnap;     // [T][M]  σ at last reheapify (0 if never)
+    private final long[]     rowsSinceCheck;// [T]
+    private final long[]     reheapifyCount;// [T]
+    private final long[]     reheapifyNanos;// [T]
+    private final double[]   maxSigmaChange;// [T]  max relative σ change observed on actual reheapify
 
     /**
      * Set after {@link #selectByScore}: the chosen outlier rows in stable
@@ -93,14 +117,17 @@ public final class OutlierIndex {
     private double[] postOutlierCV;
 
     /**
-     * One row of the heap: a candidate outlier with all per-measure values
-     * captured inline.  Total size ≈ 24 (header) + 8 (value) + 8 (offset) +
-     * 16 + 8M (vector) ≈ 56 + 8M bytes.  For M = 8: ~120 B per candidate.
+     * Heap entry: candidate outlier with full M-vector.  The {@code value}
+     * field is the admission score (max_m z² with current per-thread running
+     * stats); it is mutated by reheapify to reflect the latest stats and
+     * is finally overwritten / ignored by Phase 3 (which re-scores against
+     * exact global stats).  External code reads only {@link #byteOffset}
+     * and {@link #vector}.
      */
     public static final class Candidate {
-        public final double value;     // value of THIS measure (the one that pushed it onto its heap)
-        public final long byteOffset;  // unique row identifier across the whole CSV
-        public final double[] vector;  // length-M vector of all measures
+        public double value;          // mutable: admission score under current per-thread stats
+        public final long byteOffset; // unique row identifier across the whole CSV
+        public final double[] vector; // length-M vector of all measures (allocated on admission)
 
         public Candidate(double value, long byteOffset, double[] vector) {
             this.value = value;
@@ -117,12 +144,18 @@ public final class OutlierIndex {
         this.k = k;
         this.measureCount = measureCount;
         this.numThreads = numThreads;
-        this.heaps = (PriorityQueue<Candidate>[][]) new PriorityQueue[numThreads][measureCount];
+        this.heaps = (PriorityQueue<Candidate>[]) new PriorityQueue[numThreads];
+        this.nCount         = new long[numThreads][measureCount];
+        this.meanRun        = new double[numThreads][measureCount];
+        this.m2Sum          = new double[numThreads][measureCount];
+        this.sigmaSnap      = new double[numThreads][measureCount];
+        this.rowsSinceCheck = new long[numThreads];
+        this.reheapifyCount = new long[numThreads];
+        this.reheapifyNanos = new long[numThreads];
+        this.maxSigmaChange = new double[numThreads];
         for (int t = 0; t < numThreads; t++) {
-            for (int m = 0; m < measureCount; m++) {
-                // Capacity hint k + 1: we add then poll so heap briefly grows by 1.
-                heaps[t][m] = new PriorityQueue<>(k + 1, MIN_BY_ABS);
-            }
+            // Capacity hint k + 1: we add then poll so heap briefly grows by 1.
+            heaps[t] = new PriorityQueue<>(k + 1, MIN_BY_SCORE);
         }
     }
 
@@ -130,87 +163,235 @@ public final class OutlierIndex {
     public int getMeasureCount() { return measureCount; }
 
     /**
-     * Phase 1: thread-local insertion.  Called from
-     * {@link ParallelCsvScanner} for every (row, measure) with a non-NaN
-     * value.  Each thread's heap is private — no synchronization needed.
+     * Phase 1: per-row admission against the per-thread top-K heap.
      *
-     * <p>A single allocation (the wrapper {@link Candidate} + the inline
-     * vector array) happens only when the candidate is actually competitive
-     * (heap not full, OR strictly larger than the current root).  The
-     * caller is responsible for materializing the {@code vector} array
-     * exactly once per row, since it is shared across all measures of that
-     * row.
+     * <p>Steps:
+     * <ol>
+     *   <li>Welford-update per-measure running (n, mean, m2) for every
+     *       non-NaN measure.</li>
+     *   <li>Compute the row's admission score
+     *       {@code maxScore = max_m ((x_m − μ_m) / σ_m)²} using the freshly
+     *       updated stats (measures with {@code n < 2} or {@code σ = 0} are
+     *       ignored).</li>
+     *   <li>If the heap is not yet full, allocate the row's M-vector and
+     *       insert.  Otherwise, compare against the heap root: if strictly
+     *       larger, evict the root, allocate the M-vector, insert.  No
+     *       allocation occurs for rejected rows.</li>
+     *   <li>Once the heap is full, increment a row-counter; every
+     *       {@link #SIGMA_CHECK_INTERVAL} rows, evaluate σ-drift and trigger
+     *       a reheapify if any measure's σ has changed by more than
+     *       {@link #REHEAPIFY_THRESHOLD}.</li>
+     * </ol>
+     *
+     * <p>No synchronization: each thread owns its own heap and stats arrays.
+     *
+     * @param threadIdx        scanner thread index in {@code [0, T)}
+     * @param row              the parsed row (caller-owned, not retained)
+     * @param measurePositions index into {@code row} for each measure m;
+     *                         negative means "measure not present in row"
+     * @param byteOffset       unique row identifier
      */
-    public void offer(int threadIdx, int measureIdx, double value, long byteOffset, double[] vector) {
-        PriorityQueue<Candidate> heap = heaps[threadIdx][measureIdx];
-        double absV = Math.abs(value);
+    public void offer(int threadIdx, double[] row, int[] measurePositions, long byteOffset) {
+        final int M = measureCount;
+        final long[]   nT  = nCount[threadIdx];
+        final double[] muT = meanRun[threadIdx];
+        final double[] m2T = m2Sum[threadIdx];
+
+        // 1) Welford update + 2) admission score under current per-thread stats.
+        double maxScore = 0.0;
+        for (int m = 0; m < M; m++) {
+            int pos = measurePositions[m];
+            if (pos < 0) continue;
+            double x = row[pos];
+            if (Double.isNaN(x)) continue;
+            long n = ++nT[m];
+            double delta  = x - muT[m];
+            muT[m] += delta / n;
+            double delta2 = x - muT[m];
+            m2T[m] += delta * delta2;
+            if (n >= 2) {
+                double var = m2T[m] / (n - 1);
+                if (var > 0.0) {
+                    double z2 = (delta2 * delta2) / var;
+                    if (z2 > maxScore) maxScore = z2;
+                }
+            }
+        }
+
+        // 3) Admission against per-thread heap.
+        PriorityQueue<Candidate> heap = heaps[threadIdx];
         if (heap.size() < k) {
-            heap.offer(new Candidate(value, byteOffset, vector));
+            double[] vector = materializeVector(row, measurePositions, M);
+            heap.offer(new Candidate(maxScore, byteOffset, vector));
         } else {
-            // Peek at the current minimum-|value| element; replace only if strictly larger.
             Candidate root = heap.peek();
-            if (absV > Math.abs(root.value)) {
+            if (maxScore > root.value) {
                 heap.poll();
-                heap.offer(new Candidate(value, byteOffset, vector));
+                double[] vector = materializeVector(row, measurePositions, M);
+                heap.offer(new Candidate(maxScore, byteOffset, vector));
+            }
+        }
+
+        // 4) Periodic σ-drift check (only meaningful once heap is full;
+        //    floor is 0 while heap.size() < k, so admission is exact).
+        if (heap.size() >= k) {
+            long c = ++rowsSinceCheck[threadIdx];
+            if (c >= SIGMA_CHECK_INTERVAL) {
+                rowsSinceCheck[threadIdx] = 0L;
+                maybeReheapify(threadIdx);
             }
         }
     }
 
+    /** Allocate and fill a length-M vector from the row; missing measures → NaN. */
+    private static double[] materializeVector(double[] row, int[] measurePositions, int M) {
+        double[] v = new double[M];
+        for (int m = 0; m < M; m++) {
+            int pos = measurePositions[m];
+            v[m] = (pos >= 0) ? row[pos] : Double.NaN;
+        }
+        return v;
+    }
+
     /**
-     * Phase 2: merge per-thread, per-measure heaps into a single deduplicated
-     * candidate pool.  Returns the deduplicated list (one entry per byte
-     * offset; the inline vector is the same regardless of which heap the
-     * candidate came from).
+     * Re-score every entry of thread {@code threadIdx}'s heap against the
+     * current per-thread Welford stats and rebuild the heap, but only if
+     * any measure's σ has changed by more than {@link #REHEAPIFY_THRESHOLD}
+     * relative to the snapshot taken at the previous reheapify (or since
+     * the heap first filled).  Logs each reheapify event with diagnostic
+    * counters.
      */
-    public List<Candidate> mergeCandidates() {
-        // Use a hashmap byteOffset → Candidate to deduplicate (a single row may
-        // appear in multiple per-measure heaps — but its vector is identical).
-        Long2IntOpenHashMap seen = new Long2IntOpenHashMap();
-        seen.defaultReturnValue(-1);
-        List<Candidate> pool = new ArrayList<>();
-        for (int t = 0; t < numThreads; t++) {
-            for (int m = 0; m < measureCount; m++) {
-                for (Candidate c : heaps[t][m]) {
-                    if (seen.putIfAbsent(c.byteOffset, pool.size()) == -1) {
-                        pool.add(c);
-                    }
-                }
+    private void maybeReheapify(int threadIdx) {
+        final int M = measureCount;
+        final long[]   nT  = nCount[threadIdx];
+        final double[] muT = meanRun[threadIdx];
+        final double[] m2T = m2Sum[threadIdx];
+        final double[] snap = sigmaSnap[threadIdx];
+
+        double[] sigCur = new double[M];
+        double maxRelChange = 0.0;
+        boolean anyFirstTime = false;
+        for (int m = 0; m < M; m++) {
+            if (nT[m] < 2) { sigCur[m] = 0.0; continue; }
+            double var = m2T[m] / (nT[m] - 1);
+            sigCur[m] = (var > 0.0) ? Math.sqrt(var) : 0.0;
+            if (snap[m] > 0.0) {
+                double rel = Math.abs(sigCur[m] - snap[m]) / snap[m];
+                if (rel > maxRelChange) maxRelChange = rel;
+            } else if (sigCur[m] > 0.0) {
+                anyFirstTime = true;
             }
         }
-        // Free heap memory eagerly — vectors are now owned by `pool`.
-        for (int t = 0; t < numThreads; t++) {
-            Arrays.fill(heaps[t], null);
+        // First-time snapshot always triggers (no prior baseline to compare against).
+        if (!anyFirstTime && maxRelChange < REHEAPIFY_THRESHOLD) return;
+
+        long t0 = System.nanoTime();
+        PriorityQueue<Candidate> oldHeap = heaps[threadIdx];
+        Candidate[] arr = oldHeap.toArray(new Candidate[0]);
+        for (Candidate c : arr) {
+            double[] v = c.vector;
+            double newScore = 0.0;
+            for (int m = 0; m < M; m++) {
+                if (sigCur[m] == 0.0) continue;
+                double x = v[m];
+                if (Double.isNaN(x)) continue;
+                double z = (x - muT[m]) / sigCur[m];
+                double z2 = z * z;
+                if (z2 > newScore) newScore = z2;
+            }
+            c.value = newScore;
         }
-        LOG.info("OutlierIndex Phase 2 merge: {} unique candidates from {} per-thread heaps",
-                pool.size(), numThreads * measureCount);
+        PriorityQueue<Candidate> rebuilt = new PriorityQueue<>(k + 1, MIN_BY_SCORE);
+        Collections.addAll(rebuilt, arr);
+        heaps[threadIdx] = rebuilt;
+
+        // Update snapshot for next drift comparison.
+        System.arraycopy(sigCur, 0, snap, 0, M);
+        reheapifyCount[threadIdx]++;
+        reheapifyNanos[threadIdx] += System.nanoTime() - t0;
+        if (maxRelChange > maxSigmaChange[threadIdx]) {
+            maxSigmaChange[threadIdx] = maxRelChange;
+        }
+    }
+
+    /** Total number of reheapifies across all threads (diagnostic). */
+    public long getTotalReheapifies() {
+        long t = 0L;
+        for (long c : reheapifyCount) t += c;
+        return t;
+    }
+
+    /** Total time spent reheapifying across scanner threads, in nanoseconds. */
+    public long getTotalReheapifyNanos() {
+        long t = 0L;
+        for (long ns : reheapifyNanos) t += ns;
+        return t;
+    }
+
+    /** Maximum number of reheapifies performed by a single scanner thread. */
+    public long getMaxThreadReheapifies() {
+        long max = 0L;
+        for (long c : reheapifyCount) {
+            if (c > max) max = c;
+        }
+        return max;
+    }
+
+    /** Largest relative σ change that triggered a reheapify, as a percentage. */
+    public double getMaxReheapifySigmaChangePct() {
+        double max = 0.0;
+        for (double rel : maxSigmaChange) {
+            if (rel > max) max = rel;
+        }
+        return max * 100.0;
+    }
+
+    /**
+     * Phase 2: merge per-thread heaps into a single candidate pool.  Since
+     * Phase 1 now offers each CSV row exactly once to exactly one per-thread
+     * heap, byte offsets are already unique; the old hash-based deduplication
+     * was only needed when the same row could be present in multiple per-
+     * measure heaps.  Per-thread heap arrays are released eagerly.
+     */
+    public List<Candidate> mergeCandidates() {
+        int totalCandidates = 0;
+        for (int t = 0; t < numThreads; t++) {
+            totalCandidates += heaps[t].size();
+        }
+        List<Candidate> pool = new ArrayList<>(totalCandidates);
+        for (int t = 0; t < numThreads; t++) {
+            pool.addAll(heaps[t]);
+        }
+        // Free heap memory eagerly — vectors are now owned by `pool`.
+        Arrays.fill(heaps, null);
+        long totalReheap = getTotalReheapifies();
+        LOG.info("OutlierIndex Phase 2 merge: {} candidates from {} per-thread heaps; {} reheapifies total",
+                pool.size(), numThreads, totalReheap);
         return pool;
     }
 
     /**
-     * Phase 3: single-pass score-based selection.
+     * Phase 3: single-pass score-based selection using <i>exact</i> global
+     * stats (passed in from {@link Valinor#computeGlobalMeasureStats()}).
      *
-     * <p>Each candidate is assigned a static "outlierness" score equal to
-     * the maximum over measures of its squared z-score:
+     * <p>Each candidate is assigned its true outlierness score equal to the
+     * maximum over measures of its squared z-score:
      * <pre>
-     *   score(c) = max_m  ((c.vector[m] - μ_m) / σ_m)²
+     *   score(c) = max_m  ((c.vector[m] − μ_m) / σ_m)²
      * </pre>
-     * The top-K candidates by score are retained.  Squared z-score is the
-     * per-row contribution to global variance (modulo the constant 1/N), so
-     * removing the top-K by max-z² rows directly maximizes variance reduction
-     * on whichever measure is currently the bottleneck.  Z-score normalization
-     * makes scores comparable across measures with different units and scales.
+     * The top-K candidates by exact score are retained.  This re-scoring
+     * step corrects any approximation introduced during Phase-1 admission
+     * (which used per-thread <i>running</i> stats).
      *
      * <p>Complexity: O(|pool| · M) for scoring + O(|pool| · log K) for the
-     * size-K min-heap top-K extraction.  For K=100 000 and |pool|=8 000 000
-     * this is ~3 seconds — versus ~10 hours for the previous K-iteration
-     * greedy whose cost was O(K² · T·M).
+     * size-K min-heap top-K extraction.
      *
      * <p>Records initial and post-trim uncapped CVs in {@link #initialCV} /
      * {@link #postOutlierCV} for logging by {@link Valinor}.
      *
      * @param globalStats per-measure global StatsAccumulator (must already
      *                    aggregate every leaf tile's stats)
-     * @param pool        deduplicated candidate pool from {@link #mergeCandidates}
+    * @param pool        candidate pool from {@link #mergeCandidates}
      */
     public void selectByScore(StatsAccumulator[] globalStats, List<Candidate> pool) {
         final int M = measureCount;
@@ -256,34 +437,34 @@ public final class OutlierIndex {
             scores[p] = best;
         }
 
-        // 3) Top-K extraction via bounded min-heap of pool indices.
-        //    Heap root = currently smallest-score retained candidate.
+        // 3) Top-K extraction via bounded primitive-int min-heap of pool indices
+        //    (fastutil — no Integer boxing, no per-offer allocation).  Heap root
+        //    = currently smallest-score retained candidate.
         final double[] scoresRef = scores;
-        PriorityQueue<Integer> topK = new PriorityQueue<>(
-                Math.min(k, poolSize) + 1,
-                (a, b) -> Double.compare(scoresRef[a], scoresRef[b]));
+        IntComparator cmp = (a, b) -> Double.compare(scoresRef[a], scoresRef[b]);
+        IntHeapPriorityQueue topK = new IntHeapPriorityQueue(Math.min(k, poolSize) + 1, cmp);
         for (int p = 0; p < poolSize; p++) {
             if (topK.size() < k) {
-                topK.offer(p);
-            } else if (scoresRef[p] > scoresRef[topK.peek()]) {
-                topK.poll();
-                topK.offer(p);
+                topK.enqueue(p);
+            } else if (scoresRef[p] > scoresRef[topK.firstInt()]) {
+                topK.dequeueInt();
+                topK.enqueue(p);
             }
         }
 
         // 4) Materialize selected list, offsetToOutlierIdx, outlierMatrix.
         //    Iteration order is heap order, which is fine (no semantic meaning).
-        selected = new ArrayList<>(topK.size());
-        offsetToOutlierIdx = new Long2IntOpenHashMap(topK.size());
+        final int kept = topK.size();
+        selected = new ArrayList<>(kept);
+        offsetToOutlierIdx = new Long2IntOpenHashMap(kept);
         offsetToOutlierIdx.defaultReturnValue(-1);
-        outlierMatrix = new double[topK.size()][];
-        int idx = 0;
-        for (int p : topK) {
+        outlierMatrix = new double[kept][];
+        for (int idx = 0; idx < kept; idx++) {
+            int p = topK.dequeueInt();
             Candidate c = pool.get(p);
             selected.add(c);
             offsetToOutlierIdx.put(c.byteOffset, idx);
             outlierMatrix[idx] = c.vector;
-            idx++;
         }
 
         // 5) Compute post-outlier CVs by subtracting selected rows from running stats.
@@ -334,15 +515,25 @@ public final class OutlierIndex {
      */
     public void partitionByTile(Iterable<?> leafTiles) {
         if (selected == null || selected.isEmpty()) return;
-        int totalAssigned = 0;
-        for (Object obj : leafTiles) {
-            Tile tile = (Tile) obj;
-            if (!tile.hasPoints()) continue;
+        // Snapshot tiles into a List (parallelStream needs a sized source) and
+        // run the per-tile scan in parallel.  Each tile owns disjoint state
+        // (its own bitset and idx array), so no cross-tile synchronization is
+        // required; only the global counter uses LongAdder.
+        List<Tile> tiles = new ArrayList<>();
+        for (Object obj : leafTiles) tiles.add((Tile) obj);
+        LongAdder totalAssigned = new LongAdder();
+        // Read-only snapshot of the lookup map; Long2IntOpenHashMap.get is
+        // safe for concurrent reads as long as no thread is mutating it,
+        // which is the case after selectByScore returns.
+        final Long2IntOpenHashMap idxMap = offsetToOutlierIdx;
+        tiles.parallelStream().forEach(tile -> {
+            if (!tile.hasPoints()) return;
             int n = tile.getSize();
             java.util.BitSet bits = null;
             int[] idxs = null;
+            int local = 0;
             for (int i = 0; i < n; i++) {
-                int outIdx = offsetToOutlierIdx.get(tile.getOffset(i));
+                int outIdx = idxMap.get(tile.getOffset(i));
                 if (outIdx >= 0) {
                     if (bits == null) {
                         bits = new java.util.BitSet(n);
@@ -351,15 +542,16 @@ public final class OutlierIndex {
                     }
                     bits.set(i);
                     idxs[i] = outIdx;
-                    totalAssigned++;
+                    local++;
                 }
             }
             if (bits != null) {
                 tile.setOutlierData(bits, idxs);
+                totalAssigned.add(local);
             }
-        }
-        LOG.info("OutlierIndex Phase 5 partition: assigned {}/{} outliers to tiles",
-                totalAssigned, selected.size());
+        });
+        LOG.info("OutlierIndex Phase 5 partition: assigned {}/{} outliers to tiles ({} leaf tiles, parallel)",
+                totalAssigned.sum(), selected.size(), tiles.size());
     }
 
     /**
