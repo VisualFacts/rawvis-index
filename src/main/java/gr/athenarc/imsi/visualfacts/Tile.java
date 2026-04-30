@@ -32,6 +32,17 @@ public abstract class Tile {
     private int[] statsPointCount; // per-measure count of processed points (incl. NaN)
     private BitSet sampledTracker;
 
+    // ---- Outlier-aware AQP support (set only when IndexConfig.OUTLIER_K > 0) ----
+    //
+    // outlierBitSet[i] is true if the i-th row of this tile (i.e., position
+    // [start+i] in the shared store) was selected as a global outlier.
+    // outlierIdxs[i] is the corresponding index into the global outlier value
+    // matrix, or -1 if the row is not an outlier.  Both are null for tiles
+    // that contain zero outliers (the common case for a small global K), so
+    // tiles with no outliers pay zero memory.
+    private BitSet outlierBitSet;
+    private int[] outlierIdxs;
+
     /**
      * Frozen stats from a tile that has been split. These are exact aggregate
      * statistics captured before the split destroyed the point data.
@@ -170,6 +181,32 @@ public abstract class Tile {
 
     public void setSampledTracker(BitSet sampledTracker) {
         this.sampledTracker = sampledTracker;
+    }
+
+    /**
+     * Outlier-aware AQP: bit i is set iff the i-th row of this tile was
+     * selected by {@link OutlierIndex} as a global outlier.  Returns
+     * {@code null} if the tile contains zero outliers (the common case when
+     * the K-cap is small relative to the dataset).
+     */
+    public BitSet getOutlierBitSet() {
+        return outlierBitSet;
+    }
+
+    /**
+     * Outlier-aware AQP: for tiles with at least one outlier,
+     * {@code outlierIdxs[localPos]} returns the index into the global
+     * outlier value matrix (or -1 for non-outlier rows).  Returns
+     * {@code null} if the tile contains zero outliers.
+     */
+    public int[] getOutlierIdxs() {
+        return outlierIdxs;
+    }
+
+    /** Set by {@link OutlierIndex#partitionByTile}; tiles without outliers leave both fields null. */
+    public void setOutlierData(BitSet outlierBitSet, int[] outlierIdxs) {
+        this.outlierBitSet = outlierBitSet;
+        this.outlierIdxs = outlierIdxs;
     }
 
     /**

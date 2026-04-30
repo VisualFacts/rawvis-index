@@ -91,6 +91,15 @@ public final class ParallelCsvScanner {
     private final Rectangle q0Rect;           // q0 query rectangle (null if no q0)
     private final List<Integer> q0MeasureCols; // q0 measure columns (null if no q0)
 
+    /**
+     * Optional outlier-index sink (null when {@code IndexConfig.OUTLIER_K == 0}).
+     * When non-null, every parsed (in-bounds, non-filtered) row contributes its
+     * per-measure values to per-thread top-K min-heaps inside the index.  When
+     * null the row-processing loops skip the offer entirely so the byte-identical
+     * pre-outlier code path is preserved.
+     */
+    private final OutlierIndex outlierIndex;
+
     public ParallelCsvScanner(File csvFile, char delimiter, boolean hasHeader,
                               int[] selectedColumns, int xPos, int yPos,
                               int[] filterPositions, DataValidationFilter[] filters,
@@ -99,6 +108,21 @@ public final class ParallelCsvScanner {
                               IdentityHashMap<Tile, Integer> tileIndexMap, int numTiles,
                               int numThreads, int totalCapacity, String nullstr,
                               Path tmpDir, Query q0) {
+        this(csvFile, delimiter, hasHeader, selectedColumns, xPos, yPos,
+             filterPositions, filters, measurePositions, bounds, grid,
+             tileIndexMap, numTiles, numThreads, totalCapacity, nullstr,
+             tmpDir, q0, /* outlierIndex */ null);
+    }
+
+    /** Overload for outlier-aware scans; pass {@code null} to disable. */
+    public ParallelCsvScanner(File csvFile, char delimiter, boolean hasHeader,
+                              int[] selectedColumns, int xPos, int yPos,
+                              int[] filterPositions, DataValidationFilter[] filters,
+                              int[] measurePositions,
+                              Rectangle bounds, Grid grid,
+                              IdentityHashMap<Tile, Integer> tileIndexMap, int numTiles,
+                              int numThreads, int totalCapacity, String nullstr,
+                              Path tmpDir, Query q0, OutlierIndex outlierIndex) {
         this.csvFile = csvFile;
         this.delimiter = delimiter;
         this.hasHeader = hasHeader;
@@ -119,6 +143,7 @@ public final class ParallelCsvScanner {
         this.tmpDir = tmpDir;
         this.q0Rect = (q0 != null) ? q0.getRect() : null;
         this.q0MeasureCols = (q0 != null) ? q0.getMeasureCols() : null;
+        this.outlierIndex = outlierIndex;
     }
 
     // ======================================================================
@@ -576,6 +601,23 @@ public final class ParallelCsvScanner {
                         }
                     }
 
+                    // Outlier-aware AQP (Phase 1): if enabled, offer this row's per-measure
+                    // values to the per-thread top-K min-heaps inside the OutlierIndex.
+                    // The vector array is materialized exactly once and shared across all
+                    // measures of this row to avoid M-fold allocation overhead.
+                    if (outlierIndex != null) {
+                        double[] vector = new double[mc];
+                        for (int m = 0; m < mc; m++) {
+                            vector[m] = (measurePositions[m] >= 0) ? row[measurePositions[m]] : Double.NaN;
+                        }
+                        for (int m = 0; m < mc; m++) {
+                            double val = vector[m];
+                            if (!Double.isNaN(val)) {
+                                outlierIndex.offer(threadIdx, m, val, offset, vector);
+                            }
+                        }
+                    }
+
                     // Accumulate q0 stats if point is within q0 rectangle
                     if (q0Rect != null && q0MeasureCols != null && q0Rect.contains(x, y)) {
                         for (Integer measureCol : q0MeasureCols) {
@@ -749,6 +791,20 @@ public final class ParallelCsvScanner {
                                 cr.tileStats[tileIdx][m] = sa;
                             }
                             sa.add(val);
+                        }
+                    }
+
+                    // Outlier-aware AQP (Phase 1) — see scanChunk for the same logic.
+                    if (outlierIndex != null) {
+                        double[] vector = new double[mc];
+                        for (int m = 0; m < mc; m++) {
+                            vector[m] = (measurePositions[m] >= 0) ? row[measurePositions[m]] : Double.NaN;
+                        }
+                        for (int m = 0; m < mc; m++) {
+                            double val = vector[m];
+                            if (!Double.isNaN(val)) {
+                                outlierIndex.offer(threadIdx, m, val, offset, vector);
+                            }
                         }
                     }
 

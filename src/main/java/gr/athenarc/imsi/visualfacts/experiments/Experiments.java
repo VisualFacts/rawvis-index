@@ -83,6 +83,9 @@ public class Experiments {
     @Parameter(names = "-subtileRatio", description = "Fraction of G² cells that get query-biased sub-tiling (0.0–1.0). Default: 0.2")
     private Double subtileRatio;
 
+    @Parameter(names = "-outlierK", description = "Outlier-aware AQP: number of global outliers to extract (0 disables; behavior is byte-identical to the pre-outlier code path)")
+    private Integer outlierK;
+
     @Parameter(names = "-run", description = "Run number for experiments")
     private Integer run;
 
@@ -167,6 +170,13 @@ public class Experiments {
         if (subtileRatio != null) {
             IndexConfig.SUBTILE_RATIO = subtileRatio;
             LOG.info("Overriding SUBTILE_RATIO to {}", subtileRatio);
+        }
+        if (outlierK != null) {
+            if (outlierK < 0) {
+                throw new IllegalArgumentException("-outlierK must be >= 0 (0 disables outlier-aware AQP)");
+            }
+            IndexConfig.OUTLIER_K = outlierK;
+            LOG.info("Overriding OUTLIER_K to {}", outlierK);
         }
     }
 

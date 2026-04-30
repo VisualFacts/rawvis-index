@@ -5,6 +5,7 @@ import static gr.athenarc.imsi.visualfacts.config.IndexConfig.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -89,6 +90,16 @@ public class Valinor implements AutoCloseable {
 
     // Global statistics per measure column, computed during initialization (approximate mode only)
     private StatsAccumulator[] globalMeasureStats;
+
+    /**
+     * Optional outlier-aware AQP support (set only when {@code IndexConfig.OUTLIER_K > 0}
+     * and we are in approximate mode).  When non-null, query-time CI methods
+     * subtract per-tile outliers from the sampling population and add their
+     * exact (closed-form) sums to the deterministic bucket.  When null, all
+     * outlier-related code paths are bypassed entirely \u2014 behavior is then
+     * byte-identical to the pre-outlier system.
+     */
+    private OutlierIndex outlierIndex;
 
     // Init timing breakdown (phase name → value)
     private java.util.LinkedHashMap<String, Object> initTimingBreakdown;
@@ -257,6 +268,18 @@ public class Valinor implements AutoCloseable {
 
         Map<Integer, StatsAccumulator> q0StatsFromScan = null;
 
+        // Outlier-aware AQP support (Phase 1).  Built only when the feature is
+        // enabled AND we are in approximate mode — outlier trimming has no
+        // effect on exact queries, and we want exact mode to stay byte-identical
+        // to the pre-outlier code path.
+        OutlierIndex outlierIndexLocal = null;
+        if (!isExactMode() && OUTLIER_K > 0 && measureCount > 0) {
+            outlierIndexLocal = new OutlierIndex(OUTLIER_K, measureCount, scanThreads);
+            LOG.info("Outlier-aware AQP enabled: K={}, measures={}, threads={}",
+                    OUTLIER_K, measureCount, scanThreads);
+        }
+        final OutlierIndex outlierIndex = outlierIndexLocal;
+
         try {
             // --- Phase 1: parallel CSV scan → merged arrays + per-tile counts/stats ---
             long phase1Start = System.nanoTime();
@@ -266,7 +289,8 @@ public class Valinor implements AutoCloseable {
                     selectedColumns, xPos, yPos,
                     filterPositions, filterArray, measurePositions,
                     grid.getBounds(), grid, tileIndexMap, numTiles,
-                    scanThreads, capacity, schema.getNullstr(), tmpDir, q0);
+                    scanThreads, capacity, schema.getNullstr(), tmpDir, q0,
+                    outlierIndex);
 
             ParallelCsvScanner.ScanResult scanResult = scanner.scan();
             long scanEndNanos = System.nanoTime();
@@ -412,6 +436,33 @@ public class Valinor implements AutoCloseable {
             computeGlobalMeasureStats();
             if (initTimingBreakdown != null) {
                 initTimingBreakdown.put("globalStats", (System.nanoTime() - globalStatsStart) / 1e9);
+            }
+
+            // Outlier-aware AQP (Phases 2–5).  Runs only when the index was
+            // allocated (i.e. OUTLIER_K > 0).  When disabled, this block is
+            // skipped entirely and the system behaves exactly as before.
+            if (outlierIndex != null) {
+                long outlierStart = System.nanoTime();
+                long t0 = System.nanoTime();
+                List<OutlierIndex.Candidate> pool = outlierIndex.mergeCandidates();
+                long mergeNs = System.nanoTime() - t0;
+                int poolSize = pool.size();
+                t0 = System.nanoTime();
+                outlierIndex.selectByScore(globalMeasureStats, pool);
+                long greedyNs = System.nanoTime() - t0;
+                t0 = System.nanoTime();
+                outlierIndex.partitionByTile(grid.getLeafTiles());
+                long partitionNs = System.nanoTime() - t0;
+                this.outlierIndex = outlierIndex;
+                logOutlierCV(outlierIndex);
+                if (initTimingBreakdown != null) {
+                    initTimingBreakdown.put("outlierBuild", (System.nanoTime() - outlierStart) / 1e9);
+                    initTimingBreakdown.put("outlierMerge", mergeNs / 1e9);
+                    initTimingBreakdown.put("outlierSelect", greedyNs / 1e9);
+                    initTimingBreakdown.put("outlierPartition", partitionNs / 1e9);
+                    initTimingBreakdown.put("outlierPoolSize", (double) poolSize);
+                    initTimingBreakdown.put("outlierSelected", (double) outlierIndex.getSelectedCount());
+                }
             }
         }
         
@@ -705,9 +756,16 @@ public class Valinor implements AutoCloseable {
         samplingNodes.addAll(partialNodes);
         samplingNodes.addAll(fullyContainedNodesWithoutStats);
 
-        // Total count (COUNT*) — exact from x,y coordinates, independent of sampling
+        // Total count (COUNT*) — exact from x,y coordinates, independent of sampling.
+        // qn.getIntersectionCount() returns the OUTLIER-PRIMED population (N')
+        // when the feature is enabled; we add the in-query outliers back here so
+        // the user-visible totalCount reflects the FULL population.
         for (QueryNode qn : samplingNodes) {
             queryResults.addTotalCount(qn.getIntersectionCount());
+            BitSet inQuery = qn.getInQueryOutliers();
+            if (inQuery != null) {
+                queryResults.addTotalCount(inQuery.cardinality());
+            }
         }
 
         AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
@@ -866,7 +924,10 @@ public class Valinor implements AutoCloseable {
         
         double maxCV = 0.0;
         for (int i = 0; i < schema.getMeasureCount(); i++) {
-            double cv = getMeasureCV(i);
+            // Use the outlier-adjusted CV (post-trim) when an outlier index
+            // exists; falls back to the regular global CV otherwise.  This is
+            // what reduces Cochran's required N when OUTLIER_K > 0.
+            double cv = getAdjustedMeasureCV(i);
             if (cv > maxCV) {
                 maxCV = cv;
             }
@@ -922,11 +983,17 @@ public class Valinor implements AutoCloseable {
         
         LOG.debug("Global CV computed for {} measures", measureCount);
         for (int i = 0; i < measureCount; i++) {
-            LOG.debug("Measure {}: count={}, mean={}, CV={}", 
+            // Log the true (uncapped) CV so the magnitude is visible in diagnostics.
+            // getMeasureCV() caps at MAX_CV_CAP which would hide extreme values like CV=135.
+            StatsAccumulator s = globalMeasureStats[i];
+            double rawCV = (s != null && s.count() >= 2 && s.mean() != 0)
+                    ? s.sampleStandardDeviation() / Math.abs(s.mean()) : 0.0;
+            LOG.debug("Measure {}: count={}, mean={}, CV={} (Cochran-capped: {})",
                 schema.getMeasureCols().get(i),
-                globalMeasureStats[i].count(),
-                globalMeasureStats[i].mean(),
-                getMeasureCV(i));
+                s != null ? s.count() : 0,
+                s != null ? s.mean() : 0,
+                String.format("%.4f", rawCV),
+                String.format("%.4f", getMeasureCV(i)));
         }
     }
     
@@ -969,6 +1036,55 @@ public class Valinor implements AutoCloseable {
     }
 
     /**
+     * Returns the outlier-adjusted CV for a given measure column: the CV of
+     * the trimmed population (full population minus the K selected outliers)
+     * if an outlier index was built, otherwise the regular {@link #getMeasureCV}.
+     *
+     * <p>Same {@link #MAX_CV_CAP} clamp as {@code getMeasureCV} so callers
+     * that plug the value into Cochran's formula stay consistent.
+     *
+     * <p>This is the value that {@link #computeInitialSamplingRate} should use
+     * when outliers are extracted: removing extreme values from the sampling
+     * population shrinks the variance the sample needs to estimate, so a
+     * smaller sample suffices.
+     */
+    public double getAdjustedMeasureCV(int measureIndex) {
+        if (outlierIndex != null) {
+            double[] post = outlierIndex.getPostOutlierCV();
+            if (post != null && measureIndex >= 0 && measureIndex < post.length) {
+                double cv = post[measureIndex];
+                if (Double.isFinite(cv) && cv > 0) {
+                    return Math.min(cv, MAX_CV_CAP);
+                }
+            }
+        }
+        return getMeasureCV(measureIndex);
+    }
+
+    /**
+     * Logs the per-measure CV before and after outlier trimming for diagnostic
+     * purposes.  The "initial" CV is the uncapped global CV computed from the
+     * full population (identical to what {@link #getMeasureCV} would return
+     * before clamping); the "post-outlier" CV is the uncapped CV of the
+     * trimmed population (population minus selected outliers).  Both numbers
+     * are produced by {@link OutlierIndex#selectByScore} during init.
+     */
+    private void logOutlierCV(OutlierIndex idx) {
+        double[] init = idx.getInitialCV();
+        double[] post = idx.getPostOutlierCV();
+        if (init == null || post == null) return;
+        List<Integer> measureCols = schema.getMeasureCols();
+        for (int m = 0; m < init.length; m++) {
+            int col = (m < measureCols.size()) ? measureCols.get(m) : -1;
+            LOG.info("Outlier CV[measureCol={}, idx={}]: initial={} \u2192 post-outlier={} (\u0394={})",
+                    col, m,
+                    String.format("%.4f", init[m]),
+                    String.format("%.4f", post[m]),
+                    String.format("%.4f", init[m] - post[m]));
+        }
+    }
+
+    /**
      * Returns the global statistics for a given measure column.
      */
     public Stats getGlobalMeasureStats(int measureIndex) {
@@ -980,6 +1096,51 @@ public class Valinor implements AutoCloseable {
     }
 
     // ==================== Confidence Interval Computation ====================
+
+    /**
+     * Outlier-aware AQP helper: returns the closed-form sum of values for the
+     * given measure (by index) over every in-query outlier of every sampling
+     * node.  Returns 0 if the outlier index is disabled or no node has any
+     * in-query outliers.
+     */
+    private double sumInQueryOutliers(List<QueryNode> samplingNodes, int measureIdx) {
+        if (outlierIndex == null || samplingNodes == null) return 0.0;
+        double s = 0.0;
+        for (QueryNode qn : samplingNodes) {
+            BitSet bits = qn.getInQueryOutliers();
+            if (bits == null || bits.isEmpty()) continue;
+            int[] idxs = qn.getTile().getOutlierIdxs();
+            if (idxs == null) continue;
+            for (int p = bits.nextSetBit(0); p >= 0; p = bits.nextSetBit(p + 1)) {
+                int outIdx = idxs[p];
+                if (outIdx < 0) continue;
+                double v = outlierIndex.getOutlierValue(outIdx, measureIdx);
+                if (!Double.isNaN(v)) s += v;
+            }
+        }
+        return s;
+    }
+
+    /**
+     * Outlier-aware AQP helper: returns the count of non-NaN values for the
+     * given measure over every in-query outlier of every sampling node.
+     */
+    private long countInQueryOutliers(List<QueryNode> samplingNodes, int measureIdx) {
+        if (outlierIndex == null || samplingNodes == null) return 0L;
+        long c = 0L;
+        for (QueryNode qn : samplingNodes) {
+            BitSet bits = qn.getInQueryOutliers();
+            if (bits == null || bits.isEmpty()) continue;
+            int[] idxs = qn.getTile().getOutlierIdxs();
+            if (idxs == null) continue;
+            for (int p = bits.nextSetBit(0); p >= 0; p = bits.nextSetBit(p + 1)) {
+                int outIdx = idxs[p];
+                if (outIdx < 0) continue;
+                if (!Double.isNaN(outlierIndex.getOutlierValue(outIdx, measureIdx))) c++;
+            }
+        }
+        return c;
+    }
 
     /**
      * Computes the confidence interval for the SUM of {@code measureCol} across
@@ -1011,6 +1172,18 @@ public class Valinor implements AutoCloseable {
             exactSum = queryResults.getStats().get(measureCol).sum();
         }
 
+        // Outlier-aware AQP: add deterministic (closed-form) outlier sums for
+        // every in-query outlier of every sampling node.  Outliers were
+        // pre-removed from the sampling pool by QueryNode.applyOutlierRemoval,
+        // so the sample-based estimator below produces an UN-biased estimate
+        // of the trimmed sum; we add the exact outlier sum back here.
+        // No-op when outlierIndex is null (feature disabled) or the tile has
+        // no in-query outliers.
+        if (outlierIndex != null) {
+            int measureIdx = schema.getMeasureIndex(measureCol);
+            exactSum += sumInQueryOutliers(samplingNodes, measureIdx);
+        }
+
         if (samplingNodes == null || samplingNodes.isEmpty()) {
             return new double[] { exactSum, exactSum };
         }
@@ -1021,7 +1194,7 @@ public class Valinor implements AutoCloseable {
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
             double N = qnode.getIntersectionCount();                    // total population (null + non-null)
-            int m = qnode.getSampledTracker().cardinality();            // total sampled  (null + non-null)
+            int m = qnode.getSampledPointCount();                       // total sampled from trimmed population
 
             // SHORT-CIRCUIT: if every point in the node has been read,
             // the non-null sum in sampleStatsAcc is exact — no estimation needed.
@@ -1112,6 +1285,14 @@ public class Valinor implements AutoCloseable {
             exactCount = queryResults.getStats().get(measureCol).count();
         }
 
+        // Outlier-aware AQP: add deterministic non-NaN counts for in-query
+        // outliers of every sampling node (see getQuerySumConfidenceInterval
+        // for the rationale).  No-op when the feature is disabled.
+        if (outlierIndex != null) {
+            int measureIdx = schema.getMeasureIndex(measureCol);
+            exactCount += countInQueryOutliers(samplingNodes, measureIdx);
+        }
+
         if (samplingNodes == null || samplingNodes.isEmpty()) {
             return new double[] { exactCount, exactCount };
         }
@@ -1122,7 +1303,7 @@ public class Valinor implements AutoCloseable {
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
             double N = qnode.getIntersectionCount();                    // total population (null + non-null)
-            int m = qnode.getSampledTracker().cardinality();            // total sampled  (null + non-null)
+            int m = qnode.getSampledPointCount();                       // total sampled from trimmed population
 
             // SHORT-CIRCUIT: all points sampled → exact count
             if (m >= (int) N) {
@@ -1192,6 +1373,15 @@ public class Valinor implements AutoCloseable {
             exactCount = queryResults.getStats().get(measureCol).count();
         }
 
+        // Outlier-aware AQP: add deterministic outlier contributions to both
+        // numerator (sum) and denominator (non-NaN count) of MEAN = SUM/COUNT.
+        // No-op when the feature is disabled.
+        if (outlierIndex != null) {
+            int measureIdx = schema.getMeasureIndex(measureCol);
+            exactSum += sumInQueryOutliers(samplingNodes, measureIdx);
+            exactCount += countInQueryOutliers(samplingNodes, measureIdx);
+        }
+
         if (samplingNodes == null || samplingNodes.isEmpty()) {
             if (exactCount == 0) {
                 return new double[] { Double.NaN, Double.NaN };
@@ -1209,7 +1399,7 @@ public class Valinor implements AutoCloseable {
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();
             double N = qnode.getIntersectionCount();
-            int m = qnode.getSampledTracker().cardinality();
+            int m = qnode.getSampledPointCount();
 
             // Fully sampled node → exact, zero variance/covariance
             if (m >= (int) N) {

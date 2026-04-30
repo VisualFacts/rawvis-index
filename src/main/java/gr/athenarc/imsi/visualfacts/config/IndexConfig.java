@@ -25,5 +25,22 @@ public final class IndexConfig {
      */
     public static final int TILE_ID_BYTES = Integer.BYTES;
 
+    // ==================== Outlier-aware AQP (Phase 1) ====================
+    //
+    // The optional outlier index identifies the K rows (across the entire
+    // dataset) whose extreme measure values dominate the variance of one or
+    // more aggregates.  Those rows are extracted into a small in-memory
+    // value matrix, removed from the per-tile sampling population, and
+    // contribute exact (closed-form) sums at query time.  The remaining
+    // sampling population is the "trimmed" tail with much lower CV, which
+    // tightens approximate-query confidence intervals dramatically.
+    //
+    // Set OUTLIER_K = 0 (default) to completely disable the feature; in that
+    // case Valinor's behavior is byte-identical to the pre-outlier code path
+    // (no extra heaps, no extra tile state, no query-time bookkeeping).
+
+    /** Number of outliers to extract globally; 0 disables outlier-aware AQP. */
+    public static int OUTLIER_K = 0;
+
     private IndexConfig() {}
 }

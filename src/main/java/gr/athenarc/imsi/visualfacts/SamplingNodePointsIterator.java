@@ -3,14 +3,9 @@ package gr.athenarc.imsi.visualfacts;
 import java.util.BitSet;
 import java.util.Random;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     private final BitSet selectedSamples; // Holds only eligible sampled points
     private int currentIndex; // Tracks progress over selectedSamples
-
-    private static final Logger LOG = LogManager.getLogger(SamplingNodePointsIterator.class);
 
     public SamplingNodePointsIterator(QueryNode queryNode, double samplingRate) {
         this.queryNode = queryNode;
@@ -18,7 +13,7 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         int targetSampleCount = Math.max(2, (int) Math.ceil(samplingRate * intersectionCount));
 
         // Compute remaining samples needed
-        int alreadySampled = queryNode.getSampledTracker().cardinality();
+        int alreadySampled = queryNode.getSampledPointCount();
         int remainingSamplesNeeded = Math.max(targetSampleCount - alreadySampled, 0); // Ensure non-negative
 
         // If no additional samples are needed, exit early
@@ -40,21 +35,29 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
      * O(eligible + k) enumerate-then-Fisher-Yates for partial tiles.
      */
     private BitSet selectRandomBitsReservoir(int remainingSamplesNeeded) {
-        // Fast path: fully-contained tile — eligible indices are [0, tileSize) \ sampledTracker.
+        // Fast path: fully-contained tile; eligible indices are [0, tileSize) \ sampledTracker.
         // Rejection sampling generates k random ints in [0, tileSize), rejecting collisions.
         // Expected cost: O(k / (1-f)) where f = sampled fraction. Falls through if f >= 50%.
         if (queryNode.isFullyContained()) {
             int tileSize = queryNode.getTile().getSize();
             BitSet sampledTracker = queryNode.getSampledTracker();
-            int alreadySampled = sampledTracker.cardinality();
-            if (alreadySampled < tileSize / 2) {
-                int eligibleCount = tileSize - alreadySampled;
+            // Outlier-aware AQP: outliers are part of the population but excluded
+            // from the sampling pool.  When present, they are added to the "blocked"
+            // set passed to the rejection sampler so they are never emitted.
+            BitSet outliers = queryNode.getTile().getOutlierBitSet();
+            BitSet blocked = (BitSet) sampledTracker.clone();
+            if (outliers != null) {
+                blocked.or(outliers);
+            }
+            int blockedCount = blocked.cardinality();
+            if (blockedCount < tileSize / 2) {
+                int eligibleCount = tileSize - blockedCount;
                 int k = Math.min(remainingSamplesNeeded, eligibleCount);
-                return selectRandomBitsRejection(k, tileSize, sampledTracker);
+                return selectRandomBitsRejection(k, tileSize, sampledTracker, outliers);
             }
         }
 
-        // General path: sparse eligible population — enumerate then partial Fisher-Yates
+        // General path: sparse eligible population; enumerate then partial Fisher-Yates
         BitSet eligiblePoints = (BitSet) queryNode.getQueryPointsBitSet().clone();
         eligiblePoints.andNot(queryNode.getSampledTracker());
 
@@ -70,7 +73,7 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
 
         int k = Math.min(remainingSamplesNeeded, eligibleCount);
 
-        // Partial Fisher-Yates: shuffle only the first k positions — O(k)
+        // Partial Fisher-Yates: shuffle only the first k positions in O(k)
         Random random = new Random();
         for (int i = 0; i < k; i++) {
             int j = i + random.nextInt(eligibleCount - i); // uniform in [i, eligibleCount)
@@ -88,19 +91,23 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     }
 
     /**
-     * Selects k random indices from [0, tileSize) avoiding sampledTracker via rejection.
-     * Each eligible index has equal probability k/eligible of being selected (SRSWOR).
+     * Selects k random indices from [0, tileSize) avoiding sampledTracker (and
+     * optionally outlierBitSet) via rejection.  Each eligible index has equal
+     * probability k/eligible of being selected (SRSWOR).
      */
-    private BitSet selectRandomBitsRejection(int k, int tileSize, BitSet sampledTracker) {
+    private BitSet selectRandomBitsRejection(int k, int tileSize, BitSet sampledTracker, BitSet outliers) {
         Random random = new Random();
         BitSet result = new BitSet();
         int selected = 0;
         while (selected < k) {
             int idx = random.nextInt(tileSize);
-            if (!sampledTracker.get(idx) && !result.get(idx)) {
-                result.set(idx);
-                selected++;
-            }
+            if (sampledTracker.get(idx) || result.get(idx)) continue;
+            // Outlier-aware AQP: skip outlier positions so they are excluded
+            // from the sampling pool (they contribute exact closed-form sums
+            // separately in the CI computation).
+            if (outliers != null && outliers.get(idx)) continue;
+            result.set(idx);
+            selected++;
         }
         return result;
     }
@@ -119,7 +126,6 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     protected long peekOffset() {
         long offset = queryNode.getTile().getOffset(currentIndex);
         // Move to next selected sample for the next advance call
-        int consumed = currentIndex;
         currentIndex = selectedSamples.nextSetBit(currentIndex + 1);
         return offset;
     }

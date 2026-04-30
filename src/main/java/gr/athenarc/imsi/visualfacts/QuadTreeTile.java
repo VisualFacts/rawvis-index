@@ -1,6 +1,8 @@
 package gr.athenarc.imsi.visualfacts;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
@@ -117,6 +119,27 @@ public class QuadTreeTile extends Tile {
                 counts[q]++;
             }
 
+            BitSet[] childOutlierBits = new BitSet[4];
+            int[][] childOutlierIdxs = new int[4][];
+            BitSet parentOutliers = this.getOutlierBitSet();
+            int[] parentOutlierIdxs = this.getOutlierIdxs();
+            if (parentOutliers != null && !parentOutliers.isEmpty() && parentOutlierIdxs != null) {
+                int[] childPositions = new int[4];
+                for (int i = 0; i < n; i++) {
+                    int q = subIds[i];
+                    int childLocalPos = childPositions[q]++;
+                    if (parentOutliers.get(i)) {
+                        if (childOutlierBits[q] == null) {
+                            childOutlierBits[q] = new BitSet(counts[q]);
+                            childOutlierIdxs[q] = new int[counts[q]];
+                            Arrays.fill(childOutlierIdxs[q], -1);
+                        }
+                        childOutlierBits[q].set(childLocalPos);
+                        childOutlierIdxs[q][childLocalPos] = parentOutlierIdxs[i];
+                    }
+                }
+            }
+
             // Compute sub-starts (absolute positions within the shared store)
             int[] subStarts = new int[4];
             subStarts[0] = parentStart;
@@ -132,6 +155,9 @@ public class QuadTreeTile extends Tile {
             for (int q = 0; q < 4; q++) {
                 if (counts[q] > 0) {
                     quads[q].setSlice(store, subStarts[q], counts[q]);
+                    if (childOutlierBits[q] != null) {
+                        quads[q].setOutlierData(childOutlierBits[q], childOutlierIdxs[q]);
+                    }
                 }
             }
 
