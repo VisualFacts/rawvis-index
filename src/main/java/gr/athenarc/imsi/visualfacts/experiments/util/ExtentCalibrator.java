@@ -47,15 +47,32 @@ public final class ExtentCalibrator {
     }
 
     /**
-     * Binary-searches a single (sx, sy) — both scaled linearly with α and the
-     * domain aspect ratio — such that the reservoir-estimated mean
-     * selectivity equals {@code targetSigma} within {@link #TOLERANCE}.
+     * Reservoir-centred calibration: probe centres are the reservoir points
+     * themselves. Appropriate for uniform-random workloads, whose runtime
+     * centres are also drawn from the reservoir.
      */
     public static double[] calibrate(SpatialReservoir reservoir, Rectangle bounds, double targetSigma) {
+        return calibrate(reservoir, bounds, targetSigma, reservoir.xs(), reservoir.ys());
+    }
+
+    /**
+     * Workload-aware calibration: the binary search uses the supplied
+     * {@code (probeXs, probeYs)} as query centres while the data-density
+     * estimator (Grid index) is still built from the reservoir. This is the
+     * right path for non-uniform workloads (e.g. clustered / GMF) where the
+     * runtime centre distribution differs from the data distribution; the
+     * caller is expected to draw probe centres from the same distribution
+     * the workload generator will use at run time.
+     */
+    public static double[] calibrate(SpatialReservoir reservoir, Rectangle bounds, double targetSigma,
+                                     double[] probeXs, double[] probeYs) {
         check(targetSigma);
         if (reservoir.size() < 2) {
             LOG.warn("Reservoir too small ({}) to calibrate; falling back to closed form.", reservoir.size());
             return closedForm(targetSigma, bounds);
+        }
+        if (probeXs == null || probeYs == null || probeXs.length != probeYs.length || probeXs.length < 2) {
+            throw new IllegalArgumentException("probe centres must be non-null, equal-length and >= 2");
         }
 
         double wx = width(bounds);
@@ -69,11 +86,11 @@ public final class ExtentCalibrator {
         double lo = 0.0;
         double hi = Math.min(1.0, alphaSeed * 4.0);
         // Ensure hi gives sel >= target; otherwise widen.
-        double hiSel = meanSel(g, reservoir, bounds, hi * wx, hi * wy);
+        double hiSel = meanSel(g, reservoir, bounds, probeXs, probeYs, hi * wx, hi * wy);
         int widenGuard = 0;
         while (hiSel < targetSigma && hi < 1.0 && widenGuard++ < 6) {
             hi = Math.min(1.0, hi * 1.5);
-            hiSel = meanSel(g, reservoir, bounds, hi * wx, hi * wy);
+            hiSel = meanSel(g, reservoir, bounds, probeXs, probeYs, hi * wx, hi * wy);
         }
         if (hiSel < targetSigma) {
             LOG.warn("Even α={} yields mean selectivity {} < target {}; using α=1.", hi, hiSel, targetSigma);
@@ -86,7 +103,7 @@ public final class ExtentCalibrator {
             double alpha = (lo + hi) / 2.0;
             double sx = alpha * wx;
             double sy = alpha * wy;
-            double estimated = meanSel(g, reservoir, bounds, sx, sy);
+            double estimated = meanSel(g, reservoir, bounds, probeXs, probeYs, sx, sy);
             bestAlpha = alpha;
             bestSel = estimated;
             double rel = Math.abs(estimated - targetSigma) / targetSigma;
@@ -96,8 +113,8 @@ public final class ExtentCalibrator {
             if (estimated < targetSigma) lo = alpha;
             else hi = alpha;
         }
-        LOG.info("ExtentCalibrator: target σ={} → α={} (sx={}, sy={}), achieved mean σ={}",
-                targetSigma, bestAlpha, bestAlpha * wx, bestAlpha * wy, bestSel);
+        LOG.info("ExtentCalibrator: target σ={} → α={} (sx={}, sy={}), achieved mean σ={} over {} probe centres",
+                targetSigma, bestAlpha, bestAlpha * wx, bestAlpha * wy, bestSel, probeXs.length);
         return new double[]{bestAlpha * wx, bestAlpha * wy};
     }
 
@@ -107,8 +124,14 @@ public final class ExtentCalibrator {
      * paper-friendly logging. Selectivity is reported as a fraction in [0,1].
      */
     public static SelectivityStats stats(SpatialReservoir reservoir, Rectangle bounds, double sx, double sy) {
+        return stats(reservoir, bounds, sx, sy, reservoir.xs(), reservoir.ys());
+    }
+
+    /** Same as {@link #stats(SpatialReservoir, Rectangle, double, double)} but over caller-supplied probe centres. */
+    public static SelectivityStats stats(SpatialReservoir reservoir, Rectangle bounds, double sx, double sy,
+                                         double[] probeXs, double[] probeYs) {
         Grid g = new Grid(reservoir, bounds, GRID_SIZE);
-        return statsInternal(g, reservoir, bounds, sx, sy);
+        return statsInternal(g, reservoir, bounds, probeXs, probeYs, sx, sy);
     }
 
     public static final class SelectivityStats {
@@ -126,15 +149,18 @@ public final class ExtentCalibrator {
 
     // --------------------------------------------------------------------- //
 
-    private static double meanSel(Grid g, SpatialReservoir r, Rectangle bounds, double sx, double sy) {
-        return statsInternal(g, r, bounds, sx, sy).mean;
+    private static double meanSel(Grid g, SpatialReservoir r, Rectangle bounds,
+                                  double[] probeXs, double[] probeYs, double sx, double sy) {
+        return statsInternal(g, r, bounds, probeXs, probeYs, sx, sy).mean;
     }
 
     private static SelectivityStats statsInternal(Grid g, SpatialReservoir r, Rectangle bounds,
+                                                  double[] probeXs, double[] probeYs,
                                                   double sx, double sy) {
-        double[] xs = r.xs();
-        double[] ys = r.ys();
-        int n = xs.length;
+        double[] rxs = r.xs();
+        double[] rys = r.ys();
+        int rN = rxs.length;
+        int qN = probeXs.length;
         double xLo = bounds.getXRange().lowerEndpoint();
         double xHi = bounds.getXRange().upperEndpoint();
         double yLo = bounds.getYRange().lowerEndpoint();
@@ -147,9 +173,9 @@ public final class ExtentCalibrator {
         double minSel = Double.POSITIVE_INFINITY;
         double maxSel = Double.NEGATIVE_INFINITY;
 
-        for (int i = 0; i < n; i++) {
-            double cx = xs[i];
-            double cy = ys[i];
+        for (int i = 0; i < qN; i++) {
+            double cx = probeXs[i];
+            double cy = probeYs[i];
             // Shift inward to preserve area at the boundary (matches runtime).
             if (cx - halfX < xLo) cx = xLo + halfX;
             else if (cx + halfX > xHi) cx = xHi - halfX;
@@ -161,15 +187,15 @@ public final class ExtentCalibrator {
             double yMin = cy - halfY;
             double yMax = cy + halfY;
 
-            int hits = g.countInside(xs, ys, xMin, xMax, yMin, yMax);
-            double sel = (double) hits / n;
+            int hits = g.countInside(rxs, rys, xMin, xMax, yMin, yMax);
+            double sel = (double) hits / rN;
             sumSel += sel;
             sumSqSel += sel * sel;
             if (sel < minSel) minSel = sel;
             if (sel > maxSel) maxSel = sel;
         }
-        double mean = sumSel / n;
-        double var = Math.max(0.0, sumSqSel / n - mean * mean);
+        double mean = sumSel / qN;
+        double var = Math.max(0.0, sumSqSel / qN - mean * mean);
         return new SelectivityStats(mean, Math.sqrt(var), minSel, maxSel);
     }
 

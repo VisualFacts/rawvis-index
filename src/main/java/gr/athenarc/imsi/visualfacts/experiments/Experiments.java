@@ -536,6 +536,7 @@ public class Experiments {
         String mode = wc.getExtentMode() == null
                 ? WorkloadConfig.EXTENT_MODE_CALIBRATED
                 : wc.getExtentMode();
+        double[][] foci = wc.parseFocusCenters();
         SpatialReservoir reservoir = null;
         double[] extent;
         if (WorkloadConfig.EXTENT_MODE_CLOSED_FORM.equalsIgnoreCase(mode)) {
@@ -547,15 +548,32 @@ public class Experiments {
             Path cacheDir = Paths.get("experiments", "query_sequences", "reservoirs");
             reservoir = SpatialReservoir.loadOrBuild(
                     schema, scenarioConfig.getDataset(), cacheDir, reservoirSize, wc.getSeed());
-            extent = ExtentCalibrator.calibrate(reservoir, bounds, sigma);
-            LOG.info("Clustered workload (calibrated): σ={} → sx={}, sy={} (reservoir size={})",
-                    sigma, extent[0], extent[1], reservoir.size());
+            // Workload-aware calibration: use the same clustered-centre
+            // sampler as the runtime workload so the calibrated extent
+            // matches the actual centre distribution (data skew handled by
+            // the reservoir-based density estimator). Use at least 10k probe
+            // centres for a stable mean even when seqCount is small.
+            int probeCount = Math.max(wc.getSeqCount(), 10_000);
+            double[][] centers = ClusteredQueryGenerator.sampleCenters(
+                    wc.getSeed(), bounds, wc.getNumFoci(),
+                    wc.getFocusSpreadFraction(), foci, probeCount);
+            double[] probeXs = new double[probeCount];
+            double[] probeYs = new double[probeCount];
+            for (int i = 0; i < probeCount; i++) {
+                probeXs[i] = centers[i][0];
+                probeYs[i] = centers[i][1];
+            }
+            extent = ExtentCalibrator.calibrate(reservoir, bounds, sigma, probeXs, probeYs);
+            LOG.info("Clustered workload (calibrated): σ={} → sx={}, sy={} (reservoir size={}, probeCenters={})",
+                    sigma, extent[0], extent[1], reservoir.size(), probeCount);
+            ExtentCalibrator.SelectivityStats stats =
+                    ExtentCalibrator.stats(reservoir, bounds, extent[0], extent[1], probeXs, probeYs);
+            LOG.info("Clustered workload realised per-query selectivity (over clustered probe centres): {}", stats);
         } else {
             throw new IllegalArgumentException("Unknown extentMode: " + mode
                     + " (supported: calibrated, closedForm)");
         }
 
-        double[][] foci = wc.parseFocusCenters();
         LOG.info("Clustered workload: numFoci={}, focusSpreadFraction={}, foci={}",
                 wc.getNumFoci(), wc.getFocusSpreadFraction(),
                 foci == null ? "<sampled from bounds with seed>" : java.util.Arrays.deepToString(foci));
