@@ -937,10 +937,10 @@ public class Valinor implements AutoCloseable {
         }
         
         double z = 1.96;  // 95% confidence
-        double requiredN = Math.pow(z * maxCV / errorThreshold, 2);
+        double cochranN = Math.pow(z * maxCV / errorThreshold, 2);
         
         final double SAFETY_MARGIN = 1.0;
-        requiredN *= SAFETY_MARGIN;
+        cochranN *= SAFETY_MARGIN;
         
         long totalPopulation = samplingNodes.stream()
             .mapToLong(QueryNode::getIntersectionCount)
@@ -949,6 +949,8 @@ public class Valinor implements AutoCloseable {
         if (totalPopulation == 0) {
             return 0.01d;
         }
+
+        double requiredN = cochranN / (1.0 + (cochranN - 1.0) / totalPopulation);
         
         double rate = requiredN / totalPopulation;
         
@@ -957,8 +959,8 @@ public class Valinor implements AutoCloseable {
         rate = Math.max(rate, minRateForCLT);
         rate = Math.min(1.0, rate);
         
-        LOG.trace("Initial sampling rate: {} (CV={}, requiredN={}, population={})", 
-            rate, maxCV, requiredN, totalPopulation);
+        LOG.trace("Initial sampling rate: {} (CV={}, cochranN={}, fpcRequiredN={}, population={})", 
+            rate, maxCV, cochranN, requiredN, totalPopulation);
         
         return rate;
     }
