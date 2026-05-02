@@ -3,6 +3,8 @@ package gr.athenarc.imsi.visualfacts.experiments;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -10,7 +12,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
@@ -43,6 +48,7 @@ import gr.athenarc.imsi.visualfacts.experiments.util.SQLQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SpatialReservoir;
 import gr.athenarc.imsi.visualfacts.experiments.util.ExtentCalibrator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.UserOpType;
 import gr.athenarc.imsi.visualfacts.experiments.util.UniformRandomQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.ClusteredQueryGenerator;
 import gr.athenarc.imsi.visualfacts.query.AggregateType;
@@ -53,6 +59,11 @@ import gr.athenarc.imsi.visualfacts.query.QueryResults;
 public class Experiments {
 
     private static final Logger LOG = LogManager.getLogger(Experiments.class);
+    private static final Path QUERY_SEQUENCE_DIR =
+        Paths.get("experiments", "query_sequences");
+    private static final String WORKLOAD_QUERY_HEADER_PREFIX = "# workloadCache";
+    private static final Pattern QUERY_SEQUENCE_RECT_PATTERN = Pattern.compile(
+        "^\\(([-+0-9.eE]+)\\.\\.([-+0-9.eE]+)\\),\\(([-+0-9.eE]+)\\.\\.([-+0-9.eE]+)\\)$");
 
     // ========== Scenario-based configuration ==========
     @Parameter(names = "-scenario", description = "Name of the scenario to run (defined in YAML config)")
@@ -361,7 +372,8 @@ public class Experiments {
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
                         "Total Count", "Query Result",
-                        "Error Bound", "run", "Init Timing",
+                        "Point Estimate", "Error Bound", "Error Bound By Aggregate", "Converged",
+                        "run", "Init Timing",
                         "Index Mem Deep Size (bytes)");
             } else {
                 csvWriter.writeHeaders("csv", "errorBound", "initMode", "i", "op", "bbox",
@@ -369,7 +381,8 @@ public class Experiments {
                         "Overlapped tiles", "Fully Contained Tiles With Stats", "Fully Contained Tiles Without Stats",
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
                         "Total Count", "Query Result",
-                        "Error Bound", "run", "Init Timing");
+                        "Point Estimate", "Error Bound", "Error Bound By Aggregate", "Converged",
+                        "run", "Init Timing");
             }
 
             Stopwatch stopwatch;
@@ -411,7 +424,10 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getTotalCount());
                 // Query Result: {measureCol={sum=[lo, hi]}, ...}
                 csvWriter.addValue(formatApproxQueryResult(queryResults));
+                csvWriter.addValue(formatApproxPointEstimates(queryResults));
                 csvWriter.addValue(queryResults.getErrorBounds());
+                csvWriter.addValue(formatAggregateErrorBounds(queryResults));
+                csvWriter.addValue(queryResults.isConverged());
                 csvWriter.addValue(run);
                 // Init timing breakdown (only for query 0)
                 csvWriter.addValue(i == 0 && index.getInitTimingBreakdown() != null
@@ -447,13 +463,146 @@ public class Experiments {
     }
 
     private List<Query> generateQuerySequence(Schema schema) throws IOException {
-        List<Query> sequence = generateFullQuerySequence(schema);
+        List<Query> sequence = (scenarioConfig != null && scenarioConfig.hasWorkload())
+                ? loadOrBuildCachedWorkloadSequence(schema)
+                : generateFullQuerySequence(schema);
         if (maxQueries != null && maxQueries > 0 && maxQueries < sequence.size()) {
             LOG.info("Truncating query sequence from {} to first {} queries (-maxQueries override)",
                     sequence.size(), maxQueries);
             sequence = new ArrayList<>(sequence.subList(0, maxQueries));
         }
         return sequence;
+    }
+
+    private List<Query> loadOrBuildCachedWorkloadSequence(Schema schema) throws IOException {
+        Path queryFile = getWorkloadQueryFile();
+        String fingerprint = getWorkloadQueryFingerprint(schema);
+        if (isCurrentWorkloadQueryFile(queryFile, fingerprint)) {
+            LOG.info("Loading workload query sequence for '{}' from {}", scenario, queryFile);
+            return readQuerySequenceFile(queryFile);
+        }
+
+        if (Files.isRegularFile(queryFile)) {
+            LOG.info("Regenerating workload query sequence for '{}' because {} is stale for the current scenario/schema inputs",
+                    scenario, queryFile);
+        }
+        List<Query> sequence = generateFullQuerySequence(schema);
+        writeQuerySequenceFile(queryFile, sequence, getWorkloadQueryHeader(fingerprint));
+        LOG.info("Materialised workload query sequence for '{}' ({} queries) to {}",
+                scenario, sequence.size(), queryFile);
+        return sequence;
+    }
+
+    private Path getWorkloadQueryFile() {
+        String safeScenario = scenario.replaceAll("[^A-Za-z0-9._-]", "_");
+        return QUERY_SEQUENCE_DIR.resolve(safeScenario + ".txt");
+    }
+
+    private String getWorkloadQueryFingerprint(Schema schema) {
+        WorkloadConfig workload = scenarioConfig.getWorkload();
+        String fingerprint = String.join("|",
+                "scenario=" + scenario,
+                "dataset=" + scenarioConfig.getDataset(),
+                "workload=" + workload,
+                "csv=" + schema.getCsv(),
+                "hasHeader=" + schema.getHasHeader(),
+                "delimiter=" + schema.getDelimiter(),
+                "bounds=" + schema.getBounds(),
+                "xColumn=" + schema.getxColumn(),
+                "yColumn=" + schema.getyColumn(),
+                "measureCols=" + schema.getMeasureCols(),
+                "objectCount=" + schema.getObjectCount(),
+                "validationFilters=" + schema.getValidationFilters(),
+                "nullstr=" + schema.getNullstr());
+        return UUID.nameUUIDFromBytes(fingerprint.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private String getWorkloadQueryHeader(String fingerprint) {
+        return WORKLOAD_QUERY_HEADER_PREFIX
+                + " fingerprint=" + fingerprint
+                + " scenario=" + scenario
+                + " dataset=" + scenarioConfig.getDataset();
+    }
+
+    private boolean isCurrentWorkloadQueryFile(Path file, String fingerprint) throws IOException {
+        if (!Files.isRegularFile(file)) {
+            return false;
+        }
+        try (var reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String firstLine = reader.readLine();
+            return firstLine != null
+                    && firstLine.startsWith(WORKLOAD_QUERY_HEADER_PREFIX)
+                    && firstLine.contains("fingerprint=" + fingerprint);
+        }
+    }
+
+    private List<Query> readQuerySequenceFile(Path file) throws IOException {
+        List<Query> sequence = new ArrayList<>();
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            sequence.add(parseQuerySequenceLine(trimmed));
+        }
+        return sequence;
+    }
+
+    private void writeQuerySequenceFile(Path file, List<Query> sequence, String header) throws IOException {
+        Path parent = file.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        try (var writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+            if (header != null && !header.isBlank()) {
+                writer.write(header);
+                writer.newLine();
+            }
+            for (Query query : sequence) {
+                writer.write(formatQuerySequenceLine(query));
+                writer.newLine();
+            }
+        }
+    }
+
+    private Query parseQuerySequenceLine(String line) {
+        String[] parts = line.split("\\|", -1);
+        if (parts.length < 5) {
+            throw new IllegalArgumentException("Malformed query sequence line: " + line);
+        }
+
+        Rectangle rect = parseRect(parts[0]);
+        List<Integer> measureCols = new ArrayList<>();
+        if (!parts[3].isBlank()) {
+            for (String token : parts[3].split(",")) {
+                measureCols.add(Integer.parseInt(token.trim()));
+            }
+        }
+
+        UserOpType opType = parts[4].isBlank() ? null : UserOpType.valueOf(parts[4]);
+        return new Query(rect, measureCols, opType);
+    }
+
+    private Rectangle parseRect(String spec) {
+        Matcher matcher = QUERY_SEQUENCE_RECT_PATTERN.matcher(spec.trim());
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("Malformed rectangle in query sequence: " + spec);
+        }
+        return new Rectangle(
+                Range.open(Double.parseDouble(matcher.group(1)), Double.parseDouble(matcher.group(2))),
+                Range.open(Double.parseDouble(matcher.group(3)), Double.parseDouble(matcher.group(4))));
+    }
+
+    private String formatQuerySequenceLine(Query query) {
+        Rectangle rect = query.getRect();
+        Preconditions.checkNotNull(rect, "Query sequence caching requires rectangle queries");
+        String measures = query.getMeasureCols() == null ? ""
+                : query.getMeasureCols().stream().map(String::valueOf).collect(Collectors.joining(","));
+        String opType = query.getUserOpType() == null ? "" : query.getUserOpType().name();
+        return String.format("(%s..%s),(%s..%s)|{}|[]|%s|%s",
+                rect.getXRange().lowerEndpoint(), rect.getXRange().upperEndpoint(),
+                rect.getYRange().lowerEndpoint(), rect.getYRange().upperEndpoint(),
+                measures, opType);
     }
 
     private void printQuerySequenceCount() throws IOException {
@@ -626,6 +775,61 @@ public class Experiments {
         }
         sb.append("}");
         return sb.toString();
+    }
+
+    private String formatApproxPointEstimates(ApproximateQueryResults queryResults) {
+        StringBuilder sb = new StringBuilder("{");
+        Map<Integer, double[]> sumCIs = queryResults.getSumConfidenceIntervals();
+        Map<Integer, double[]> countCIs = queryResults.getCountConfidenceIntervals();
+        Map<Integer, double[]> meanCIs = queryResults.getMeanConfidenceIntervals();
+        boolean first = true;
+        if (sumCIs != null) {
+            for (Map.Entry<Integer, double[]> entry : sumCIs.entrySet()) {
+                if (!first) sb.append(", ");
+                first = false;
+                int col = entry.getKey();
+                sb.append(col).append("={sum=").append(midpoint(entry.getValue()));
+                if (countCIs != null && countCIs.containsKey(col)) {
+                    sb.append(", count=").append(midpoint(countCIs.get(col)));
+                }
+                if (meanCIs != null && meanCIs.containsKey(col)) {
+                    sb.append(", mean=").append(midpoint(meanCIs.get(col)));
+                }
+                sb.append("}");
+            }
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String formatAggregateErrorBounds(ApproximateQueryResults queryResults) {
+        StringBuilder sb = new StringBuilder("{");
+        Map<Integer, Double> sumErrors = queryResults.getSumErrorBounds();
+        Map<Integer, Double> countErrors = queryResults.getCountErrorBounds();
+        Map<Integer, Double> meanErrors = queryResults.getMeanErrorBounds();
+        boolean first = true;
+        if (sumErrors != null) {
+            for (Map.Entry<Integer, Double> entry : sumErrors.entrySet()) {
+                if (!first) sb.append(", ");
+                first = false;
+                int col = entry.getKey();
+                sb.append(col).append("={sum=").append(entry.getValue());
+                if (countErrors != null && countErrors.containsKey(col)) {
+                    sb.append(", count=").append(countErrors.get(col));
+                }
+                if (meanErrors != null && meanErrors.containsKey(col)) {
+                    sb.append(", mean=").append(meanErrors.get(col));
+                }
+                sb.append("}");
+            }
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static double midpoint(double[] interval) {
+        if (interval == null || interval.length < 2) return Double.NaN;
+        return (interval[0] + interval[1]) / 2.0;
     }
 
     private void timeDuckDBQueries() throws IOException {
@@ -834,16 +1038,10 @@ public class Experiments {
         if (parent != null) {
             parent.mkdirs();
         }
-        try (FileWriter writer = new FileWriter(file, false)) {
-            for (Query query : sequence) {
-                Rectangle rect = query.getRect();
-                writer.write(String.format("(%s..%s),(%s..%s)|{}|[]|%s|%s%n",
-                        rect.getXRange().lowerEndpoint(), rect.getXRange().upperEndpoint(),
-                        rect.getYRange().lowerEndpoint(), rect.getYRange().upperEndpoint(),
-                        query.getMeasureCols().stream().map(String::valueOf).collect(Collectors.joining(",")),
-                        query.getUserOpType()));
-            }
-        }
+        String header = (scenarioConfig != null && scenarioConfig.hasWorkload())
+                ? getWorkloadQueryHeader(getWorkloadQueryFingerprint(schema))
+                : null;
+        writeQuerySequenceFile(file.toPath(), sequence, header);
         LOG.info("Generated query sequence with {} queries to {}", sequence.size(), outFile);
     }
 

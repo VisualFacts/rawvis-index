@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Keep long experiment runs alive across terminal/session disconnects.
+trap '' HUP
+
 # =============================================================================
 # VALINOR-A experiment runner
 #
@@ -125,9 +128,40 @@ run_end=$((run_start + num_runs - 1))
 
 # Index construction parameters
 # RESOLUTION = partitions per axis for the initial uniform grid (G×G cells)
+# Default 500: empirically the knee of the resolution/quality trade-off on
+# real datasets (eBird CA: res500 captures ~70% of the res2000 tail-latency
+# improvement while using only 6% of the per-tile metadata; res>500 risks
+# inflating per-tile metadata to multi-GB on 20-thread scans and creates
+# many empty/wasted tiles in skewed regions). Adaptive sub-tiling adds
+# precision on demand where queries actually land, which is where further
+# gains over res=500 come from.
 resolution_list=(${RESOLUTION:-500})
-# SUBTILE_RATIO = fraction of G² cells that get query-biased sub-tiling
-subtile_ratio=${SUBTILE_RATIO:-0.2}
+# SUBTILE_RATIO = fraction of G² cells that get query-biased sub-tiling at
+# INIT TIME (extra refinement around q0). Default 0 isolates the runtime
+# adaptation effect: any divergence between valinor_a and valinor_s comes
+# purely from query-driven splits, not from a finer cold-start grid.
+subtile_ratio=${SUBTILE_RATIO:-0}
+
+# OUTLIER_K_LIST = number of global outliers to extract per run (Phase 1
+# outlier-aware AQP).  0 disables the feature; the resulting code path is
+# byte-identical to the pre-outlier system, so K=0 results are directly
+# comparable with historical baselines.  Multiple values can be swept by
+# space-separating, e.g. OUTLIER_K_LIST="0 1000 5000 10000".
+# Filenames include _outK${K} only for approximate runs with K > 0. Exact
+# runs and K=0 approximate runs use the baseline filename.
+outlier_k_list=(${OUTLIER_K_LIST:-0})
+
+# MAX_QUERIES = optional cap on queries per run. If set, truncates the
+# scenario's seqCount to the first N queries (deterministic prefix).
+# Use to give baselines a shorter prefix while letting Valinor consume the
+# full workload. Result CSVs always include the effective query count as
+# _n<N>, regardless of whether it came from YAML or MAX_QUERIES.
+max_queries=${MAX_QUERIES:-0}
+if [[ "$max_queries" -gt 0 ]]; then
+    max_queries_arg="-maxQueries $max_queries"
+else
+    max_queries_arg=""
+fi
 
 # ---- Helper ----
 
@@ -140,6 +174,36 @@ contains() {
         fi
     done
     return 1
+}
+
+is_exact_error_bound() {
+    [[ "$1" =~ ^0+([.]0+)?$ ]]
+}
+
+declare -A scenario_query_counts
+
+query_count_for() {
+    local scenario="$1"
+    if [[ -n "${scenario_query_counts[$scenario]:-}" ]]; then
+        printf '%s' "${scenario_query_counts[$scenario]}"
+        return 0
+    fi
+
+    local raw_output query_count
+    raw_output=$("$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" $JVM_EXTRA_OPTS -jar target/experiments.jar \
+        -c printQuerySequenceCount \
+        -scenario "$scenario" \
+        -configFile "$config_file" \
+        $max_queries_arg 2>&1)
+    query_count=$(printf '%s\n' "$raw_output" | sed -n 's/^QUERY_SEQUENCE_COUNT=//p' | tail -n 1)
+    if [[ -z "$query_count" ]]; then
+        echo "Failed to resolve query count for scenario=$scenario" >&2
+        printf '%s\n' "$raw_output" >&2
+        return 1
+    fi
+
+    scenario_query_counts[$scenario]="$query_count"
+    printf '%s' "$query_count"
 }
 
 # ---- Main loop ----
@@ -163,6 +227,8 @@ do
     do
         for scenario in "${scenarios[@]}"
         do
+            query_count=$(query_count_for "$scenario") || exit 1
+            query_count_suffix="_n${query_count}"
             for resolution in "${resolution_list[@]}"
             do
             results_dir="${results_base}/${scenario}/${subdir}"
@@ -185,16 +251,31 @@ do
                         fi
                     fi
 
-                    # Build filename: include resolution and subtile ratio only if non-default
+                    for outlier_k in "${outlier_k_list[@]}"
+                    do
+                    # In exact mode (errorBound == 0) the outlier index is never
+                    # built (Valinor.initialize gates it on !isExactMode()), so
+                    # iterating over multiple K values would just produce
+                    # byte-identical duplicate runs.  Collapse to a single K=0
+                    # filename for exact mode.
+                    if is_exact_error_bound "$error_bound" && [[ "$outlier_k" != "0" ]]; then
+                        continue
+                    fi
+                    # Build filename: include resolution and subtile ratio; include
+                    # _outK only when it changes approximate-query behavior.
                     out_name="results_mcols${num_measures}_error${error_bound}"
                     out_name="${out_name}_res${resolution}_str${subtile_ratio}"
+                    out_name="${out_name}${query_count_suffix}"
+                    if ! is_exact_error_bound "$error_bound" && [[ "$outlier_k" != "0" ]]; then
+                        out_name="${out_name}_outK${outlier_k}"
+                    fi
                     out_name="${out_name}_run${run}.csv"
                     out_file="${results_dir}${out_name}"
                     if [[ -f "$out_file" ]]; then
                         echo "Skipping existing result: $out_file"
                         continue
                     fi
-                    echo "[$approach] Running scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution str=$subtile_ratio run=$run..."
+                    echo "[$approach] Running scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution str=$subtile_ratio outK=$outlier_k run=$run..."
                     # Force cold disk reads for reproducible initialization timing
                     sudo sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
                     if sudo systemd-run --scope -p MemoryMax="$MEM_LIMIT" --quiet \
@@ -208,25 +289,26 @@ do
                         -errorBound $error_bound \
                         -resolution $resolution \
                         -subtileRatio $subtile_ratio \
+                        -outlierK $outlier_k \
                         -run $run \
+                        $max_queries_arg \
                         $extra_args \
                         -out "$out_file"; then
                         if [[ -s "$out_file" ]]; then
-                            echo "[$approach] Completed scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run."
+                            echo "[$approach] Completed scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution outK=$outlier_k run=$run."
                         else
-                            echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run: output file missing or empty ($out_file)."
+                            echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution outK=$outlier_k run=$run: output file missing or empty ($out_file)."
                             rm -f "$out_file"
                         fi
                     else
                         status=$?
-                        echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution run=$run with exit=$status."
+                        echo "[$approach] FAILED scenario=$scenario mcols=$num_measures error=$error_bound res=$resolution outK=$outlier_k run=$run with exit=$status."
                         rm -f "$out_file"
                     fi
+                    done  # outlier_k
                 done
             done
             done  # resolution
         done
     done
 done
-
-echo "All experiments completed."

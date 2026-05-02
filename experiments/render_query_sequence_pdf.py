@@ -3,8 +3,9 @@
 
 For every requested scenario this script:
 
-  1. Calls the Java ``generateAndSaveQuerySequence`` command to materialise
-     a deterministic query file under ``experiments/query_sequences/``.
+  1. Resolves a deterministic query file under
+      ``experiments/query_sequences/<scenario>.txt``. If none exists, it calls
+      the Java ``generateAndSaveQuerySequence`` command to materialise one.
   2. Renders the resulting query rectangles as a single PDF (or PNG) under
      ``experiments/plots/workloads/``.
 
@@ -27,7 +28,7 @@ Usage examples
   python3 experiments/render_query_sequence_pdf.py \\
       --scenarios taxi_clustered --format png
 
-  # Reuse already-generated query files (skip the Java step).
+    # Reuse already-generated query files and skip the Java step.
   python3 experiments/render_query_sequence_pdf.py --reuse-query-files
 
   # Add an OSM basemap for the geospatial datasets.
@@ -146,6 +147,11 @@ def generate_query_file(scenario: str, output: Path):
     ]
     subprocess.check_call(cmd, cwd=PROJECT_ROOT)
     return output
+
+
+def resolve_query_file(query_dir: Path, scenario: str) -> Path | None:
+    candidate = query_dir / f"{scenario}.txt"
+    return candidate if candidate.exists() else None
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +334,7 @@ def main():
                         help="Render only the first N queries for dense "
                              "preview figures")
     parser.add_argument("--reuse-query-files", action="store_true",
-                        help="Do not regenerate existing query files")
+                        help="Do not regenerate existing query files; reuse the canonical scenario .txt if present")
     parser.add_argument("--basemap", action="store_true",
                         help="Overlay an OSM basemap for geospatial datasets "
                              "(taxi, ebird_us). Requires the 'contextily' "
@@ -351,8 +357,9 @@ def main():
             continue
         dataset_name, dataset_bounds = metadata[scenario]
 
-        query_file = query_dir / f"{scenario}.txt"
-        if not args.reuse_query_files or not query_file.exists():
+        query_file = resolve_query_file(query_dir, scenario)
+        if not args.reuse_query_files or query_file is None:
+            query_file = query_dir / f"{scenario}.txt"
             generate_query_file(scenario, query_file)
 
         title = SCENARIO_LABELS.get(scenario, scenario.replace("_", " "))

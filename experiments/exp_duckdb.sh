@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Keep long experiment runs alive across terminal/session disconnects.
+trap '' HUP
+
 # =============================================================================
 # DuckDB experiment runner
 #
@@ -68,10 +71,7 @@ config_file="src/main/resources/experiments/experiment_scenarios.yaml"
 
 
 # List of scenarios to run (override via env var)
-# All scenarios (see experiment_scenarios.yaml):
-#   exploration: synth10_300M_pan_sel1 synth50_pan_sel1 taxi_zoom gaia_dr3_pan ebird_us_pan
-#   random:      gaia_dr3_random ebird_us_random taxi_random synth10_300M_random_sel1
-scenarios=(${SCENARIOS:-gaia_dr3_pan})
+scenarios=(${SCENARIOS:-synth10_300M_random_sel1})
 
 
 # DuckDB execution modes (override via env var)
@@ -88,10 +88,50 @@ num_runs=${NUM_RUNS:-1}
 run_start=${RUN_START:-1}
 run_end=$((run_start + num_runs - 1))
 
+# MAX_QUERIES = query cap per run (truncate scenario seqCount).
+# Defaults to 100 because DuckDB has near-stationary per-query cost and the
+# longer tail only multiplies wall-clock. Override via MAX_QUERIES=... when
+# a longer prefix is needed. Output CSVs always include the effective query
+# count as _n<N>, regardless of whether it came from YAML or MAX_QUERIES.
+max_queries=${MAX_QUERIES:-100}
+if [[ "$max_queries" -gt 0 ]]; then
+    max_queries_arg="-maxQueries $max_queries"
+else
+    max_queries_arg=""
+fi
+
+declare -A scenario_query_counts
+
+query_count_for() {
+    local scenario="$1"
+    if [[ -n "${scenario_query_counts[$scenario]:-}" ]]; then
+        printf '%s' "${scenario_query_counts[$scenario]}"
+        return 0
+    fi
+
+    local raw_output query_count
+    raw_output=$("$JAVA" -Xmx"$JVM_XMX" -Djava.library.path="$LIBPATH" -jar target/experiments.jar \
+        -c printQuerySequenceCount \
+        -scenario "$scenario" \
+        -configFile "$config_file" \
+        $max_queries_arg 2>&1)
+    query_count=$(printf '%s\n' "$raw_output" | sed -n 's/^QUERY_SEQUENCE_COUNT=//p' | tail -n 1)
+    if [[ -z "$query_count" ]]; then
+        echo "Failed to resolve query count for scenario=$scenario" >&2
+        printf '%s\n' "$raw_output" >&2
+        return 1
+    fi
+
+    scenario_query_counts[$scenario]="$query_count"
+    printf '%s' "$query_count"
+}
+
 for mode in "${modes[@]}"
 do
     for scenario in "${scenarios[@]}"
     do
+        query_count=$(query_count_for "$scenario") || exit 1
+        query_count_suffix="_n${query_count}"
         # Create the directory for results for each mode and scenario
         results_base=${RESULTS_BASE:-experiments/results}
         mode_results_dir="${results_base}/${scenario}/duckdb/${mode}/"
@@ -100,7 +140,7 @@ do
         do
             for run in $(seq $run_start $run_end)
             do
-                out_file="${mode_results_dir}results_mcols${num_measures}_run${run}.csv"
+                out_file="${mode_results_dir}results_mcols${num_measures}${query_count_suffix}_run${run}.csv"
                 if [[ -f "$out_file" ]]; then
                     echo "Skipping existing result: $out_file"
                     continue
@@ -118,6 +158,7 @@ do
                     -duckDbMode "$mode" \
                     -numMeasures $num_measures \
                     -run $run \
+                    $max_queries_arg \
                     -out "$out_file"; then
                     if [[ -s "$out_file" ]]; then
                         echo "Completed DuckDB experiment for scenario $scenario, mode $mode, $num_measures measureCols, run $run."
@@ -134,5 +175,3 @@ do
         done
     done
 done
-
-echo "All DuckDB experiments completed."
