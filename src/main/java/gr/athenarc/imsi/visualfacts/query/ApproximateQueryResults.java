@@ -18,6 +18,14 @@ public class ApproximateQueryResults extends QueryResults {
     // Error bounds for each measure (key: measure column index)
     private Map<Integer, Double> errorBounds;
 
+    private Map<Integer, Double> sumErrorBounds;
+
+    private Map<Integer, Double> countErrorBounds;
+
+    private Map<Integer, Double> meanErrorBounds;
+
+    private boolean converged = true;
+
     // Number of sampling rounds needed to achieve the error threshold
     private int samplingRounds;
 
@@ -57,6 +65,38 @@ public class ApproximateQueryResults extends QueryResults {
         this.errorBounds = errorBounds;
     }
 
+    public Map<Integer, Double> getSumErrorBounds() {
+        return sumErrorBounds;
+    }
+
+    public void setSumErrorBounds(Map<Integer, Double> sumErrorBounds) {
+        this.sumErrorBounds = sumErrorBounds;
+    }
+
+    public Map<Integer, Double> getCountErrorBounds() {
+        return countErrorBounds;
+    }
+
+    public void setCountErrorBounds(Map<Integer, Double> countErrorBounds) {
+        this.countErrorBounds = countErrorBounds;
+    }
+
+    public Map<Integer, Double> getMeanErrorBounds() {
+        return meanErrorBounds;
+    }
+
+    public void setMeanErrorBounds(Map<Integer, Double> meanErrorBounds) {
+        this.meanErrorBounds = meanErrorBounds;
+    }
+
+    public boolean isConverged() {
+        return converged;
+    }
+
+    public void setConverged(boolean converged) {
+        this.converged = converged;
+    }
+
     public int getSamplingRounds() {
         return samplingRounds;
     }
@@ -78,6 +118,7 @@ public class ApproximateQueryResults extends QueryResults {
                 "query=" + getQuery() +
                 ", sumConfidenceIntervals=" + ciStr +
                 ", errorBounds=" + errorBounds +
+                ", converged=" + converged +
                 ", ioCount=" + getIoCount() +
                 '}';
     }

@@ -84,6 +84,17 @@ class OutlierAwareSplitTest {
         assertEquals(2, node.getSampledPointCount());
     }
 
+    @Test
+    void getPriorHandlesCompleteAllNullMeasure() {
+        QuadTreeTile tile = new QuadTreeTile(rectangle(0, 4, 0, 4));
+        tile.setSize(3);
+        tile.setPrebuiltStats(new com.google.common.math.StatsAccumulator[] { null }, new int[] { 3 });
+
+        double[] prior = tile.getPrior(0, null);
+
+        assertArrayEquals(new double[] { 0.0, 0.0, 0.0 }, prior);
+    }
+
     private static QuadTreeTile tileWithFourQuadrantPoints() {
         double[] xs = { 1.0, 1.0, 3.0, 3.0 };
         double[] ys = { 1.0, 3.0, 1.0, 3.0 };

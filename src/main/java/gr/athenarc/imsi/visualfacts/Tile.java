@@ -51,9 +51,38 @@ public abstract class Tile {
     private Stats[] frozenStats;
     private int frozenPointCount;
 
+    /**
+     * Compact list of outlier indices (into the global outlier value matrix)
+     * that belonged to this tile before it was split.  Captured by
+     * {@link #clearPointData()} so that ancestor tiles can still report an
+     * outlier-trimmed variance prior to their descendants long after their
+     * own point data has been redistributed.
+     */
+    private int[] frozenOutlierIndices;
+
+    /**
+     * Pointer to the parent tile in the QuadTree, or {@code null} for the
+     * root.  Used by {@link #getPrior(int, OutlierIndex)} to walk up the
+     * tree in search of an ancestor with exact (frozen) stats for a given
+     * measure when this tile lacks its own complete stats.
+     */
+    private Tile parent;
+
 
     public Tile(Rectangle bounds) {
         this.bounds = bounds;
+    }
+
+    public Tile getParent() {
+        return parent;
+    }
+
+    public void setParent(Tile parent) {
+        this.parent = parent;
+    }
+
+    public int[] getFrozenOutlierIndices() {
+        return frozenOutlierIndices;
     }
 
     public abstract Tile getLeafTile(double x, double y);
@@ -214,6 +243,22 @@ public abstract class Tile {
      * The parent's points have been sub-partitioned into children.
      */
     public void clearPointData() {
+        // Compact outlier metadata before nulling so that ancestor priors
+        // (computed on demand by descendants) can still be outlier-trimmed.
+        if (outlierBitSet != null && outlierIdxs != null && !outlierBitSet.isEmpty()) {
+            int[] compact = new int[outlierBitSet.cardinality()];
+            int j = 0;
+            for (int p = outlierBitSet.nextSetBit(0); p >= 0; p = outlierBitSet.nextSetBit(p + 1)) {
+                int oi = outlierIdxs[p];
+                if (oi >= 0) compact[j++] = oi;
+            }
+            if (j < compact.length) {
+                int[] tight = new int[j];
+                System.arraycopy(compact, 0, tight, 0, j);
+                compact = tight;
+            }
+            frozenOutlierIndices = compact;
+        }
         store = null;
         start = 0;
         size = 0;
@@ -221,6 +266,119 @@ public abstract class Tile {
         statsPointCount = null;
         outlierBitSet = null;
         outlierIdxs = null;
+    }
+
+    // ---- Variance prior for stratified Neyman+FPC sample allocation ----
+
+    /**
+     * Returns the outlier-trimmed prior {@code [meanNonNull, stdevNonNull,
+     * nonNullRatio]} for a measure, or {@code null} if no exact aggregate
+     * metadata is available anywhere along this tile's ancestor chain.
+     *
+     * <p>Resolution order (first match wins):
+     * <ol>
+     *   <li>Own complete stats ({@link #hasStats(int)} == true).  In this
+     *       case the prior is derived from {@code statsArray[measureIndex]}
+     *       and any outliers in this tile are subtracted analytically.</li>
+     *   <li>Walk up {@link #parent}; the first ancestor with usable
+     *       {@code frozenStats[measureIndex]} (count >= 2) is used.  That
+     *       ancestor's pre-split outliers (captured in
+     *       {@link #frozenOutlierIndices}) are subtracted analytically.</li>
+     * </ol>
+     *
+     * <p>Partial sampled stats accumulated during the current query are
+     * deliberately excluded — they are biased proxies for the population
+     * variance, and the allocator only consumes <em>exact</em> metadata.
+     */
+    public double[] getPrior(int measureIndex, OutlierIndex outlierIndex) {
+        // 1) Own complete stats?
+        if (hasStats(measureIndex)) {
+            StatsAccumulator s = (statsArray != null && measureIndex >= 0 && measureIndex < statsArray.length)
+                    ? statsArray[measureIndex]
+                    : null;
+            int n_nn = (s != null) ? (int) s.count() : 0;
+            int n_full = size;
+            double sumOut = 0.0, sumSqOut = 0.0;
+            int nnOut = 0, nOut = 0;
+            if (outlierBitSet != null && outlierIdxs != null && outlierIndex != null) {
+                nOut = outlierBitSet.cardinality();
+                for (int p = outlierBitSet.nextSetBit(0); p >= 0; p = outlierBitSet.nextSetBit(p + 1)) {
+                    int oi = outlierIdxs[p];
+                    if (oi < 0) continue;
+                    double v = outlierIndex.getOutlierValue(oi, measureIndex);
+                    if (!Double.isNaN(v)) {
+                        sumOut += v;
+                        sumSqOut += v * v;
+                        nnOut++;
+                    }
+                }
+            }
+            return computeTrimmedPrior(n_full, n_nn,
+                    s != null ? s.sum() : 0.0,
+                    (s != null && n_nn >= 2) ? s.sampleVariance() : 0.0,
+                    nOut, nnOut, sumOut, sumSqOut);
+        }
+
+        // 2) Walk up to the nearest ancestor with frozen exact stats.
+        Tile t = this.parent;
+        while (t != null) {
+            if (t.frozenStats != null
+                    && measureIndex >= 0 && measureIndex < t.frozenStats.length) {
+                Stats fs = t.frozenStats[measureIndex];
+                int n_nn = (fs != null) ? (int) fs.count() : 0;
+                int n_full = t.frozenPointCount;
+                double sumOut = 0.0, sumSqOut = 0.0;
+                int nnOut = 0, nOut = 0;
+                int[] fOut = t.frozenOutlierIndices;
+                if (fOut != null && outlierIndex != null) {
+                    nOut = fOut.length;
+                    for (int oi : fOut) {
+                        if (oi < 0) continue;
+                        double v = outlierIndex.getOutlierValue(oi, measureIndex);
+                        if (!Double.isNaN(v)) {
+                            sumOut += v;
+                            sumSqOut += v * v;
+                            nnOut++;
+                        }
+                    }
+                }
+                return computeTrimmedPrior(n_full, n_nn,
+                    fs != null ? fs.sum() : 0.0,
+                    (fs != null && n_nn >= 2) ? fs.sampleVariance() : 0.0,
+                    nOut, nnOut, sumOut, sumSqOut);
+            }
+            t = t.parent;
+        }
+        return null;
+    }
+
+    /**
+     * Closed-form trimmed prior given full-population aggregates and the
+     * outlier contribution to subtract. Returns
+     * {@code [meanNonNull, stdevNonNull, nonNullRatio]}.
+     */
+    private static double[] computeTrimmedPrior(int n_full, int n_nn,
+            double sum_full, double sampleVar_full,
+            int nOut, int nnOut, double sumOut, double sumSqOut) {
+        int n_full_trim = Math.max(0, n_full - nOut);
+        int n_nn_trim = Math.max(0, n_nn - nnOut);
+        if (n_full_trim <= 0) return new double[] { 0.0, 0.0, 0.0 };
+        double pNN = (double) n_nn_trim / n_full_trim;
+        if (n_nn_trim <= 0) return new double[] { 0.0, 0.0, pNN };
+
+        // sumSq_full = (n_nn-1)*sampleVar + n_nn*mean^2
+        double meanFull = sum_full / Math.max(1, n_nn);
+        double sumSqFull = (n_nn >= 2)
+                ? (n_nn - 1) * sampleVar_full + (double) n_nn * meanFull * meanFull
+                : (n_nn == 1 ? meanFull * meanFull : 0.0);
+
+        double sumTrim = sum_full - sumOut;
+        double sumSqTrim = sumSqFull - sumSqOut;
+        double meanTrim = sumTrim / n_nn_trim;
+        double varTrim = (n_nn_trim >= 2)
+                ? Math.max(0.0, (sumSqTrim - n_nn_trim * meanTrim * meanTrim) / (n_nn_trim - 1))
+                : 0.0;
+        return new double[] { meanTrim, Math.sqrt(varTrim), pNN };
     }
 
     // ---- Query node creation ----

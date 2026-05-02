@@ -111,11 +111,6 @@ public final class OutlierIndex {
      */
     private Long2IntOpenHashMap offsetToOutlierIdx;
 
-    /** Initial uncapped CV per measure (logged once after Phase 3). */
-    private double[] initialCV;
-    /** Post-outlier uncapped CV per measure (logged once after Phase 3). */
-    private double[] postOutlierCV;
-
     /**
      * Heap entry: candidate outlier with full M-vector.  The {@code value}
      * field is the admission score (max_m z² with current per-thread running
@@ -386,9 +381,6 @@ public final class OutlierIndex {
      * <p>Complexity: O(|pool| · M) for scoring + O(|pool| · log K) for the
      * size-K min-heap top-K extraction.
      *
-     * <p>Records initial and post-trim uncapped CVs in {@link #initialCV} /
-     * {@link #postOutlierCV} for logging by {@link Valinor}.
-     *
      * @param globalStats per-measure global StatsAccumulator (must already
      *                    aggregate every leaf tile's stats)
     * @param pool        candidate pool from {@link #mergeCandidates}
@@ -399,24 +391,16 @@ public final class OutlierIndex {
         // 1) Cache (mean, std) per measure for z-score normalization.
         double[] mean = new double[M];
         double[] std  = new double[M];
-        long[]   N    = new long[M];
-        double[] sum   = new double[M];
-        double[] sumSq = new double[M];
         for (int m = 0; m < M; m++) {
             StatsAccumulator s = globalStats[m];
             if (s == null || s.count() < 2) {
-                mean[m] = 0; std[m] = 0; N[m] = 0; sum[m] = 0; sumSq[m] = 0;
+                mean[m] = 0;
+                std[m] = 0;
                 continue;
             }
-            long n = s.count();
             mean[m] = s.mean();
             std[m]  = s.sampleStandardDeviation();
-            double var = s.populationVariance();
-            N[m]   = n;
-            sum[m] = mean[m] * n;
-            sumSq[m] = n * (var + mean[m] * mean[m]);
         }
-        initialCV = computeCVs(N, sum, sumSq);
 
         // 2) Score each candidate: max_m ((v_m - μ_m) / σ_m)²
         //    NaN values contribute zero; measures with std==0 are skipped
@@ -466,40 +450,10 @@ public final class OutlierIndex {
             offsetToOutlierIdx.put(c.byteOffset, idx);
             outlierMatrix[idx] = c.vector;
         }
-
-        // 5) Compute post-outlier CVs by subtracting selected rows from running stats.
-        for (Candidate c : selected) {
-            double[] v = c.vector;
-            for (int m = 0; m < M; m++) {
-                double x = v[m];
-                if (Double.isNaN(x) || N[m] == 0) continue;
-                N[m]   -= 1;
-                sum[m] -= x;
-                sumSq[m] -= x * x;
-            }
-        }
-        postOutlierCV = computeCVs(N, sum, sumSq);
-
         LOG.info("OutlierIndex Phase 3 score-based: selected {}/{} outliers from pool of {}",
                 selected.size(), k, poolSize);
     }
 
-    /** Helper: compute uncapped CV per measure from running sums. */
-    private static double[] computeCVs(long[] N, double[] sum, double[] sumSq) {
-        int M = N.length;
-        double[] out = new double[M];
-        for (int m = 0; m < M; m++) {
-            if (N[m] < 2) { out[m] = 0.0; continue; }
-            double mean = sum[m] / N[m];
-            double var = sumSq[m] / N[m] - mean * mean;
-            if (var < 0) var = 0;
-            out[m] = (mean == 0) ? Double.POSITIVE_INFINITY : Math.sqrt(var) / Math.abs(mean);
-        }
-        return out;
-    }
-
-    public double[] getInitialCV()      { return initialCV; }
-    public double[] getPostOutlierCV()  { return postOutlierCV; }
     public int getSelectedCount()       { return selected == null ? 0 : selected.size(); }
     public double[][] getOutlierMatrix() { return outlierMatrix; }
 
@@ -541,6 +495,9 @@ public final class OutlierIndex {
                         Arrays.fill(idxs, -1);
                     }
                     bits.set(i);
+                    if (idxs == null) {
+                        throw new IllegalStateException("Outlier index array was not initialized");
+                    }
                     idxs[i] = outIdx;
                     local++;
                 }

@@ -20,7 +20,6 @@ import org.openjdk.jol.info.GraphLayout;
 import com.google.common.collect.Range;
 import com.google.common.math.Stats;
 import com.google.common.math.StatsAccumulator;
-import com.google.common.util.concurrent.AtomicDouble;
 
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
@@ -153,8 +152,9 @@ public class Valinor implements AutoCloseable {
     }
 
     public void generateGrid(Query q0) {
-        if (isInitialized)
+        if (isInitialized) {
             throw new IllegalStateException("The index is already initialized");
+        }
 
         if (q0 != null && INIT_MODE_QUERY_BIASED.equalsIgnoreCase(initMode)) {
             initializationPolicy = new InitializationPolicy(q0,
@@ -203,8 +203,8 @@ public class Valinor implements AutoCloseable {
         LOG.debug("Columns to be read: " + colIndexes);
 
         int[] selectedColumns = colIndexes.stream().mapToInt(Integer::intValue).toArray();
-        // Build mapping from original col index to position in selectedColumns
         Map<Integer, Integer> colIndexToRowPos = new HashMap<>();
+        // Build mapping from original column index to position in selectedColumns.
         for (int i = 0; i < selectedColumns.length; i++) {
             colIndexToRowPos.put(selectedColumns[i], i);
         }
@@ -232,8 +232,8 @@ public class Valinor implements AutoCloseable {
             filterArray[i] = f;
         }
 
-        // Build tile index mapping for partition
-        List leafTileList = grid.getLeafTiles();
+        // Build tile index mapping for partitioning.
+        List<?> leafTileList = grid.getLeafTiles();
         int numTiles = leafTileList.size();
         if (numTiles > Integer.MAX_VALUE) {
             throw new IllegalStateException("Tile count " + numTiles + " exceeds int range; cannot use int[] tileIds");
@@ -248,7 +248,7 @@ public class Valinor implements AutoCloseable {
         final int scanThreads = Math.max(1, availableThreads);
 
         // Resolve mmap/tmp dirs early so tmpDir can be passed to the scanner.
-        // Clean up tmpDir BEFORE timing starts.
+        // Clean up tmpDir before timing starts.
         String mmapDirProp = System.getProperty("valinor.mmap.dir", "/tmp");
         java.nio.file.Path mmapDir = java.nio.file.Paths.get(mmapDirProp);
         java.nio.file.Path tmpDir = mmapDir.resolve("valinor_tmp");
@@ -268,10 +268,8 @@ public class Valinor implements AutoCloseable {
 
         Map<Integer, StatsAccumulator> q0StatsFromScan = null;
 
-        // Outlier-aware AQP support (Phase 1).  Built only when the feature is
-        // enabled AND we are in approximate mode — outlier trimming has no
-        // effect on exact queries, and we want exact mode to stay byte-identical
-        // to the pre-outlier code path.
+        // Outlier-aware AQP is built only for approximate queries with K > 0.
+        // Exact mode stays on the same path when the feature is disabled.
         OutlierIndex outlierIndexLocal = null;
         if (!isExactMode() && OUTLIER_K > 0 && measureCount > 0) {
             outlierIndexLocal = new OutlierIndex(OUTLIER_K, measureCount, scanThreads);
@@ -281,9 +279,9 @@ public class Valinor implements AutoCloseable {
         final OutlierIndex outlierIndex = outlierIndexLocal;
 
         try {
-            // --- Phase 1: parallel CSV scan → merged arrays + per-tile counts/stats ---
             long phase1Start = System.nanoTime();
 
+            // Phase 1: parallel CSV scan into merged arrays plus per-tile counts/stats.
             ParallelCsvScanner scanner = new ParallelCsvScanner(
                     new File(schema.getCsv()), schema.getDelimiter(), schema.getHasHeader(),
                     selectedColumns, xPos, yPos,
@@ -300,10 +298,9 @@ public class Valinor implements AutoCloseable {
             this.maxRowLength = (int) scanResult.maxRowLength;
             LOG.info("Max row length observed during init: {} bytes", maxRowLength);
 
-            // Adopt scan results into a SharedPointStore
             SharedPointStore store;
             if (scanResult.bucketMode) {
-                // Path C: bucket-mmap — scatter per-thread bucket files into mmap arrays
+                // Path C: bucket-mmap scatter per-thread bucket files into mmap arrays.
                 LOG.info("Using bucket-mmap partition path ({} buckets), mmap dir: {}",
                         scanResult.numBuckets, mmapDir);
                 store = SharedPointStore.createForBucketMmap(
@@ -312,27 +309,26 @@ public class Valinor implements AutoCloseable {
                         scanResult.numScanThreads, mmapDir,
                         scanResult.perThreadTileCounts);
             } else if (scanResult.diskXsFiles != null) {
-                // Path B: disk-chunk — scatter directly from per-thread scan files
+                // Path B: disk-chunk scatter directly from per-thread scan files.
                 LOG.info("Using disk-scatter partition path ({} chunks)", scanResult.diskChunkSizes.length);
                 store = SharedPointStore.createForDiskChunks(
                         validCount, scanResult.diskXsFiles, scanResult.diskYsFiles,
                         scanResult.diskOffsetsFiles, scanResult.diskTileIdFiles,
                         scanResult.diskChunkSizes);
             } else {
-                // Path A: in-memory — chunked arrays on heap (zero-copy adoption)
+                // Path A: in-memory chunked arrays on heap.
                 store = new SharedPointStore(
                         scanResult.xsChunks, scanResult.ysChunks, scanResult.offsetsChunks,
                         scanResult.tileIdChunks, scanResult.chunkSizes, validCount);
             }
 
-            // Wire per-tile counts and stats from the parallel scan into tiles
+            // Wire per-tile counts and stats from the parallel scan into tiles.
             for (int t = 0; t < numTiles; t++) {
                 int count = scanResult.tileCounts[t];
                 if (count > 0) {
                     Tile tile = (Tile) leafTileList.get(t);
                     tile.setSize(count);
 
-                    // Set pre-built stats
                     if (measureCount > 0) {
                         tile.setPrebuiltStats(scanResult.tileStats[t],
                                 scanResult.tileStatsPointCounts[t]);
@@ -340,12 +336,10 @@ public class Valinor implements AutoCloseable {
                 }
             }
 
-            // --- Phase 1b removed: tileIds are now computed during scan ---
-
             LOG.info("Phase 1 total (scan + merge): {} s",
                     String.format("%.3f", (System.nanoTime() - phase1Start) / 1e9));
 
-            // --- Phase 1.5: compute prefix sums from per-tile counts ---
+                // Compute prefix sums from per-tile counts.
             int[] counts = scanResult.tileCounts;
             int[] starts = new int[numTiles];
             if (numTiles > 0) {
@@ -356,14 +350,13 @@ public class Valinor implements AutoCloseable {
             }
             long prefixSumEnd = System.nanoTime();
 
-            // Release scanner and large scan-result fields so GC can reclaim
-            // per-thread arrays and StatsAccumulators before partition allocates.
             String scanPath = scanResult.scanPath;
             q0StatsFromScan = scanResult.q0Stats;
+            // Release scanner and large scan-result fields before partition allocates.
             scanResult = null;
             scanner = null;
 
-            // --- Phase 1.5b: explicit GC before partition ---
+            // Encourage G1 to uncommit empty regions before the partition phase.
             long gcStart = System.nanoTime();
             {
                 Runtime rt = Runtime.getRuntime();
@@ -385,7 +378,7 @@ public class Valinor implements AutoCloseable {
             LOG.info("Partition done in {} s",
                     String.format("%.3f", (partEndNanos - partStart) / 1e9));
 
-            // --- Phase 3: wire tiles to shared store slices ---
+                // Phase 3: wire tiles to shared store slices.
             long wireStart = System.nanoTime();
             for (int t = 0; t < numTiles; t++) {
                 Tile tile = (Tile) leafTileList.get(t);
@@ -397,7 +390,7 @@ public class Valinor implements AutoCloseable {
 
             this.pointStore = store;
 
-            // Record init timing breakdown
+            // Record init timing breakdown.
             initTimingBreakdown = new java.util.LinkedHashMap<>();
             initTimingBreakdown.put("scanPath", scanPath);
             initTimingBreakdown.put("partitionPath", store.getPartitionPath());
@@ -414,10 +407,8 @@ public class Valinor implements AutoCloseable {
         isInitialized = true;
         LOG.debug("Indexing Complete. Total Indexed Objects: " + objectsIndexed);
 
-        // Release transient partition memory back to the OS.
-        // G1GC uncommits empty regions below -Xmx when -Xms is unset,
-        // making those pages available for page cache during queries.
         {
+            // Release transient partition memory back to the OS/page cache.
             Runtime rt = Runtime.getRuntime();
             long committedBefore = rt.totalMemory();
             System.gc();
@@ -438,10 +429,8 @@ public class Valinor implements AutoCloseable {
                 initTimingBreakdown.put("globalStats", (System.nanoTime() - globalStatsStart) / 1e9);
             }
 
-            // Outlier-aware AQP (Phases 2–5).  Runs only when the index was
-            // allocated (i.e. OUTLIER_K > 0).  When disabled, this block is
-            // skipped entirely and the system behaves exactly as before.
             if (outlierIndex != null) {
+                // Outlier-aware AQP phases: merge candidates, select top-K, then partition by tile.
                 long outlierStart = System.nanoTime();
                 long t0 = System.nanoTime();
                 List<OutlierIndex.Candidate> pool = outlierIndex.mergeCandidates();
@@ -454,7 +443,6 @@ public class Valinor implements AutoCloseable {
                 outlierIndex.partitionByTile(grid.getLeafTiles());
                 long partitionNs = System.nanoTime() - t0;
                 this.outlierIndex = outlierIndex;
-                logOutlierCV(outlierIndex);
                 if (initTimingBreakdown != null) {
                     initTimingBreakdown.put("outlierBuild", (System.nanoTime() - outlierStart) / 1e9);
                     initTimingBreakdown.put("outlierMerge", mergeNs / 1e9);
@@ -469,28 +457,27 @@ public class Valinor implements AutoCloseable {
                 }
             }
         }
-        
-        // Record total init time
+
+        // Record total init time.
         if (initTimingBreakdown != null) {
             initTimingBreakdown.put("total", (System.nanoTime() - initOverallStart) / 1e9);
         }
-        
-        // Create QueryResults and populate with q0 stats if available
+
+        // Create QueryResults and populate q0 stats if available.
         QueryResults queryResults;
         if (isExactMode()) {
             queryResults = new QueryResults(q0);
         } else {
             queryResults = new ApproximateQueryResults(q0);
         }
-        
-        // Populate q0 statistics from the scan
+
         if (q0StatsFromScan != null && q0 != null) {
             for (Map.Entry<Integer, StatsAccumulator> entry : q0StatsFromScan.entrySet()) {
                 queryResults.adjustStats(entry.getKey(), entry.getValue().snapshot());
             }
             LOG.info("Q0 evaluation complete during initialization: {}", queryResults.getStats());
         }
-        
+
         return queryResults;
     }
 
@@ -681,7 +668,7 @@ public class Valinor implements AutoCloseable {
         int frozenStatsTileCount = 0;
 
         for (Tile leafTile : leafTiles) {
-            // Short-circuited non-leaf tile with frozen exact stats
+            // Short-circuited non-leaf tile with frozen exact stats.
             if (!samplingOnly && leafTile.hasFrozenStats()) {
                 frozenStatsTileCount++;
                 queryResults.addTotalCount(leafTile.getFrozenPointCount());
@@ -704,15 +691,13 @@ public class Valinor implements AutoCloseable {
                     continue;
                 }
 
-                if (isFullyContained && !samplingOnly && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
+                if (isFullyContained && !samplingOnly
+                        && query.getMeasureCols().stream().allMatch(mc -> qnTile.hasStats(schema.getMeasureIndex(mc)))) {
                     fullyContainedNodesWithStats.add(queryNode);
                 } else if (!isFullyContained && qnTile.getSize() > THRESHOLD) {
                     leafTile.split();
-                    // Recompute the containment examiner per child after the split:
-                    // a child of a partially-overlapping parent may itself be fully
-                    // contained, so its QueryNode must be built with examiner=null
-                    // to take the O(1) intersection fast path and to be classified
-                    // correctly in the bookkeeping below.
+                    // Recompute the containment examiner per child after the split.
+                    // A child of a partially overlapping parent may itself be fully contained.
                     leafTile.getOverlappedActualLeafTiles(query).stream()
                             .flatMap(tile -> tile.getQueryNodes(query, getContainmentExaminer(tile, rect), schema).stream())
                             .forEach(qn -> {
@@ -742,16 +727,15 @@ public class Valinor implements AutoCloseable {
             nonRawNodes.add(queryNode);
         }
 
-        // Prepare sorted measure column indices for fast extraction
+        // Prepare sorted measure column indices for fast extraction.
         List<Integer> measureColsList = schema.getMeasureCols();
         int[] sortedMeasureCols = measureColsList.stream().mapToInt(Integer::intValue).sorted().toArray();
-        
-        // Build mapping from original column index to position in sorted array
+
         Map<Integer, Integer> measureColToExtractedPos = new HashMap<>();
         for (int i = 0; i < sortedMeasureCols.length; i++) {
             measureColToExtractedPos.put(sortedMeasureCols[i], i);
         }
-        
+
         byte delimiterByte = (byte) schema.getDelimiter().charValue();
 
         int ioCount = 0;
@@ -760,10 +744,7 @@ public class Valinor implements AutoCloseable {
         samplingNodes.addAll(partialNodes);
         samplingNodes.addAll(fullyContainedNodesWithoutStats);
 
-        // Total count (COUNT*) — exact from x,y coordinates, independent of sampling.
-        // qn.getIntersectionCount() returns the OUTLIER-PRIMED population (N')
-        // when the feature is enabled; we add the in-query outliers back here so
-        // the user-visible totalCount reflects the FULL population.
+        // Total count is exact from the query-node geometry plus any in-query outliers.
         for (QueryNode qn : samplingNodes) {
             queryResults.addTotalCount(qn.getIntersectionCount());
             BitSet inQuery = qn.getInQueryOutliers();
@@ -772,18 +753,54 @@ public class Valinor implements AutoCloseable {
             }
         }
 
-        AtomicDouble samplingRate = new AtomicDouble(computeInitialSamplingRate(samplingNodes));
+        // ---- Stratified Neyman+FPC sample allocation ----
+        // Compute per-measure exact contributions (frozen-stats tiles +
+        // FC-with-stats tiles + in-query outliers) so the allocator can size
+        // V* = (eps * |T_anticipated| / z)^2 correctly.  Larger exact part
+        // ⇒ larger V* ⇒ smaller per-stratum sample sizes.
+        Map<Integer, Double> exactSumPerMeasure = new HashMap<>();
+        Map<Integer, Long>   exactCountPerMeasure = new HashMap<>();
+        for (Integer measureCol : query.getMeasureCols()) {
+            double exactSum = 0.0;
+            long   exactCount = 0L;
+            if (queryResults.getStats().containsKey(measureCol)) {
+                Stats st = queryResults.getStats().get(measureCol);
+                exactSum   = st.sum();
+                exactCount = st.count();
+            }
+            if (outlierIndex != null) {
+                int midx = schema.getMeasureIndex(measureCol);
+                exactSum   += sumInQueryOutliers(samplingNodes, midx);
+                exactCount += countInQueryOutliers(samplingNodes, midx);
+            }
+            exactSumPerMeasure.put(measureCol, exactSum);
+            exactCountPerMeasure.put(measureCol, exactCount);
+        }
+
+        SampleAllocator allocator = new SampleAllocator(schema, outlierIndex,
+                globalMeasureStats, errorThreshold, getZScoreForConfidence(0.95));
+        Map<QueryNode, Integer> targetSamples = allocator.planInitial(
+                samplingNodes, query, exactSumPerMeasure, exactCountPerMeasure);
+
         Map<Integer, double[]> sumConfidenceIntervals = new HashMap<>();
         Map<Integer, double[]> countConfidenceIntervals = new HashMap<>();
         Map<Integer, double[]> meanConfidenceIntervals = new HashMap<>();
         Map<Integer, Double> errorBounds = new HashMap<>();
+        Map<Integer, Double> sumErrorBounds = new HashMap<>();
+        Map<Integer, Double> countErrorBounds = new HashMap<>();
+        Map<Integer, Double> meanErrorBounds = new HashMap<>();
         int samplingRounds = 0;
-        int maxSamplingRounds = 50;
+        int maxSamplingRounds = 5;  // Adaptive escalation: re-plan with observed s_h^2 each round.
+        boolean converged = false;
         do {
             samplingRounds++;
-            // Create Sampling Iterators for all tiles needing sampling
+            // Create per-node sampling iterators with absolute target counts.
+            // Each iterator self-deduplicates against the node's sampledTracker,
+            // so passing the same cumulative target on every round is safe.
+            final Map<QueryNode, Integer> targetsRef = targetSamples;
             KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingNodes.stream()
-                    .map(queryNode -> new SamplingNodePointsIterator(queryNode, samplingRate.get()))
+                    .map(queryNode -> new SamplingNodePointsIterator(queryNode,
+                            targetsRef.getOrDefault(queryNode, 0).intValue()))
                     .collect(Collectors.toList()));
 
             // Read and process sampled rows in fixed-size chunks
@@ -826,48 +843,88 @@ public class Valinor implements AutoCloseable {
 
             // Compute confidence intervals for all aggregate types and measures.
             // SUM CI uses the null-as-zero variance on continuous values.
-            // COUNT CI uses Bernoulli variance p̂(1-p̂) ≤ 0.25, which is bounded,
-            // so COUNT is guaranteed to converge whenever SUM converges — SUM is
-            // always the bottleneck.
+            // COUNT CI uses smoothed Bernoulli variance so boundary samples
+            // (all null / all non-null) still carry uncertainty.
             // MEAN CI uses the delta method on the ratio SUM/COUNT.
+            double effRateForCI = SampleAllocator.effectiveSamplingRate(samplingNodes, targetSamples);
             for (Integer measureCol : query.getMeasureCols()) {
                 sumConfidenceIntervals.put(measureCol,
-                        getQuerySumConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                    getQuerySumConfidenceInterval(samplingNodes, queryResults, measureCol));
                 countConfidenceIntervals.put(measureCol,
-                        getQueryCountConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                    getQueryCountConfidenceInterval(samplingNodes, queryResults, measureCol));
                 meanConfidenceIntervals.put(measureCol,
-                        getQueryMeanConfidenceInterval(samplingNodes, queryResults, samplingRate.get(), measureCol));
+                    getQueryMeanConfidenceInterval(samplingNodes, queryResults, measureCol));
             }
 
             // Error bound per measure: max relative error across all aggregate types
             for (Integer measureCol : query.getMeasureCols()) {
-                double sumError = calculateRelativeError(sumConfidenceIntervals.get(measureCol));
-                double countError = calculateRelativeError(countConfidenceIntervals.get(measureCol));
-                double meanError = calculateRelativeError(meanConfidenceIntervals.get(measureCol));
+                double sumError = calculateRelativeError(sumConfidenceIntervals.get(measureCol),
+                    sumScaleFloor(measureCol, queryResults.getTotalCount()));
+                double countError = calculateRelativeError(countConfidenceIntervals.get(measureCol),
+                    countScaleFloor(queryResults.getTotalCount()));
+                double meanError = calculateRelativeError(meanConfidenceIntervals.get(measureCol),
+                    meanScaleFloor(measureCol));
+                sumErrorBounds.put(measureCol, sumError);
+                countErrorBounds.put(measureCol, countError);
+                meanErrorBounds.put(measureCol, meanError);
                 errorBounds.put(measureCol, Math.max(sumError, Math.max(countError, meanError)));
             }
 
             // Find the maximum error bound across all measures
-            double maxErrorBound = errorBounds.values().stream().max(Double::compare).orElse(0.0);
+            double maxErrorBound = errorBounds.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+            converged = maxErrorBound <= errorThreshold;
 
-            // If error bound is still too high, increase sampling rate
-            if (maxErrorBound > errorThreshold) {
+            // Adaptive escalation: re-plan with observed per-stratum sample
+            // variances and observed (CI-midpoint) totals.  Targets returned
+            // by the allocator are absolute and cumulative; the iterator only
+            // requests the delta against samples already drawn.
+            if (!converged) {
                 if (samplingRounds >= maxSamplingRounds) {
                     LOG.warn("Sampling did not converge after {} rounds (error={}, threshold={}). " +
-                        "Likely caused by NaN-heavy nodes. Returning best estimate.",
+                        "Likely caused by NaN-heavy nodes or extreme priors. Returning best estimate.",
                         samplingRounds, maxErrorBound, errorThreshold);
                     break;
                 }
-                LOG.debug("Round {}: error={} > threshold={}, increasing rate from {} to {}", 
-                    samplingRounds, maxErrorBound, errorThreshold, samplingRate.get(),
-                    adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
-                samplingRate.set(adjustSamplingRate(samplingRate.get(), maxErrorBound, errorThreshold));
+                Map<Integer, Double> obsSum = new HashMap<>();
+                Map<Integer, Double> obsCount = new HashMap<>();
+                for (Integer mc : query.getMeasureCols()) {
+                    double[] sCI = sumConfidenceIntervals.get(mc);
+                    double[] cCI = countConfidenceIntervals.get(mc);
+                    obsSum.put(mc, sCI != null ? (sCI[0] + sCI[1]) / 2.0
+                                                : exactSumPerMeasure.getOrDefault(mc, 0.0));
+                    obsCount.put(mc, cCI != null ? (cCI[0] + cCI[1]) / 2.0
+                                                  : exactCountPerMeasure.getOrDefault(mc, 0L).doubleValue());
+                }
+                Map<QueryNode, Integer> nextTargets = allocator.planAdaptive(samplingNodes, query,
+                        exactSumPerMeasure, exactCountPerMeasure, obsSum, obsCount);
+                // Monotone escalation: never request fewer cumulative samples
+                // than already drawn or planned in the previous round.
+                for (QueryNode qn : samplingNodes) {
+                    int prev = targetSamples.getOrDefault(qn, 0);
+                    int next = nextTargets.getOrDefault(qn, 0);
+                    int alreadySampled = qn.getSampledPointCount();
+                    int floor = Math.max(prev, alreadySampled);
+                    if (next < floor) next = floor;
+                    // Ensure round-over-round progress when error remained
+                    // above the threshold (e.g. priors were too optimistic).
+                    if (next == prev) {
+                        int Nh = qn.getIntersectionCount();
+                        next = Math.min(Nh, prev + Math.max(2, prev / 2));
+                    }
+                    nextTargets.put(qn, next);
+                }
+                LOG.trace("Round {}: error={} > threshold={}, re-planning (effRate {} → {})",
+                    samplingRounds, maxErrorBound, errorThreshold,
+                    effRateForCI,
+                    SampleAllocator.effectiveSamplingRate(samplingNodes, nextTargets));
+                targetSamples = nextTargets;
             }
 
-        } while (errorBounds.values().stream().anyMatch(error -> error > errorThreshold));
+        } while (!converged);
 
-        LOG.trace("Sampling completed in {} round(s), final rate={}, I/Os={}", 
-            samplingRounds, samplingRate.get(), ioCount);
+        double finalEffectiveRate = SampleAllocator.actualSamplingRate(samplingNodes);
+        LOG.trace("Sampling completed in {} round(s), effective rate={}, I/Os={}",
+            samplingRounds, finalEffectiveRate, ioCount);
 
         // Persist sampledTracker for future queries
         if (!samplingOnly) {
@@ -881,93 +938,22 @@ public class Valinor implements AutoCloseable {
         queryResults.setFullyContainedTileWithoutStatsCount(fullyContainedNodesWithoutStats.size());
         queryResults.setSamplingTileCount(samplingNodes.size());
         queryResults.setSamplingRounds(samplingRounds);
-        queryResults.setSamplingRate(samplingRate.get());
+        queryResults.setSamplingRate(finalEffectiveRate);
         queryResults.setIoCount(ioCount);
+        queryResults.setConverged(converged);
 
         queryResults.setSumConfidenceIntervals(sumConfidenceIntervals);
         queryResults.setCountConfidenceIntervals(countConfidenceIntervals);
         queryResults.setMeanConfidenceIntervals(meanConfidenceIntervals);
         queryResults.setErrorBounds(errorBounds);
+        queryResults.setSumErrorBounds(sumErrorBounds);
+        queryResults.setCountErrorBounds(countErrorBounds);
+        queryResults.setMeanErrorBounds(meanErrorBounds);
 
         return queryResults;
     }
 
     // ==================== Sampling Helpers ====================
-
-    /**
-     * Adjusts the sampling rate based on the current relative error and the target error threshold.
-     */
-    private double adjustSamplingRate(double currentRate, double currentError, double errorThreshold) {
-        if (currentError <= errorThreshold) {
-            return currentRate;
-        }
-        double factor = Math.pow(currentError / errorThreshold, 2);
-        double maxFactor = 2.0;
-        if (factor > maxFactor) {
-            factor = maxFactor;
-        }
-        double newRate = currentRate * factor;
-        double delta = newRate - currentRate;
-        double minDelta = 0.01;
-        if (delta < minDelta) {
-            newRate = currentRate + minDelta;
-        }
-        if (newRate > 1.0) {
-            newRate = 1.0;
-        }
-        return newRate;
-    }
-
-    /**
-     * Computes the initial sampling rate using CV-based estimation (Cochran's formula).
-     */
-    private double computeInitialSamplingRate(List<QueryNode> samplingNodes) {
-        if (samplingNodes == null || samplingNodes.isEmpty()) {
-            return 0.01d;
-        }
-        
-        double maxCV = 0.0;
-        for (int i = 0; i < schema.getMeasureCount(); i++) {
-            // Use the outlier-adjusted CV (post-trim) when an outlier index
-            // exists; falls back to the regular global CV otherwise.  This is
-            // what reduces Cochran's required N when OUTLIER_K > 0.
-            double cv = getAdjustedMeasureCV(i);
-            if (cv > maxCV) {
-                maxCV = cv;
-            }
-        }
-        if (maxCV <= 0) {
-            maxCV = 1.0;
-        }
-        
-        double z = 1.96;  // 95% confidence
-        double cochranN = Math.pow(z * maxCV / errorThreshold, 2);
-        
-        final double SAFETY_MARGIN = 1.0;
-        cochranN *= SAFETY_MARGIN;
-        
-        long totalPopulation = samplingNodes.stream()
-            .mapToLong(QueryNode::getIntersectionCount)
-            .sum();
-        
-        if (totalPopulation == 0) {
-            return 0.01d;
-        }
-
-        double requiredN = cochranN / (1.0 + (cochranN - 1.0) / totalPopulation);
-        
-        double rate = requiredN / totalPopulation;
-        
-        final int MIN_SAMPLES = 50;
-        double minRateForCLT = (double) MIN_SAMPLES / totalPopulation;
-        rate = Math.max(rate, minRateForCLT);
-        rate = Math.min(1.0, rate);
-        
-        LOG.trace("Initial sampling rate: {} (CV={}, cochranN={}, fpcRequiredN={}, population={})", 
-            rate, maxCV, cochranN, requiredN, totalPopulation);
-        
-        return rate;
-    }
 
     /**
      * Computes global statistics for each measure column by aggregating
@@ -987,19 +973,13 @@ public class Valinor implements AutoCloseable {
             }
         }
         
-        LOG.debug("Global CV computed for {} measures", measureCount);
+        LOG.debug("Computed global measure stats for {} measures", measureCount);
         for (int i = 0; i < measureCount; i++) {
-            // Log the true (uncapped) CV so the magnitude is visible in diagnostics.
-            // getMeasureCV() caps at MAX_CV_CAP which would hide extreme values like CV=135.
             StatsAccumulator s = globalMeasureStats[i];
-            double rawCV = (s != null && s.count() >= 2 && s.mean() != 0)
-                    ? s.sampleStandardDeviation() / Math.abs(s.mean()) : 0.0;
-            LOG.debug("Measure {}: count={}, mean={}, CV={} (Cochran-capped: {})",
+            LOG.debug("Measure {}: count={}, mean={}",
                 schema.getMeasureCols().get(i),
                 s != null ? s.count() : 0,
-                s != null ? s.mean() : 0,
-                String.format("%.4f", rawCV),
-                String.format("%.4f", getMeasureCV(i)));
+                s != null ? s.mean() : 0);
         }
     }
     
@@ -1015,91 +995,6 @@ public class Valinor implements AutoCloseable {
                 }
             }
         }
-    }
-
-    /**
-     * Maximum CV cap to prevent pathological cases from requiring 100% sampling.
-     */
-    // private static final double MAX_CV_CAP = 2.0;
-    private static final double MAX_CV_CAP = Double.MAX_VALUE;
-
-    /**
-     * Returns the coefficient of variation (CV = std/mean) for a given measure column.
-     */
-    public double getMeasureCV(int measureIndex) {
-        if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
-            return 1.0;
-        }
-        StatsAccumulator stats = globalMeasureStats[measureIndex];
-        if (stats == null || stats.count() < 2) {
-            return 1.0;
-        }
-        double mean = stats.mean();
-        if (mean == 0) {
-            return 1.0;
-        }
-        double cv = stats.sampleStandardDeviation() / Math.abs(mean);
-        return Math.min(cv, MAX_CV_CAP);
-    }
-
-    /**
-     * Returns the outlier-adjusted CV for a given measure column: the CV of
-     * the trimmed population (full population minus the K selected outliers)
-     * if an outlier index was built, otherwise the regular {@link #getMeasureCV}.
-     *
-     * <p>Same {@link #MAX_CV_CAP} clamp as {@code getMeasureCV} so callers
-     * that plug the value into Cochran's formula stay consistent.
-     *
-     * <p>This is the value that {@link #computeInitialSamplingRate} should use
-     * when outliers are extracted: removing extreme values from the sampling
-     * population shrinks the variance the sample needs to estimate, so a
-     * smaller sample suffices.
-     */
-    public double getAdjustedMeasureCV(int measureIndex) {
-        if (outlierIndex != null) {
-            double[] post = outlierIndex.getPostOutlierCV();
-            if (post != null && measureIndex >= 0 && measureIndex < post.length) {
-                double cv = post[measureIndex];
-                if (Double.isFinite(cv) && cv > 0) {
-                    return Math.min(cv, MAX_CV_CAP);
-                }
-            }
-        }
-        return getMeasureCV(measureIndex);
-    }
-
-    /**
-     * Logs the per-measure CV before and after outlier trimming for diagnostic
-     * purposes.  The "initial" CV is the uncapped global CV computed from the
-     * full population (identical to what {@link #getMeasureCV} would return
-     * before clamping); the "post-outlier" CV is the uncapped CV of the
-     * trimmed population (population minus selected outliers).  Both numbers
-     * are produced by {@link OutlierIndex#selectByScore} during init.
-     */
-    private void logOutlierCV(OutlierIndex idx) {
-        double[] init = idx.getInitialCV();
-        double[] post = idx.getPostOutlierCV();
-        if (init == null || post == null) return;
-        List<Integer> measureCols = schema.getMeasureCols();
-        for (int m = 0; m < init.length; m++) {
-            int col = (m < measureCols.size()) ? measureCols.get(m) : -1;
-            LOG.info("Outlier CV[measureCol={}, idx={}]: initial={} \u2192 post-outlier={} (\u0394={})",
-                    col, m,
-                    String.format("%.4f", init[m]),
-                    String.format("%.4f", post[m]),
-                    String.format("%.4f", init[m] - post[m]));
-        }
-    }
-
-    /**
-     * Returns the global statistics for a given measure column.
-     */
-    public Stats getGlobalMeasureStats(int measureIndex) {
-        if (globalMeasureStats == null || measureIndex < 0 || measureIndex >= globalMeasureStats.length) {
-            return null;
-        }
-        StatsAccumulator stats = globalMeasureStats[measureIndex];
-        return stats != null ? stats.snapshot() : null;
     }
 
     // ==================== Confidence Interval Computation ====================
@@ -1173,7 +1068,7 @@ public class Valinor implements AutoCloseable {
      * accounts for the null-proportion uncertainty.
      */
     private double[] getQuerySumConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
-            double samplingRate, int measureCol) {
+            int measureCol) {
         double exactSum = 0;
         if (queryResults.getStats().containsKey(measureCol)) {
             exactSum = queryResults.getStats().get(measureCol).sum();
@@ -1197,11 +1092,16 @@ public class Valinor implements AutoCloseable {
 
         double totalEstimate = 0.0;
         double totalVariance = 0.0;
+        double z = getZScoreForConfidence(0.95);
 
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
             double N = qnode.getIntersectionCount();                    // total population (null + non-null)
             int m = qnode.getSampledPointCount();                       // total sampled from trimmed population
+
+            if (m <= 0) {
+                continue;
+            }
 
             // SHORT-CIRCUIT: if every point in the node has been read,
             // the non-null sum in sampleStatsAcc is exact — no estimation needed.
@@ -1247,6 +1147,15 @@ public class Valinor implements AutoCloseable {
             double varWithZeros = (sumOfSquaresNonNull - sampleSum * sampleSum / m) / (m - 1);
             if (varWithZeros < 0) varWithZeros = 0.0;  // guard against fp rounding
 
+            // Heavy-tail safeguard: floor the plug-in sample variance at the
+            // exact tile-prior null-as-zero variance.  When the tile has its
+            // own complete stats this is mathematically tight (the prior IS
+            // the true stratum variance); when it comes from a frozen
+            // ancestor it is a conservative regularizer that protects
+            // against samples that miss rare large values.
+            double priorVar = priorNullAsZeroVariance(qnode, schema.getMeasureIndex(measureCol));
+            if (priorVar > varWithZeros) varWithZeros = priorVar;
+
             // SUM estimator: Ŝ = N · (S / m)
             double nodeEstimate = N * sampleSum / m;
 
@@ -1260,7 +1169,6 @@ public class Valinor implements AutoCloseable {
 
         double finalEstimate = exactSum + totalEstimate;
         double stdError = Math.sqrt(totalVariance);
-        double z = getZScoreForConfidence(0.95);
         double margin = z * stdError;
 
         double lower = finalEstimate - margin;
@@ -1285,7 +1193,7 @@ public class Valinor implements AutoCloseable {
      * </ul>
      */
     private double[] getQueryCountConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
-            double samplingRate, int measureCol) {
+            int measureCol) {
         // Exact count from frozen-stats and fully-contained-with-stats tiles
         double exactCount = 0;
         if (queryResults.getStats().containsKey(measureCol)) {
@@ -1306,11 +1214,16 @@ public class Valinor implements AutoCloseable {
 
         double totalEstimate = 0.0;
         double totalVariance = 0.0;
+        double z = getZScoreForConfidence(0.95);
 
         for (QueryNode qnode : samplingNodes) {
             int n = (int) qnode.getSampleStatsAcc(measureCol).count();  // non-null sample count
             double N = qnode.getIntersectionCount();                    // total population (null + non-null)
             int m = qnode.getSampledPointCount();                       // total sampled from trimmed population
+
+            if (m <= 0) {
+                continue;
+            }
 
             // SHORT-CIRCUIT: all points sampled → exact count
             if (m >= (int) N) {
@@ -1318,9 +1231,13 @@ public class Valinor implements AutoCloseable {
                 continue;
             }
 
-            // With fewer than 2 samples, best-effort point estimate, no variance
+            // With one sample, keep the HT point estimate and use the most
+            // conservative Bernoulli variance because sample variance is undefined.
             if (m < 2) {
-                totalEstimate += N * n / (double) m;
+                double pHat = (double) n / m;
+                totalEstimate += N * pHat;
+                double fpc = 1.0 - m / N;
+                totalVariance += N * N * 0.25 / m * fpc;
                 continue;
             }
 
@@ -1333,7 +1250,8 @@ public class Valinor implements AutoCloseable {
             // Bernoulli sample variance: s² = p̂(1-p̂) · m/(m-1)
             // Var(Ĉ) = N² · s²/m · (1 - m/N) = N² · p̂(1-p̂)/(m-1) · (1 - m/N)
             double fpc = 1.0 - m / N;
-            double nodeVariance = N * N * (pHat * (1.0 - pHat)) / (m - 1) * fpc;
+            double pForVariance = adjustedBernoulliProportion(n, m, z);
+            double nodeVariance = N * N * (pForVariance * (1.0 - pForVariance)) / (m - 1) * fpc;
 
             totalEstimate += nodeEstimate;
             totalVariance += nodeVariance;
@@ -1341,10 +1259,9 @@ public class Valinor implements AutoCloseable {
 
         double finalEstimate = exactCount + totalEstimate;
         double stdError = Math.sqrt(totalVariance);
-        double z = getZScoreForConfidence(0.95);
         double margin = z * stdError;
 
-        double lower = finalEstimate - margin;
+        double lower = Math.max(exactCount, finalEstimate - margin);
         double upper = finalEstimate + margin;
 
         return new double[] { lower, upper };
@@ -1371,7 +1288,7 @@ public class Valinor implements AutoCloseable {
      * and exact nodes contribute to the point estimate with zero variance.
      */
     private double[] getQueryMeanConfidenceInterval(List<QueryNode> samplingNodes, QueryResults queryResults,
-            double samplingRate, int measureCol) {
+            int measureCol) {
         // Exact contributions from frozen-stats and fully-contained-with-stats tiles
         double exactSum = 0;
         double exactCount = 0;
@@ -1408,6 +1325,10 @@ public class Valinor implements AutoCloseable {
             double N = qnode.getIntersectionCount();
             int m = qnode.getSampledPointCount();
 
+            if (m <= 0) {
+                continue;
+            }
+
             // Fully sampled node → exact, zero variance/covariance
             if (m >= (int) N) {
                 double nodeSum = n > 0 ? qnode.getSampleStatsAcc(measureCol).sum() : 0.0;
@@ -1441,6 +1362,13 @@ public class Valinor implements AutoCloseable {
             double varWithZeros = (sumOfSquaresNonNull - sampleSum * sampleSum / m) / (m - 1);
             if (varWithZeros < 0) varWithZeros = 0.0;
 
+            // Heavy-tail safeguard (see getQuerySumConfidenceInterval): floor
+            // SUM variance at the exact tile-prior null-as-zero variance.
+            // Covariance is left unfloored: it is a function of the observed
+            // sample sum, which is unbiased even when the tail is missed.
+            double priorVar = priorNullAsZeroVariance(qnode, schema.getMeasureIndex(measureCol));
+            if (priorVar > varWithZeros) varWithZeros = priorVar;
+
             double fpc = 1.0 - m / N;
 
             // SUM estimator and variance
@@ -1450,7 +1378,8 @@ public class Valinor implements AutoCloseable {
             // COUNT estimator and variance (Bernoulli)
             double pHat = (double) n / m;
             double nodeCountEst = N * pHat;
-            double nodeCountVar = N * N * (pHat * (1.0 - pHat)) / (m - 1) * fpc;
+            double pForVariance = adjustedBernoulliProportion(n, m, getZScoreForConfidence(0.95));
+            double nodeCountVar = N * N * (pForVariance * (1.0 - pForVariance)) / (m - 1) * fpc;
 
             // Covariance between SUM and COUNT estimators.
             // The null-as-zero value z_j and the indicator I_j = 1{non-null} satisfy:
@@ -1499,17 +1428,89 @@ public class Valinor implements AutoCloseable {
         throw new IllegalArgumentException("Unsupported confidence level: " + confidenceLevel);
     }
 
-    private double calculateRelativeError(double[] confidenceInterval) {
+    private double calculateRelativeError(double[] confidenceInterval, double scaleFloor) {
+        if (confidenceInterval == null || confidenceInterval.length < 2) {
+            return Double.POSITIVE_INFINITY;
+        }
         double lo = confidenceInterval[0];
         double hi = confidenceInterval[1];
         if (Double.isNaN(lo) || Double.isNaN(hi)) {
             return 0.0; // undefined (e.g. zero-count MEAN) — not a convergence blocker
         }
-        double denom = hi + lo;
-        if (denom == 0.0) {
-            return 0.0;
+        double midpoint = (hi + lo) / 2.0;
+        double halfWidth = Math.abs(hi - lo) / 2.0;
+        double denom = Math.max(Math.abs(midpoint), Math.max(scaleFloor, 1e-12));
+        return halfWidth / denom;
+    }
+
+    private double adjustedBernoulliProportion(int successes, int samples, double z) {
+        double z2 = z * z;
+        return (successes + z2 / 2.0) / (samples + z2);
+    }
+
+    /**
+     * Heavy-tail safeguard: returns the null-as-zero variance implied by the
+     * exact tile-population (or nearest-ancestor frozen) prior for stratum
+     * {@code qnode} on measure index {@code measureIdx}.  Used to floor the
+     * plug-in sample variance in SUM/MEAN CI computation, preventing the
+     * reported interval from being narrower than the indexed full-population
+     * variance implies.  Returns {@code 0.0} when no exact prior is
+     * available (e.g. very deep tile with no frozen ancestor on this
+     * measure), in which case the floor is inactive and the sample variance
+     * is used as-is.
+     *
+     * <p>The expression matches the SUM variance term used by
+     * {@link SampleAllocator}:
+     * <pre>
+     *   s²_prior = p_NN · σ_NN² + p_NN · (1 - p_NN) · μ_NN²
+     * </pre>
+     * which is the exact null-as-zero variance of a population with
+     * non-null ratio {@code p_NN}, non-null mean {@code μ_NN} and non-null
+     * standard deviation {@code σ_NN}.
+     *
+     * <p><b>Statistical justification:</b> when the prior comes from this
+     * tile's own complete stats, {@code s²_prior} is the true variance of
+     * the residual stratum and the floor is mathematically tight.  When it
+     * comes from a frozen ancestor or the global fallback, the floor is a
+     * conservative regularizer that protects against under-sampled tails;
+     * it may slightly overstate uncertainty when a query intersects a
+     * low-variance sub-region of a high-variance ancestor.
+     */
+    private double priorNullAsZeroVariance(QueryNode qnode, int measureIdx) {
+        double[] prior = qnode.getTile().getPrior(measureIdx, outlierIndex);
+        if (prior == null) return 0.0;
+        double muNN = prior[0];
+        double sigNN = prior[1];
+        double pNN = prior[2];
+        double s2 = pNN * sigNN * sigNN + pNN * (1.0 - pNN) * muNN * muNN;
+        return Math.max(0.0, s2);
+    }
+
+    private double sumScaleFloor(int measureCol, long totalCount) {
+        int midx = schema.getMeasureIndex(measureCol);
+        double magnitude = 1.0;
+        if (globalMeasureStats != null && midx >= 0 && midx < globalMeasureStats.length) {
+            StatsAccumulator stats = globalMeasureStats[midx];
+            if (stats != null && stats.count() > 0) {
+                magnitude = Math.max(1.0, Math.abs(stats.mean()));
+            }
         }
-        return (hi - lo) / denom;
+        return Math.max(1e-12, 1e-6 * magnitude * Math.max(1L, totalCount));
+    }
+
+    private double countScaleFloor(long totalCount) {
+        return Math.max(1.0, 1e-6 * Math.max(1L, totalCount));
+    }
+
+    private double meanScaleFloor(int measureCol) {
+        int midx = schema.getMeasureIndex(measureCol);
+        if (globalMeasureStats != null && midx >= 0 && midx < globalMeasureStats.length) {
+            StatsAccumulator stats = globalMeasureStats[midx];
+            if (stats != null && stats.count() > 0) {
+                return Math.max(1e-12, 1e-6 * Math.max(1.0, Math.abs(stats.mean())));
+            }
+        }
+        return 1e-6;
     }
 
 

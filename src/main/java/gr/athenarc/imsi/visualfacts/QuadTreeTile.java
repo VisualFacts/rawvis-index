@@ -101,6 +101,13 @@ public class QuadTreeTile extends Tile {
             this.bottomLeft = new QuadTreeTile(new Rectangle(rangeLeft, rangeBottom));
             this.bottomRight = new QuadTreeTile(new Rectangle(rangeRight, rangeBottom));
 
+            // Wire parent pointers so descendants can walk up to the nearest
+            // ancestor with frozen exact stats when computing variance priors.
+            this.topLeft.setParent(this);
+            this.topRight.setParent(this);
+            this.bottomLeft.setParent(this);
+            this.bottomRight.setParent(this);
+
             // Freeze exact stats before destroying the point data.
             this.freezeStats();
 

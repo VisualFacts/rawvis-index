@@ -8,9 +8,20 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
     private int currentIndex; // Tracks progress over selectedSamples
 
     public SamplingNodePointsIterator(QueryNode queryNode, double samplingRate) {
+        this(queryNode, Math.max(2, (int) Math.ceil(samplingRate * queryNode.getIntersectionCount())));
+    }
+
+    /**
+     * Absolute-target constructor used by the stratified Neyman+FPC
+     * allocator: requests exactly {@code targetSampleCount} total samples
+     * from this node (cumulative, including any already-sampled points from
+     * prior rounds).
+     */
+    public SamplingNodePointsIterator(QueryNode queryNode, int targetSampleCount) {
         this.queryNode = queryNode;
         int intersectionCount = queryNode.getIntersectionCount();
-        int targetSampleCount = Math.max(2, (int) Math.ceil(samplingRate * intersectionCount));
+        if (targetSampleCount > intersectionCount) targetSampleCount = intersectionCount;
+        if (targetSampleCount < 0) targetSampleCount = 0;
 
         // Compute remaining samples needed
         int alreadySampled = queryNode.getSampledPointCount();
