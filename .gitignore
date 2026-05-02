@@ -32,3 +32,14 @@ Thumbs.db
 
 # Ignore PDF files (e.g., generated charts)
 *.pdf
+
+
+.tmp/
+experiments/.plot_cache/
+experiments/plots/**/*.png
+experiments/plots/**/*.svg
+experiments/plots/**/*.pgf
+experiments/query_sequences/reservoirs/
+*.duckdb
+*.db
+*.parquet
