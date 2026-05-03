@@ -5,7 +5,7 @@ Usage:
     use()
     fig, ax = plt.subplots(figsize=FIG_SINGLE)
     ...
-    save(fig, 'response_time_synth10_pan_sel1')
+    save(fig, 'response_time_synth10_clustered_sel1')
 """
 from __future__ import annotations
 

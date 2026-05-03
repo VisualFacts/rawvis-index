@@ -44,7 +44,7 @@ def _select_scenarios(scenarios_meta: dict[str, "config.Scenario"], dataset: str
 
 
 def sweep(queries: pd.DataFrame, scenarios_meta: dict, *, vary: str,
-          dataset: str = "synth10", pattern: str = "pan",
+          dataset: str = "synth10", pattern: str = "clustered",
           mcols: Optional[int] = None,
           error_bound: float = config.DEFAULT_ERROR_BOUND,
           pin_rows: Optional[str] = "300M",

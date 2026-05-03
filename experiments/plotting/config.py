@@ -62,7 +62,7 @@ class Scenario:
     key: str                     # directory name
     dataset: str                 # 'synth10' | 'taxi' | 'gaia_dr3' | 'ebird_us'
     label: str                   # short label for plots
-    pattern: str                 # 'pan' | 'zoom'
+    pattern: str                 # 'clustered' | 'random' | 'exploratory'
     rows: Optional[str] = None   # '300M', '1B', etc.
     selectivity: Optional[float] = None  # percent (1.0 = 1%)
     default_mcols: int = 4
@@ -81,7 +81,7 @@ DATASET_DEFAULT_MCOLS = {
     "ebird_us": 4,
 }
 
-_WORKLOAD_TOKEN = r"pan|zoom|clustered|random"
+_WORKLOAD_TOKEN = r"clustered|random|exploratory"
 _RE_SYNTH = re.compile(rf"^synth(\d+)_(\d+[MB])_({_WORKLOAD_TOKEN})_sel(\d+)$")
 _RE_OTHER = re.compile(rf"^(.+?)_({_WORKLOAD_TOKEN})$")
 

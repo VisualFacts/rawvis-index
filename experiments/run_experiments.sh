@@ -28,6 +28,7 @@ trap '' HUP
 #   point, plus optionally per-cell single-axis sweeps:
 #
 #     DEFAULT     : nm=4, eb={0, 0.01}   (paper headline + exact baseline)
+#                   eb=0 runs only when METHODS includes valinor.
 #     CELL_SWEEPS=eb : nm=4, eb={0, 0.01, 0.02, 0.05, 0.1}   (eb anchored)
 #     CELL_SWEEPS=nm : nm={1, 2, 4, 6, 8}, eb={0, 0.01}      (nm anchored)
 #                      (eb=0 is the exact-valinor baseline reported alongside
@@ -43,8 +44,8 @@ trap '' HUP
 #
 #   RESULTS_BASE  — directory for results (default: experiments/results)
 #   METHODS       — space-separated list of methods to run
-#                   (default: "valinor_a duckdb_table_projected pilotdb valinor_s")
-#                   Recognised: valinor_a, valinor_s,
+#                   (default: "valinor valinor_a duckdb_table_projected pilotdb valinor_s")
+#                   Recognised: valinor, valinor_a, valinor_s,
 #                               duckdb_table, duckdb_table_projected,
 #                               pilotdb
 #   DATASETS      — datasets to include (default: all 4)
@@ -112,6 +113,10 @@ trap '' HUP
 #   # Add run 2 later, only Valinor-A
 #   RUN_START=2 NUM_RUNS=1 METHODS="valinor_a" \
 #       sudo -E ./experiments/run_experiments.sh
+#
+#   # Re-run approximate-only run 2 without eb=0 exact Valinor baselines
+#   RUN_START=2 NUM_RUNS=1 METHODS="valinor_a" \
+#       sudo -E ./experiments/run_experiments.sh
 # =============================================================================
 
 set -e
@@ -143,7 +148,7 @@ export MEM_LIMIT=16G
 
 # ---- Configurable parameters ----
 export RESULTS_BASE=${RESULTS_BASE:-experiments/results}
-METHODS=(${METHODS:-valinor_a duckdb_table_projected pilotdb valinor_s})
+METHODS=(${METHODS:-valinor valinor_a duckdb_table_projected pilotdb valinor_s})
 DATASETS=(${DATASETS-synth10 taxi gaia_dr3 ebird_us})
 WORKLOADS=(${WORKLOADS-exploratory random clustered})
 CELL_SWEEPS=(${CELL_SWEEPS-eb nm})
@@ -165,23 +170,49 @@ export NUM_RUNS=1   # each helper script runs exactly 1 run; we loop externally
 # ---- Operating points -------------------------------------------------------
 #
 # DEFAULT — the headline (nm, eb) point used for every grid cell and every
-# synth macro-sweep scenario. eb=0 captures exact-mode I/O; eb=0.01 is the
-# tight-error default reported in the paper. nm=4 is the standard projected
-# measure count.
-DEFAULT_NUM_MEASURES="4"
-DEFAULT_ERROR_BOUNDS="0 0.01"             # valinor_a runs both; valinor_s skips 0
-DEFAULT_PILOTDB_ERROR_BOUNDS="0.01"       # pilotdb has no eb=0 mode
+# synth macro-sweep scenario. eb=0 captures exact-mode I/O and is scheduled
+# only when METHODS includes valinor. eb=0.01 is the tight-error default
+# reported in the paper. nm=4 is the standard projected measure count.
+DEFAULT_NUM_MEASURES="${DEFAULT_NUM_MEASURES:-4}"
+DEFAULT_ERROR_BOUNDS="${DEFAULT_ERROR_BOUNDS:-0 0.01}"
+DEFAULT_PILOTDB_ERROR_BOUNDS="${DEFAULT_PILOTDB_ERROR_BOUNDS:-0.01}"       # pilotdb has no eb=0 mode
 
-# Per-cell EB sweep (anchored at nm=4): all 5 error bounds.
-SWEEP_EB_VALUES="0 0.01 0.02 0.05 0.1"
-SWEEP_EB_PILOTDB_VALUES="0.01 0.02 0.05 0.1"   # pilotdb skips eb=0
+# Per-cell EB sweep (anchored at nm=4): all 5 error bounds. Exact eb=0 is
+# scheduled only for the valinor method; approximate methods use eb>0.
+SWEEP_EB_VALUES="${SWEEP_EB_VALUES:-0 0.01 0.02 0.05 0.1}"
+SWEEP_EB_PILOTDB_VALUES="${SWEEP_EB_PILOTDB_VALUES:-0.01 0.02 0.05 0.1}"   # pilotdb skips eb=0
 
-# Per-cell NM sweep: all 5 measure counts. Valinor runs the sweep at both
-# eb=0 (exact baseline) and eb=0.01 (default approx). DuckDB has no eb axis;
-# PilotDB has no eb=0 mode so it sweeps only at eb=0.01.
-SWEEP_NM_VALUES="1 2 4 6 8"
-SWEEP_NM_EB_ANCHOR="0 0.01"
-SWEEP_NM_PILOTDB_EB_ANCHOR="0.01"
+# Per-cell NM sweep: all 5 measure counts. The valinor exact baseline runs at
+# eb=0; valinor_a and valinor_s run only approximate eb>0 points. DuckDB has
+# no eb axis; PilotDB has no eb=0 mode so it sweeps only at eb=0.01.
+SWEEP_NM_VALUES="${SWEEP_NM_VALUES:-1 2 4 6 8}"
+SWEEP_NM_EB_ANCHOR="${SWEEP_NM_EB_ANCHOR:-0 0.01}"
+SWEEP_NM_PILOTDB_EB_ANCHOR="${SWEEP_NM_PILOTDB_EB_ANCHOR:-0.01}"
+
+keep_exact_error_bounds() {
+    local values="$1"
+    local value
+    local filtered=()
+    for value in $values; do
+        if [[ "$value" =~ ^0+([.]0+)?$ ]]; then
+            filtered+=("$value")
+        fi
+    done
+    printf '%s' "${filtered[*]}"
+}
+
+drop_exact_error_bounds() {
+    local values="$1"
+    local value
+    local filtered=()
+    for value in $values; do
+        if [[ "$value" =~ ^0+([.]0+)?$ ]]; then
+            continue
+        fi
+        filtered+=("$value")
+    done
+    printf '%s' "${filtered[*]}"
+}
 
 # Synth selectivity ladder (5 scenarios).
 SWEEP_SELECTIVITY_SCENARIOS="\
@@ -221,13 +252,18 @@ cell_sweep_enabled() {
 }
 
 # Build the APPROACHES string for exp_valinor.sh from METHODS.
-valinor_approaches() {
+valinor_approx_approaches() {
     local apps=""
     should_run valinor_a && apps="$apps valinor_a"
     should_run valinor_s && apps="$apps valinor_s"
     apps="${apps# }"
     [[ -z "$apps" ]] && return 1
     echo "$apps"
+}
+
+valinor_exact_approaches() {
+    should_run valinor || return 1
+    echo "valinor_a"
 }
 
 # Build the MODES string for exp_duckdb.sh from METHODS.
@@ -280,19 +316,45 @@ run_cell() {
     local pilot_eb="$5"
     local skip_duckdb="${6:-0}"
 
+    local _va_exact _va_approx _dm
+    local eb_exact eb_approx
+    eb_exact="$(keep_exact_error_bounds "$eb")"
+    eb_approx="$(drop_exact_error_bounds "$eb")"
+
     if (( DRY_RUN )); then
         printf '  [dry-run] %-48s scenarios="%s"\n' "$label" "$scenarios"
-        printf '              nm="%s"  eb_valinor="%s"  eb_pilotdb="%s"%s\n' \
-            "$nm" "$eb" "$pilot_eb" \
-            "$([[ "$skip_duckdb" == 1 ]] && echo "  (no DuckDB)")"
+        printf '              nm="%s"\n' "$nm"
+        if [[ -n "$eb_exact" ]] && _va_exact=$(valinor_exact_approaches); then
+            printf '              valinor_exact: approaches="%s" eb="%s"\n' \
+                "$_va_exact" "$eb_exact"
+        fi
+        if [[ -n "$eb_approx" ]] && _va_approx=$(valinor_approx_approaches); then
+            printf '              valinor_approx: approaches="%s" eb="%s"\n' \
+                "$_va_approx" "$eb_approx"
+        fi
+        if [[ "$skip_duckdb" == 1 ]]; then
+            printf '              duckdb: skipped\n'
+        elif _dm=$(duckdb_modes); then
+            printf '              duckdb: modes="%s"\n' "$_dm"
+        fi
+        if should_run pilotdb; then
+            printf '              pilotdb: eb="%s"\n' "$pilot_eb"
+        fi
         return 0
     fi
 
-    local _va _dm
-    if _va=$(valinor_approaches); then
-        echo "===== ${label} (Valinor) [run $run] ====="
-        SCENARIOS="$scenarios" APPROACHES="$_va" \
-            NUM_MEASURES="$nm" ERROR_BOUNDS="$eb" \
+    if [[ -n "$eb_exact" ]] && _va_exact=$(valinor_exact_approaches); then
+        echo "===== ${label} (Valinor exact) [run $run] ====="
+        SCENARIOS="$scenarios" APPROACHES="$_va_exact" \
+            NUM_MEASURES="$nm" ERROR_BOUNDS="$eb_exact" \
+            MAX_QUERIES="${MAX_QUERIES_VALINOR:-0}" \
+            run_valinor
+    fi
+
+    if [[ -n "$eb_approx" ]] && _va_approx=$(valinor_approx_approaches); then
+        echo "===== ${label} (Valinor approximate) [run $run] ====="
+        SCENARIOS="$scenarios" APPROACHES="$_va_approx" \
+            NUM_MEASURES="$nm" ERROR_BOUNDS="$eb_approx" \
             MAX_QUERIES="${MAX_QUERIES_VALINOR:-0}" \
             run_valinor
     fi
@@ -339,6 +401,17 @@ run_cell_with_sweeps() {
 }
 
 # -- Pre-flight summary --------------------------------------------------------
+default_exact_display="<none>"
+default_approx_display="<none>"
+if should_run valinor; then
+    default_exact_display="$(keep_exact_error_bounds "$DEFAULT_ERROR_BOUNDS")"
+    [[ -n "$default_exact_display" ]] || default_exact_display="<none>"
+fi
+if should_run valinor_a || should_run valinor_s; then
+    default_approx_display="$(drop_exact_error_bounds "$DEFAULT_ERROR_BOUNDS")"
+    [[ -n "$default_approx_display" ]] || default_approx_display="<none>"
+fi
+
 echo "===== Experiment runner ====="
 echo "  RESULTS_BASE: $RESULTS_BASE"
 echo "  METHODS:      ${METHODS[*]:-<none>}"
@@ -348,7 +421,7 @@ echo "  CELL_SWEEPS:  ${CELL_SWEEPS[*]:-<none>}"
 echo "  SWEEPS:       ${SWEEPS[*]:-<none>}"
 echo "  OUTLIER_K_LIST: $OUTLIER_K_LIST  (Valinor only; 0 = disabled)"
 echo "  RUNS:         $_run_start .. $_run_end"
-echo "  DEFAULT op:   nm=$DEFAULT_NUM_MEASURES  eb_valinor=\"$DEFAULT_ERROR_BOUNDS\"  eb_pilotdb=\"$DEFAULT_PILOTDB_ERROR_BOUNDS\""
+echo "  DEFAULT op:   nm=$DEFAULT_NUM_MEASURES  eb_valinor_exact=\"$default_exact_display\"  eb_valinor_approx=\"$default_approx_display\"  eb_pilotdb=\"$DEFAULT_PILOTDB_ERROR_BOUNDS\""
 echo "  MAX_QUERIES:  valinor=${MAX_QUERIES_VALINOR:-0}  duckdb=${MAX_QUERIES_DUCKDB:-100}  pilotdb=${MAX_QUERIES_PILOTDB:-100}  (0 = use scenario's seqCount)"
 (( DRY_RUN )) && echo "  MODE:         DRY-RUN (no execution)"
 echo "============================="

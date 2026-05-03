@@ -1,8 +1,8 @@
 """CLI entry point. Run from anywhere:
 
     python -m plotting.cli all
-    python -m plotting.cli per-query --scenario taxi_zoom --error-bound 0.05
-    python -m plotting.cli error-cdf --scenario synth10_300M_pan_sel1
+    python -m plotting.cli per-query --scenario taxi_exploratory --error-bound 0.05
+    python -m plotting.cli error-cdf --scenario synth10_300M_clustered_sel1
     python -m plotting.cli sweep --vary selectivity
     python -m plotting.cli list-scenarios
     python -m plotting.cli refresh-cache
@@ -67,7 +67,7 @@ def main(argv=None):
     _add_common(p, needs_scenario=False)
     p.add_argument("--vary", choices=["selectivity", "rows"], required=True)
     p.add_argument("--dataset", default="synth10")
-    p.add_argument("--pattern", default="pan")
+    p.add_argument("--pattern", default="clustered")
     p.add_argument("--pin-rows", default="300M",
                    help="Rows held fixed when vary=selectivity (default 300M)")
     p.add_argument("--pin-selectivity", type=float, default=1.0,
@@ -223,7 +223,7 @@ def cmd_all(args):
         for dataset in ("synth10",):
             args.vary = vary
             args.dataset = dataset
-            args.pattern = "pan"
+            args.pattern = "clustered"
             try:
                 cmd_sweep(args)
             except Exception as e:

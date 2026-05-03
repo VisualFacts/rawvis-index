@@ -132,6 +132,14 @@ def _parse_init_timing(s: str) -> dict[str, float]:
     return out
 
 
+def _sampling_status(status_value, converged_value) -> str:
+    status = str(status_value).strip().lower()
+    if status and status not in ("nan", "none"):
+        return status
+    converged = str(converged_value).strip().lower() != "false"
+    return "legacy_converged" if converged else "legacy_unconverged"
+
+
 # Valinor CI:  {2={sum=[lb, ub], count=[..], mean=[lb, ub]}, 3=...}
 _RE_VALINOR_CI_MEASURE = re.compile(
     r"(\d+)=\{[^}]*sum=\[([^,\]]+),\s*([^\]]+)\][^}]*mean=\[([^,\]]+),\s*([^\]]+)\][^}]*\}"
@@ -265,6 +273,9 @@ def _parse_file(meta: _FileMeta) -> tuple[list[dict], list[dict]]:
                 q0_eval_time = max(0.0, time_sec - init_table_create_time)
         q = i
         query_time = time_sec
+        is_valinor = meta.method in ("valinor_a", "valinor_s")
+        converged = str(rec.get("Converged", "true")).strip().lower() != "false" if is_valinor else True
+        sampling_status = _sampling_status(rec.get("Sampling Status", ""), rec.get("Converged", "true")) if is_valinor else ""
 
         # Optional valinor-specific query metrics
         def _f(col: str) -> float:
@@ -289,6 +300,8 @@ def _parse_file(meta: _FileMeta) -> tuple[list[dict], list[dict]]:
             "ios": _f("I/Os"),
             "sampling_rate": _f("Sampling Rate"),
             "sampling_rounds": _f("Sampling Rounds"),
+            "sampling_status": sampling_status,
+            "converged": converged,
             "leaf_tiles": _f("Leaf tiles"),
             "overlapped_tiles": _f("Overlapped tiles"),
         }

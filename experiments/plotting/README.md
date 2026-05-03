@@ -80,8 +80,8 @@ for the per-method regexes.
 
 - **New scenario**: just create `experiments/results/<name>/`
   matching one of the parsed patterns
-  (`synth<N>_<rows>_<clustered|random|pan|zoom>_sel<sel>` or
-  `<dataset>_<clustered|random|pan|zoom>`).
+  (`synth<N>_<rows>_<clustered|random|exploratory>_sel<sel>` or
+  `<dataset>_<clustered|random|exploratory>`).
   It will auto-appear in `list-scenarios`.
 - **New method**: add an entry to `config.METHODS`, set its `subdir`,
   filename regex (`loader._RE_*`), and a `Query Result` parser in

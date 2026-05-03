@@ -24,6 +24,9 @@ trap '' HUP
 #   # Custom measure columns:
 #   NUM_MEASURES="1 4" ./exp_valinor.sh
 #
+#   # Reuse an exact runtime sampling seed across runs:
+#   SAMPLING_SEED=42 ./exp_valinor.sh
+#
 # ---- Memory constraint setup ----
 #
 # We use cgroups v2 to hard-cap total physical memory (heap + native + page
@@ -126,6 +129,11 @@ num_runs=${NUM_RUNS:-1}
 run_start=${RUN_START:-1}
 run_end=$((run_start + num_runs - 1))
 
+# Runtime sampling seed for Valinor approximate execution.  By default each
+# run uses its run id as a reproducible-but-distinct seed.  Override
+# SAMPLING_SEED to make multiple runs use identical random samples.
+sampling_seed_override=${SAMPLING_SEED:-}
+
 # Index construction parameters
 # RESOLUTION = partitions per axis for the initial uniform grid (G×G cells)
 # Default 500: empirically the knee of the resolution/quality trade-off on
@@ -225,6 +233,7 @@ do
 
     for run in $(seq $run_start $run_end)
     do
+        sampling_seed=${sampling_seed_override:-$run}
         for scenario in "${scenarios[@]}"
         do
             query_count=$(query_count_for "$scenario") || exit 1
@@ -291,6 +300,7 @@ do
                         -subtileRatio $subtile_ratio \
                         -outlierK $outlier_k \
                         -run $run \
+                        -samplingSeed $sampling_seed \
                         $max_queries_arg \
                         $extra_args \
                         -out "$out_file"; then

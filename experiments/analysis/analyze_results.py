@@ -25,7 +25,7 @@ import io
 import os
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -84,10 +84,13 @@ SCENARIO_ORDER = [
     'synth10_300M_random_sel1',
     'taxi_clustered',
     'taxi_random',
+    'taxi_exploratory',
     'gaia_dr3_clustered',
     'gaia_dr3_random',
+    'gaia_dr3_exploratory',
     'ebird_us_clustered',
     'ebird_us_random',
+    'ebird_us_exploratory',
 ]
 
 
@@ -120,6 +123,7 @@ class QueryRow:
     sampling_tiles: int = 0
     sampling_rate: float = 0.0
     sampling_rounds: int = 0
+    sampling_status: str = ''
     is_error: bool = False
     error_msg: str = ''
     # Init timing breakdown (only for i=0)
@@ -178,6 +182,9 @@ class FileSummary:
     final_leaf_tiles: int = 0
     # Sampling
     mean_sampling_rate: float = float('nan')
+    sampling_status_counts: dict[str, int] = field(default_factory=dict)
+    exactification_fallback_queries: int = 0
+    unconverged_queries: int = 0
     # IO cost
     mean_us_per_io: float = float('nan')
 
@@ -400,6 +407,7 @@ def _parse_row(record: dict, method: str) -> Optional[QueryRow]:
     sampling_tiles = 0
     sampling_rate = 0.0
     sampling_rounds = 0
+    sampling_status = ''
     init_scan = 0.0
     init_gc = 0.0
     init_partition = 0.0
@@ -424,6 +432,9 @@ def _parse_row(record: dict, method: str) -> Optional[QueryRow]:
         sampling_tiles = _safe_int(record.get('Sampling Tiles', 0))
         sampling_rate = _safe_float(record.get('Sampling Rate', 0))
         sampling_rounds = _safe_int(record.get('Sampling Rounds', 0))
+        sampling_status = _normalize_sampling_status(
+            record.get('Sampling Status', ''), record.get('Converged', 'true'),
+        )
 
         # Parse init timing for i=0
         if i == 0:
@@ -452,7 +463,7 @@ def _parse_row(record: dict, method: str) -> Optional[QueryRow]:
         leaf_tiles=leaf_tiles, overlapped_tiles=overlapped,
         contained_with_stats=contained_with, contained_without_stats=contained_without,
         sampling_tiles=sampling_tiles, sampling_rate=sampling_rate,
-        sampling_rounds=sampling_rounds,
+        sampling_rounds=sampling_rounds, sampling_status=sampling_status,
         is_error=is_error, error_msg=error_msg,
         init_scan=init_scan, init_gc=init_gc,
         init_partition=init_partition,
@@ -478,6 +489,14 @@ def _safe_float(v) -> float:
         return float(v)
     except (ValueError, TypeError):
         return 0.0
+
+
+def _normalize_sampling_status(status_value, converged_value) -> str:
+    status = str(status_value).strip().lower()
+    if status and status not in ('nan', 'none'):
+        return status
+    converged = str(converged_value).strip().lower() != 'false'
+    return 'legacy_converged' if converged else 'legacy_unconverged'
 
 
 # =============================================================================
@@ -521,6 +540,24 @@ def compute_summary(rf: ResultFile, rows: list[QueryRow]) -> FileSummary:
     # Init (i=0)
     init_rows = [r for r in valid_rows if r.i == 0]
     query_rows = [r for r in valid_rows if r.i > 0]
+
+    if rf.method in ('valinor_a', 'valinor_s'):
+        sampling_statuses = Counter(r.sampling_status for r in query_rows if r.sampling_status)
+        s.sampling_status_counts = dict(sampling_statuses)
+        s.exactification_fallback_queries = (
+            sampling_statuses.get('exactified_converged', 0)
+            + sampling_statuses.get('full_sample_converged', 0)
+        )
+        s.unconverged_queries = (
+            sampling_statuses.get('exhausted_unconverged', 0)
+            + sampling_statuses.get('legacy_unconverged', 0)
+        )
+        if s.unconverged_queries:
+            if s.status == 'OK':
+                s.status = 'UNCONVERGED'
+            if s.status_detail:
+                s.status_detail += '; '
+            s.status_detail += f'{s.unconverged_queries} Valinor rows did not converge'
 
     if init_rows:
         q0 = init_rows[0]
@@ -695,10 +732,22 @@ def print_health_report(summaries: list[FileSummary], out=sys.stdout):
         by_status[s.status].append(s)
 
     _print(f"\n  Total files: {len(summaries)}")
-    for status in ['OK', 'ROW_COUNT_MISMATCH', 'ERROR_PARTIAL', 'ERROR_ALL', 'EMPTY', 'PARSE_ERROR']:
+    for status in ['OK', 'UNCONVERGED', 'ROW_COUNT_MISMATCH', 'ERROR_PARTIAL', 'ERROR_ALL', 'EMPTY', 'PARSE_ERROR']:
         count = len(by_status.get(status, []))
         if count > 0:
             _print(f"  {status}: {count}")
+
+    sampling_status_totals = Counter()
+    for s in summaries:
+        sampling_status_totals.update(s.sampling_status_counts)
+    visible_sampling_statuses = {
+        status: count for status, count in sampling_status_totals.items()
+        if not status.startswith('legacy_') and count > 0
+    }
+    if visible_sampling_statuses:
+        _print("\n  Valinor sampling stop statuses:")
+        for status, count in sorted(visible_sampling_statuses.items()):
+            _print(f"    {status}: {count}")
 
     # Show problematic files
     problems = [s for s in summaries if s.status != 'OK']

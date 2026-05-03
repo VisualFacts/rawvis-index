@@ -11,6 +11,10 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         this(queryNode, Math.max(2, (int) Math.ceil(samplingRate * queryNode.getIntersectionCount())));
     }
 
+    public SamplingNodePointsIterator(QueryNode queryNode, double samplingRate, long randomSeed) {
+        this(queryNode, Math.max(2, (int) Math.ceil(samplingRate * queryNode.getIntersectionCount())), randomSeed);
+    }
+
     /**
      * Absolute-target constructor used by the stratified Neyman+FPC
      * allocator: requests exactly {@code targetSampleCount} total samples
@@ -18,6 +22,14 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
      * prior rounds).
      */
     public SamplingNodePointsIterator(QueryNode queryNode, int targetSampleCount) {
+        this(queryNode, targetSampleCount, new Random());
+    }
+
+    public SamplingNodePointsIterator(QueryNode queryNode, int targetSampleCount, long randomSeed) {
+        this(queryNode, targetSampleCount, new Random(randomSeed));
+    }
+
+    private SamplingNodePointsIterator(QueryNode queryNode, int targetSampleCount, Random random) {
         this.queryNode = queryNode;
         int intersectionCount = queryNode.getIntersectionCount();
         if (targetSampleCount > intersectionCount) targetSampleCount = intersectionCount;
@@ -35,20 +47,21 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         }
 
         // Precompute selected samples
-        this.selectedSamples = selectRandomBitsReservoir(remainingSamplesNeeded);
+        this.selectedSamples = selectRandomBitsReservoir(remainingSamplesNeeded, random);
         this.currentIndex = selectedSamples.nextSetBit(0); // Start from first selected sample
     }
 
     /**
      * Selects exactly {@code remainingSamplesNeeded} random points from the
      * eligible (query-intersecting and not yet sampled) population.
-     * Uses O(k) rejection sampling for fully-contained tiles, or
-     * O(eligible + k) enumerate-then-Fisher-Yates for partial tiles.
+     * Uses O(k) rejection sampling for small fully-contained deltas, or
+     * O(eligible + k) enumerate-then-Fisher-Yates for partial/large deltas.
      */
-    private BitSet selectRandomBitsReservoir(int remainingSamplesNeeded) {
+    private BitSet selectRandomBitsReservoir(int remainingSamplesNeeded, Random random) {
         // Fast path: fully-contained tile; eligible indices are [0, tileSize) \ sampledTracker.
         // Rejection sampling generates k random ints in [0, tileSize), rejecting collisions.
-        // Expected cost: O(k / (1-f)) where f = sampled fraction. Falls through if f >= 50%.
+        // Expected cost: O(k / (1-f)) where f = sampled fraction. Falls through if
+        // f >= 50% or if k is a large share of the remaining population.
         if (queryNode.isFullyContained()) {
             int tileSize = queryNode.getTile().getSize();
             BitSet sampledTracker = queryNode.getSampledTracker();
@@ -64,7 +77,9 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
             if (blockedCount < tileSize / 2) {
                 int eligibleCount = tileSize - blockedCount;
                 int k = Math.min(remainingSamplesNeeded, eligibleCount);
-                return selectRandomBitsRejection(k, tileSize, sampledTracker, outliers);
+                if (k < eligibleCount / 2) {
+                    return selectRandomBitsRejection(k, tileSize, sampledTracker, outliers, random);
+                }
             }
         }
 
@@ -83,9 +98,11 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
         }
 
         int k = Math.min(remainingSamplesNeeded, eligibleCount);
+        if (k >= eligibleCount) {
+            return eligiblePoints;
+        }
 
         // Partial Fisher-Yates: shuffle only the first k positions in O(k)
-        Random random = new Random();
         for (int i = 0; i < k; i++) {
             int j = i + random.nextInt(eligibleCount - i); // uniform in [i, eligibleCount)
             int tmp = indices[i];
@@ -106,8 +123,8 @@ public class SamplingNodePointsIterator extends AbstractNodePointIterator {
      * optionally outlierBitSet) via rejection.  Each eligible index has equal
      * probability k/eligible of being selected (SRSWOR).
      */
-    private BitSet selectRandomBitsRejection(int k, int tileSize, BitSet sampledTracker, BitSet outliers) {
-        Random random = new Random();
+    private BitSet selectRandomBitsRejection(int k, int tileSize, BitSet sampledTracker, BitSet outliers,
+            Random random) {
         BitSet result = new BitSet();
         int selected = 0;
         while (selected < k) {

@@ -4,6 +4,48 @@ import java.util.Arrays;
 import java.util.Map;
 
 public class ApproximateQueryResults extends QueryResults {
+    /**
+     * Sampling stop reason for approximate queries.
+     * <p>
+     * This is orthogonal to the confidence-interval contents themselves: the
+     * intervals describe the returned estimate, while this status explains how
+     * the engine decided to stop sampling.
+     */
+    public enum SamplingStatus {
+        /**
+         * Normal stop: the requested relative CI half-width target was met by
+         * adaptive sampling before resorting to residual exactification.
+         */
+        CONVERGED("converged"),
+        /**
+         * Valid but expensive stop: adaptive sampling stopped being useful, so
+         * Valinor exactified all residual sampling nodes in one final pass.
+         */
+        EXACTIFIED_CONVERGED("exactified_converged"),
+        /**
+         * Defensive failure state: Valinor exhausted every residual sampling
+         * node and still did not pass the convergence check.
+         * <p>
+         * With the current CI code this should be rare, because fully sampled
+         * residual nodes contribute zero sampling variance. Reaching this state
+         * therefore points to a numerical edge case, a bookkeeping mismatch, or
+         * a future change that keeps a non-zero uncertainty floor even at full
+         * residual sampling.
+         */
+        EXHAUSTED_UNCONVERGED("exhausted_unconverged");
+
+        private final String csvValue;
+
+        SamplingStatus(String csvValue) {
+            this.csvValue = csvValue;
+        }
+
+        @Override
+        public String toString() {
+            return csvValue;
+        }
+    }
+
     // SUM confidence intervals for each measure (key: measure column index)
     private Map<Integer, double[]> sumConfidenceIntervals;
 
@@ -25,6 +67,16 @@ public class ApproximateQueryResults extends QueryResults {
     private Map<Integer, Double> meanErrorBounds;
 
     private boolean converged = true;
+
+    // Default for exact-mode style callers; approximate execution overwrites
+    // this with the stop reason observed in Valinor.executeApproximateQuery.
+    private SamplingStatus samplingStatus = SamplingStatus.CONVERGED;
+
+    private String samplingStopReason = "converged";
+
+    private double preExactificationErrorBound = Double.NaN;
+
+    private long samplingSeed;
 
     // Number of sampling rounds needed to achieve the error threshold
     private int samplingRounds;
@@ -97,6 +149,38 @@ public class ApproximateQueryResults extends QueryResults {
         this.converged = converged;
     }
 
+    public SamplingStatus getSamplingStatus() {
+        return samplingStatus;
+    }
+
+    public void setSamplingStatus(SamplingStatus samplingStatus) {
+        this.samplingStatus = samplingStatus;
+    }
+
+    public String getSamplingStopReason() {
+        return samplingStopReason;
+    }
+
+    public void setSamplingStopReason(String samplingStopReason) {
+        this.samplingStopReason = samplingStopReason;
+    }
+
+    public double getPreExactificationErrorBound() {
+        return preExactificationErrorBound;
+    }
+
+    public void setPreExactificationErrorBound(double preExactificationErrorBound) {
+        this.preExactificationErrorBound = preExactificationErrorBound;
+    }
+
+    public long getSamplingSeed() {
+        return samplingSeed;
+    }
+
+    public void setSamplingSeed(long samplingSeed) {
+        this.samplingSeed = samplingSeed;
+    }
+
     public int getSamplingRounds() {
         return samplingRounds;
     }
@@ -119,6 +203,7 @@ public class ApproximateQueryResults extends QueryResults {
                 ", sumConfidenceIntervals=" + ciStr +
                 ", errorBounds=" + errorBounds +
                 ", converged=" + converged +
+                ", samplingStatus=" + samplingStatus +
                 ", ioCount=" + getIoCount() +
                 '}';
     }

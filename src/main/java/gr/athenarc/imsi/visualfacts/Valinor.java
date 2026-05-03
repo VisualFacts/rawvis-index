@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
@@ -23,6 +24,7 @@ import com.google.common.math.StatsAccumulator;
 
 import gr.athenarc.imsi.visualfacts.init.InitializationPolicy;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
+import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults.SamplingStatus;
 import gr.athenarc.imsi.visualfacts.query.Query;
 import gr.athenarc.imsi.visualfacts.query.QueryResults;
 import gr.athenarc.imsi.visualfacts.util.ContainmentExaminer;
@@ -35,9 +37,6 @@ import gr.athenarc.imsi.visualfacts.util.io.RandomAccessRowReader;
  * Unified Valinor index supporting both exact and approximate query modes.
  * <p>
  * When {@code errorThreshold <= 0}, runs in exact mode: reads all points from
- * disk and returns precise aggregate statistics.
- * <p>
- * When {@code errorThreshold > 0}, runs in approximate mode with adaptive
  * multi-round sampling, confidence intervals, and error bounds.
  */
 public class Valinor implements AutoCloseable {
@@ -63,6 +62,10 @@ public class Valinor implements AutoCloseable {
     private int objectsIndexed = 0;
 
     private double errorThreshold = 0;
+
+    private long samplingSeed = 0L;
+
+    private long approximateQueryOrdinal = 0L;
 
     /**
      * When true, disables all aggregate metadata reuse:
@@ -133,9 +136,15 @@ public class Valinor implements AutoCloseable {
      *                       Any other value throws {@link IllegalArgumentException}.
      */
     public Valinor(Schema schema, double errorThreshold, boolean samplingOnly, String initMode) {
+        this(schema, errorThreshold, samplingOnly, initMode, 0L);
+    }
+
+    public Valinor(Schema schema, double errorThreshold, boolean samplingOnly, String initMode,
+            long samplingSeed) {
         this.schema = schema;
         this.errorThreshold = errorThreshold;
         this.samplingOnly = samplingOnly;
+        this.samplingSeed = samplingSeed;
         if (initMode != null && !INIT_MODE_QUERY_BIASED.equalsIgnoreCase(initMode)) {
             throw new IllegalArgumentException(
                     "Unknown initMode '" + initMode + "'. Valid values: null (uniform), '" + INIT_MODE_QUERY_BIASED + "'");
@@ -145,6 +154,10 @@ public class Valinor implements AutoCloseable {
 
     public boolean isExactMode() {
         return errorThreshold <= 0;
+    }
+
+    public long getSamplingSeed() {
+        return samplingSeed;
     }
 
     public String getInitMode() {
@@ -790,18 +803,42 @@ public class Valinor implements AutoCloseable {
         Map<Integer, Double> countErrorBounds = new HashMap<>();
         Map<Integer, Double> meanErrorBounds = new HashMap<>();
         int samplingRounds = 0;
-        int maxSamplingRounds = 5;  // Adaptive escalation: re-plan with observed s_h^2 each round.
+        int adaptiveRounds = 0;
+        int consecutiveLowImprovementRounds = 0;
+        double previousAdaptiveError = Double.NaN;
+        double preExactificationErrorBound = Double.NaN;
+        String samplingStopReason = "converged";
+        final int minAdaptiveRounds = 2;
+        final double minRelativeImprovement = 0.05;
+        final int stallPatience = 3;
+        final double largeDeltaFraction = 0.50;
+        final double meanInflationSafety = 1.10;
+        // Includes the final exactification pass. We reserve the last round for
+        // exactifying all residual sampling nodes in one K-way pass, so adaptive
+        // sampling cannot keep issuing random reads indefinitely.
+        final int maxSamplingRounds = 10;
+        final int maxAdaptiveRoundsBeforeExactification = maxSamplingRounds - 1;
+        final long querySeedOrdinal = approximateQueryOrdinal++;
         boolean converged = false;
+        boolean exactificationFallback = false;
+        SamplingStatus samplingStatus = SamplingStatus.EXHAUSTED_UNCONVERGED;
         do {
             samplingRounds++;
+            if (!exactificationFallback) {
+                adaptiveRounds++;
+            }
             // Create per-node sampling iterators with absolute target counts.
             // Each iterator self-deduplicates against the node's sampledTracker,
             // so passing the same cumulative target on every round is safe.
             final Map<QueryNode, Integer> targetsRef = targetSamples;
-            KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingNodes.stream()
-                    .map(queryNode -> new SamplingNodePointsIterator(queryNode,
-                            targetsRef.getOrDefault(queryNode, 0).intValue()))
-                    .collect(Collectors.toList()));
+            List<SamplingNodePointsIterator> samplingIterators = new ArrayList<>(samplingNodes.size());
+            for (int nodeOrdinal = 0; nodeOrdinal < samplingNodes.size(); nodeOrdinal++) {
+                QueryNode queryNode = samplingNodes.get(nodeOrdinal);
+                int target = targetsRef.getOrDefault(queryNode, 0);
+                long iteratorSeed = samplingIteratorSeed(querySeedOrdinal, samplingRounds, nodeOrdinal, queryNode, target);
+                samplingIterators.add(new SamplingNodePointsIterator(queryNode, target, iteratorSeed));
+            }
+            KWayMergePointIterator pointIterator = new KWayMergePointIterator(samplingIterators);
 
             // Read and process sampled rows in fixed-size chunks
             int chunkSize = RandomAccessRowReader.BATCH_SIZE;
@@ -873,52 +910,121 @@ public class Valinor implements AutoCloseable {
             // Find the maximum error bound across all measures
             double maxErrorBound = errorBounds.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
             converged = maxErrorBound <= errorThreshold;
+            if (converged) {
+                samplingStatus = exactificationFallback
+                        ? SamplingStatus.EXACTIFIED_CONVERGED
+                        : SamplingStatus.CONVERGED;
+                samplingStopReason = exactificationFallback ? samplingStopReason : "converged";
+                break;
+            }
 
             // Adaptive escalation: re-plan with observed per-stratum sample
-            // variances and observed (CI-midpoint) totals.  Targets returned
-            // by the allocator are absolute and cumulative; the iterator only
-            // requests the delta against samples already drawn.
-            if (!converged) {
-                if (samplingRounds >= maxSamplingRounds) {
-                    LOG.warn("Sampling did not converge after {} rounds (error={}, threshold={}). " +
-                        "Likely caused by NaN-heavy nodes or extreme priors. Returning best estimate.",
-                        samplingRounds, maxErrorBound, errorThreshold);
-                    break;
-                }
-                Map<Integer, Double> obsSum = new HashMap<>();
-                Map<Integer, Double> obsCount = new HashMap<>();
-                for (Integer mc : query.getMeasureCols()) {
-                    double[] sCI = sumConfidenceIntervals.get(mc);
-                    double[] cCI = countConfidenceIntervals.get(mc);
-                    obsSum.put(mc, sCI != null ? (sCI[0] + sCI[1]) / 2.0
-                                                : exactSumPerMeasure.getOrDefault(mc, 0.0));
-                    obsCount.put(mc, cCI != null ? (cCI[0] + cCI[1]) / 2.0
-                                                  : exactCountPerMeasure.getOrDefault(mc, 0L).doubleValue());
-                }
-                Map<QueryNode, Integer> nextTargets = allocator.planAdaptive(samplingNodes, query,
-                        exactSumPerMeasure, exactCountPerMeasure, obsSum, obsCount);
-                // Monotone escalation: never request fewer cumulative samples
-                // than already drawn or planned in the previous round.
-                for (QueryNode qn : samplingNodes) {
-                    int prev = targetSamples.getOrDefault(qn, 0);
-                    int next = nextTargets.getOrDefault(qn, 0);
-                    int alreadySampled = qn.getSampledPointCount();
-                    int floor = Math.max(prev, alreadySampled);
-                    if (next < floor) next = floor;
-                    // Ensure round-over-round progress when error remained
-                    // above the threshold (e.g. priors were too optimistic).
-                    if (next == prev) {
-                        int Nh = qn.getIntersectionCount();
-                        next = Math.min(Nh, prev + Math.max(2, prev / 2));
-                    }
-                    nextTargets.put(qn, next);
-                }
-                LOG.trace("Round {}: error={} > threshold={}, re-planning (effRate {} → {})",
-                    samplingRounds, maxErrorBound, errorThreshold,
-                    effRateForCI,
-                    SampleAllocator.effectiveSamplingRate(samplingNodes, nextTargets));
-                targetSamples = nextTargets;
+            // variances and observed (CI-midpoint) totals. Targets are
+            // absolute cumulative node targets, not per-round deltas. A
+            // "query-wide sampling round" therefore means rebuilding the
+            // merged iterator for every sampling node, letting nodes whose
+            // targets grew emit only their newly requested rows, and then
+            // recomputing the global CIs from the expanded cumulative sample.
+            if (allSamplingNodesFullySampled(samplingNodes)) {
+                samplingStatus = SamplingStatus.EXHAUSTED_UNCONVERGED;
+                samplingStopReason = "exhausted_unconverged";
+                // Defensive branch: the current CI code short-circuits fully
+                // sampled nodes into exact contributions with zero sampling
+                // variance, so this path should normally have converged above.
+                LOG.warn("Sampling exhausted all residual nodes after {} round(s) but did not converge " +
+                    "(error={}, threshold={}). Returning best estimate.",
+                    samplingRounds, maxErrorBound, errorThreshold);
+                break;
             }
+
+            if (exactificationFallback) {
+                samplingStatus = SamplingStatus.EXHAUSTED_UNCONVERGED;
+                samplingStopReason = "exactification_unconverged";
+                LOG.warn("Single residual exactification pass did not converge after {} round(s) " +
+                    "(error={}, threshold={}). Returning best estimate.",
+                    samplingRounds, maxErrorBound, errorThreshold);
+                break;
+            }
+
+            if (!Double.isNaN(previousAdaptiveError) && previousAdaptiveError > 0.0) {
+                double relativeImprovement = (previousAdaptiveError - maxErrorBound) / previousAdaptiveError;
+                if (adaptiveRounds >= minAdaptiveRounds && relativeImprovement < minRelativeImprovement) {
+                    consecutiveLowImprovementRounds++;
+                } else {
+                    consecutiveLowImprovementRounds = 0;
+                }
+            }
+            previousAdaptiveError = maxErrorBound;
+            boolean lowImprovementStalled = consecutiveLowImprovementRounds >= stallPatience;
+
+            if (adaptiveRounds >= maxAdaptiveRoundsBeforeExactification) {
+                exactificationFallback = true;
+                preExactificationErrorBound = maxErrorBound;
+                samplingStopReason = "exactified_round_cap";
+                targetSamples = exactifyResidualNodes(samplingNodes, targetSamples);
+                LOG.warn("Adaptive sampling reached {} adaptive round(s) (max sampling rounds={}, " +
+                    "error={}, threshold={}). Reserving the final round for residual exactification.",
+                    adaptiveRounds, maxSamplingRounds, maxErrorBound, errorThreshold);
+                continue;
+            }
+
+            Map<Integer, Double> obsSum = new HashMap<>();
+            Map<Integer, Double> obsCount = new HashMap<>();
+            for (Integer mc : query.getMeasureCols()) {
+                double[] sCI = sumConfidenceIntervals.get(mc);
+                double[] cCI = countConfidenceIntervals.get(mc);
+                obsSum.put(mc, sCI != null ? (sCI[0] + sCI[1]) / 2.0
+                                            : exactSumPerMeasure.getOrDefault(mc, 0.0));
+                obsCount.put(mc, cCI != null ? (cCI[0] + cCI[1]) / 2.0
+                                              : exactCountPerMeasure.getOrDefault(mc, 0L).doubleValue());
+            }
+            Map<QueryNode, Integer> nextTargets = allocator.planAdaptive(samplingNodes, query,
+                    exactSumPerMeasure, exactCountPerMeasure, obsSum, obsCount);
+            double maxMeanErrorBound = maxValue(meanErrorBounds);
+            double maxSumCountErrorBound = Math.max(maxValue(sumErrorBounds), maxValue(countErrorBounds));
+            boolean meanInflated = inflateTargetsForMeanDominatedError(samplingNodes, targetSamples, nextTargets,
+                    maxMeanErrorBound, maxSumCountErrorBound, errorThreshold, meanInflationSafety);
+            boolean targetIncreased = makeMonotoneAndDetectIncrease(samplingNodes, targetSamples, nextTargets);
+            if (!targetIncreased) {
+                targetIncreased = forceBoundedAdaptiveIncrease(samplingNodes, targetSamples, nextTargets);
+                if (targetIncreased) {
+                    LOG.trace("Adaptive allocation did not increase any cumulative target after {} round(s); " +
+                        "issuing a bounded sampling nudge (error={}, threshold={}).",
+                        samplingRounds, maxErrorBound, errorThreshold);
+                }
+            } else if (lowImprovementStalled) {
+                if (forceBoundedAdaptiveIncrease(samplingNodes, targetSamples, nextTargets)) {
+                    LOG.trace("Adaptive sampling had {} consecutive low-improvement round(s); " +
+                        "raising cumulative targets with a bounded safety nudge (error={}, threshold={}).",
+                        consecutiveLowImprovementRounds, maxErrorBound, errorThreshold);
+                }
+            }
+            if (!targetIncreased) {
+                exactificationFallback = true;
+                preExactificationErrorBound = maxErrorBound;
+                samplingStopReason = "exactified_no_target_progress";
+                targetSamples = exactifyResidualNodes(samplingNodes, targetSamples);
+                LOG.warn("Adaptive allocation stalled after {} round(s) (error={}, threshold={}). " +
+                    "No bounded sampling nudge was possible; exactifying residual nodes in one pass.",
+                    samplingRounds, maxErrorBound, errorThreshold);
+                continue;
+            }
+            double plannedDeltaFraction = plannedDeltaFraction(samplingNodes, nextTargets);
+            if (plannedDeltaFraction > largeDeltaFraction) {
+                exactificationFallback = true;
+                preExactificationErrorBound = maxErrorBound;
+                samplingStopReason = "exactified_large_delta";
+                targetSamples = exactifyResidualNodes(samplingNodes, targetSamples);
+                LOG.warn("Adaptive allocation requested {} of the remaining residual rows after {} round(s) " +
+                    "(error={}, threshold={}). Exactifying residual nodes in one pass.",
+                    plannedDeltaFraction, samplingRounds, maxErrorBound, errorThreshold);
+                continue;
+            }
+            LOG.trace("Round {}: error={} > threshold={}, re-planning (effRate {} → {}, meanInflated={})",
+                samplingRounds, maxErrorBound, errorThreshold,
+                effRateForCI,
+                SampleAllocator.effectiveSamplingRate(samplingNodes, nextTargets), meanInflated);
+            targetSamples = nextTargets;
 
         } while (!converged);
 
@@ -941,6 +1047,10 @@ public class Valinor implements AutoCloseable {
         queryResults.setSamplingRate(finalEffectiveRate);
         queryResults.setIoCount(ioCount);
         queryResults.setConverged(converged);
+        queryResults.setSamplingStatus(samplingStatus);
+        queryResults.setSamplingStopReason(samplingStopReason);
+        queryResults.setPreExactificationErrorBound(preExactificationErrorBound);
+        queryResults.setSamplingSeed(samplingSeed);
 
         queryResults.setSumConfidenceIntervals(sumConfidenceIntervals);
         queryResults.setCountConfidenceIntervals(countConfidenceIntervals);
@@ -951,6 +1061,143 @@ public class Valinor implements AutoCloseable {
         queryResults.setMeanErrorBounds(meanErrorBounds);
 
         return queryResults;
+    }
+
+    /**
+     * Clamp adaptive targets so they remain cumulative and monotone.
+     * <p>
+     * {@link SampleAllocator#planAdaptive(List, gr.athenarc.imsi.visualfacts.query.Query, Map, Map, Map, Map)}
+     * returns desired absolute sample counts per node. Before using them we
+     * enforce three invariants:
+     * <ul>
+     *   <li>never go below the previous target,</li>
+     *   <li>never go below the number of rows already sampled, and</li>
+     *   <li>never exceed the node population {@code N_h}.</li>
+     * </ul>
+      * The returned boolean answers the only question the outer loop cares
+      * about: does the next plan ask for any new rows at all?
+     */
+    private boolean makeMonotoneAndDetectIncrease(List<QueryNode> samplingNodes,
+            Map<QueryNode, Integer> currentTargets,
+            Map<QueryNode, Integer> nextTargets) {
+        boolean increased = false;
+        for (QueryNode qn : samplingNodes) {
+            int prev = currentTargets.getOrDefault(qn, 0);
+            int alreadySampled = qn.getSampledPointCount();
+            int floor = Math.max(prev, alreadySampled);
+            int next = nextTargets.getOrDefault(qn, 0);
+            int Nh = qn.getIntersectionCount();
+            if (next < floor) next = floor;
+            if (next > Nh) next = Nh;
+            if (next > floor) increased = true;
+            nextTargets.put(qn, next);
+        }
+        return increased;
+    }
+
+    private boolean inflateTargetsForMeanDominatedError(List<QueryNode> samplingNodes,
+            Map<QueryNode, Integer> currentTargets,
+            Map<QueryNode, Integer> nextTargets,
+            double maxMeanErrorBound,
+            double maxSumCountErrorBound,
+            double threshold,
+            double safety) {
+        if (!(threshold > 0.0) || !(maxMeanErrorBound > threshold) || maxMeanErrorBound < maxSumCountErrorBound) {
+            return false;
+        }
+        double ratio = maxMeanErrorBound / threshold;
+        double targetFactor = Math.max(1.0, ratio * ratio * safety);
+        boolean inflated = false;
+        for (QueryNode qn : samplingNodes) {
+            int Nh = qn.getIntersectionCount();
+            int floor = Math.max(currentTargets.getOrDefault(qn, 0), qn.getSampledPointCount());
+            int planned = nextTargets.getOrDefault(qn, floor);
+            int base = Math.max(floor, planned);
+            int inflatedTarget = (int) Math.ceil(base * targetFactor);
+            if (inflatedTarget > Nh) inflatedTarget = Nh;
+            if (inflatedTarget > planned) {
+                nextTargets.put(qn, inflatedTarget);
+                inflated = true;
+            }
+        }
+        return inflated;
+    }
+
+    private boolean forceBoundedAdaptiveIncrease(List<QueryNode> samplingNodes,
+            Map<QueryNode, Integer> currentTargets,
+            Map<QueryNode, Integer> nextTargets) {
+        boolean increased = false;
+        for (QueryNode qn : samplingNodes) {
+            int Nh = qn.getIntersectionCount();
+            int floor = Math.max(currentTargets.getOrDefault(qn, 0), qn.getSampledPointCount());
+            if (floor >= Nh) {
+                nextTargets.put(qn, Nh);
+                continue;
+            }
+            int nudge = Math.max(2, floor / 2);
+            int boundedTarget = (int) Math.min((long) Nh, (long) floor + nudge);
+            int planned = nextTargets.getOrDefault(qn, floor);
+            int next = Math.max(planned, boundedTarget);
+            if (next > Nh) next = Nh;
+            if (next > floor) increased = true;
+            nextTargets.put(qn, next);
+        }
+        return increased;
+    }
+
+    private double maxValue(Map<Integer, Double> values) {
+        if (values == null || values.isEmpty()) {
+            return 0.0;
+        }
+        return values.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+    }
+
+    private long samplingIteratorSeed(long queryOrdinal, int samplingRound, int nodeOrdinal, QueryNode qn,
+            int targetSampleCount) {
+        long seed = samplingSeed;
+        seed ^= 0x9E3779B97F4A7C15L * (queryOrdinal + 1L);
+        seed ^= 0xBF58476D1CE4E5B9L * (long) samplingRound;
+        seed ^= 0x94D049BB133111EBL * (long) (nodeOrdinal + 1);
+        seed ^= ((long) qn.getTile().getStart() << 32) ^ (long) qn.getIntersectionCount();
+        seed ^= (long) targetSampleCount * 0xD6E8FEB86659FD93L;
+        return mix64(seed);
+    }
+
+    private static long mix64(long z) {
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
+    }
+
+    private double plannedDeltaFraction(List<QueryNode> samplingNodes, Map<QueryNode, Integer> nextTargets) {
+        long plannedDelta = 0L;
+        long remaining = 0L;
+        for (QueryNode qn : samplingNodes) {
+            int sampled = qn.getSampledPointCount();
+            int Nh = qn.getIntersectionCount();
+            plannedDelta += Math.max(0, nextTargets.getOrDefault(qn, sampled) - sampled);
+            remaining += Math.max(0, Nh - sampled);
+        }
+        return remaining > 0L ? (double) plannedDelta / (double) remaining : 0.0;
+    }
+
+    /** Exactifies every residual sampling node in one additional K-way pass. */
+    private Map<QueryNode, Integer> exactifyResidualNodes(List<QueryNode> samplingNodes,
+            Map<QueryNode, Integer> currentTargets) {
+        Map<QueryNode, Integer> nextTargets = new IdentityHashMap<>(currentTargets);
+        for (QueryNode qn : samplingNodes) {
+            nextTargets.put(qn, qn.getIntersectionCount());
+        }
+        return nextTargets;
+    }
+
+    private boolean allSamplingNodesFullySampled(List<QueryNode> samplingNodes) {
+        for (QueryNode qn : samplingNodes) {
+            if (qn.getSampledPointCount() < qn.getIntersectionCount()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ==================== Sampling Helpers ====================
@@ -991,7 +1238,7 @@ public class Valinor implements AutoCloseable {
             for (int i = 0; i < measureCount; i++) {
                 StatsAccumulator tileStats = tile.getStats(i);
                 if (tileStats != null && tileStats.count() > 0) {
-                    globalMeasureStats[i].addAll(tileStats.snapshot());
+                    globalMeasureStats[i].addAll(Objects.requireNonNull(tileStats.snapshot()));
                 }
             }
         }
@@ -1437,10 +1684,21 @@ public class Valinor implements AutoCloseable {
         if (Double.isNaN(lo) || Double.isNaN(hi)) {
             return 0.0; // undefined (e.g. zero-count MEAN) — not a convergence blocker
         }
-        double midpoint = (hi + lo) / 2.0;
         double halfWidth = Math.abs(hi - lo) / 2.0;
-        double denom = Math.max(Math.abs(midpoint), Math.max(scaleFloor, 1e-12));
-        return halfWidth / denom;
+        return halfWidth / relativeErrorDenominator(confidenceInterval, scaleFloor);
+    }
+
+    private double relativeErrorDenominator(double[] confidenceInterval, double scaleFloor) {
+        if (confidenceInterval == null || confidenceInterval.length < 2) {
+            return Math.max(scaleFloor, 1e-12);
+        }
+        double lo = confidenceInterval[0];
+        double hi = confidenceInterval[1];
+        if (Double.isNaN(lo) || Double.isNaN(hi)) {
+            return Math.max(scaleFloor, 1e-12);
+        }
+        double midpoint = (hi + lo) / 2.0;
+        return Math.max(Math.abs(midpoint), Math.max(scaleFloor, 1e-12));
     }
 
     private double adjustedBernoulliProportion(int successes, int samples, double z) {
@@ -1520,8 +1778,10 @@ public class Valinor implements AutoCloseable {
     private ContainmentExaminer getContainmentExaminer(Tile tile, Rectangle query) {
         Range<Double> queryXRange = query.getXRange();
         Range<Double> queryYRange = query.getYRange();
-        boolean checkX = !queryXRange.encloses(tile.getBounds().getXRange());
-        boolean checkY = !queryYRange.encloses(tile.getBounds().getYRange());
+        Range<Double> tileXRange = Objects.requireNonNull(tile.getBounds().getXRange());
+        Range<Double> tileYRange = Objects.requireNonNull(tile.getBounds().getYRange());
+        boolean checkX = !queryXRange.encloses(tileXRange);
+        boolean checkY = !queryYRange.encloses(tileYRange);
 
         ContainmentExaminer containmentExaminer = null;
         if (checkX && checkY) {

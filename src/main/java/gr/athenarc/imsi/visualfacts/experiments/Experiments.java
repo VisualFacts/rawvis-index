@@ -39,18 +39,18 @@ import gr.athenarc.imsi.visualfacts.experiments.config.ExperimentConfigLoader;
 import gr.athenarc.imsi.visualfacts.experiments.config.ExplorationScenarioConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.InitialQueryConfig;
 import gr.athenarc.imsi.visualfacts.experiments.config.WorkloadConfig;
+import gr.athenarc.imsi.visualfacts.experiments.util.ClusteredQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBQueryExecutor.QueryResult;
 import gr.athenarc.imsi.visualfacts.experiments.util.DuckDBSQLQueryGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.ExtentCalibrator;
 import gr.athenarc.imsi.visualfacts.experiments.util.PhasedQuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.QuerySequenceGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SQLQueryGenerator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SpatialReservoir;
-import gr.athenarc.imsi.visualfacts.experiments.util.ExtentCalibrator;
 import gr.athenarc.imsi.visualfacts.experiments.util.SyntheticDatasetGenerator;
-import gr.athenarc.imsi.visualfacts.experiments.util.UserOpType;
 import gr.athenarc.imsi.visualfacts.experiments.util.UniformRandomQueryGenerator;
-import gr.athenarc.imsi.visualfacts.experiments.util.ClusteredQueryGenerator;
+import gr.athenarc.imsi.visualfacts.experiments.util.UserOpType;
 import gr.athenarc.imsi.visualfacts.query.AggregateType;
 import gr.athenarc.imsi.visualfacts.query.ApproximateQueryResults;
 import gr.athenarc.imsi.visualfacts.query.Query;
@@ -99,6 +99,9 @@ public class Experiments {
 
     @Parameter(names = "-run", description = "Run number for experiments")
     private Integer run;
+
+    @Parameter(names = "-samplingSeed", description = "Runtime seed for approximate sampling. If omitted, defaults to -run when available, otherwise 0.")
+    private Long samplingSeed;
 
     @Parameter(names = "-sort", description = "Sort mode")
     private String sort;
@@ -373,6 +376,8 @@ public class Experiments {
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
                         "Total Count", "Query Result",
                         "Point Estimate", "Error Bound", "Error Bound By Aggregate", "Converged",
+                        "Sampling Status", "Sampling Stop Reason", "Pre-Exactification Error Bound",
+                        "Sampling Seed",
                         "run", "Init Timing",
                         "Index Mem Deep Size (bytes)");
             } else {
@@ -382,12 +387,15 @@ public class Experiments {
                         "Sampling Tiles", "Sampling Rate", "Sampling Rounds", "I/Os", "Time (sec)",
                         "Total Count", "Query Result",
                         "Point Estimate", "Error Bound", "Error Bound By Aggregate", "Converged",
+                        "Sampling Status", "Sampling Stop Reason", "Pre-Exactification Error Bound",
+                        "Sampling Seed",
                         "run", "Init Timing");
             }
 
             Stopwatch stopwatch;
 
-            index = new Valinor(schema, errorBound, samplingOnly, initMode);
+            long effectiveSamplingSeed = effectiveSamplingSeed();
+            index = new Valinor(schema, errorBound, samplingOnly, initMode, effectiveSamplingSeed);
 
             List<Query> sequence = generateQuerySequence(schema);
 
@@ -428,6 +436,10 @@ public class Experiments {
                 csvWriter.addValue(queryResults.getErrorBounds());
                 csvWriter.addValue(formatAggregateErrorBounds(queryResults));
                 csvWriter.addValue(queryResults.isConverged());
+                csvWriter.addValue(queryResults.getSamplingStatus());
+                csvWriter.addValue(queryResults.getSamplingStopReason());
+                csvWriter.addValue(formatOptionalDouble(queryResults.getPreExactificationErrorBound()));
+                csvWriter.addValue(queryResults.getSamplingSeed());
                 csvWriter.addValue(run);
                 // Init timing breakdown (only for query 0)
                 csvWriter.addValue(i == 0 && index.getInitTimingBreakdown() != null
@@ -825,6 +837,20 @@ public class Experiments {
         }
         sb.append("}");
         return sb.toString();
+    }
+
+    private String formatOptionalDouble(double value) {
+        return Double.isNaN(value) ? "" : Double.toString(value);
+    }
+
+    private long effectiveSamplingSeed() {
+        if (samplingSeed != null) {
+            return samplingSeed.longValue();
+        }
+        if (run != null) {
+            return run.longValue();
+        }
+        return 0L;
     }
 
     private static double midpoint(double[] interval) {

@@ -13,12 +13,17 @@ Expected directory layout::
 
 Validation tasks
 ----------------
-A. Bbox consistency
+A. File naming and row counts
+    Every result file carrying an ``_n<Q>`` suffix must contain exactly ``Q``
+    CSV rows. Valinor ``_outK<K>`` suffixes are allowed only for approximate
+    files (``error > 0``), and only when ``K > 0``.
+
+B. Bbox consistency
    For each (scenario, mcols, query_idx), every method must have queried the
    same bounding box. Valinor records the bbox directly in the ``bbox`` column;
    DuckDB and PilotDB carry it inside the SQL ``Query`` column.
 
-B. Approximation accuracy (the primary objective)
+C. Approximation accuracy (the primary objective)
     Ground truth: DuckDB tableProjected when present, otherwise Valinor-A
     exact (error=0). DuckDB may cover a shorter prefix; this is valid.
    - Valinor-A / Valinor-S (CIs ``{col={sum=[lb,ub], count=[lb,ub], mean=[lb,ub]}}``):
@@ -29,18 +34,51 @@ B. Approximation accuracy (the primary objective)
        * within-bound rate - fraction of queries with rel_error <= errorBound
        * mean / max relative error
 
-C. Exact equivalence
+D. Exact equivalence
     When DuckDB is present, Valinor-A with error=0 must match DuckDB on every
     aggregate (count, sum, mean) up to floating-point tolerance.
 
 Usage
 -----
     python3 analysis/validate_experiment_results.py <results_dir>
-    python3 analysis/validate_experiment_results.py <results_dir> --scenario synth10_100M_pan_sel1
+    python3 analysis/validate_experiment_results.py <results_dir> --scenario synth10_300M_clustered_sel1
     python3 analysis/validate_experiment_results.py <results_dir> --task accuracy
     python3 analysis/validate_experiment_results.py <results_dir> --quiet
 
-Exit code: 0 = all checks passed, 1 = systematic failures detected.
+Exit code: 0 = no failures detected, 1 = systematic failures detected.
+Warnings highlight borderline statistical calibration but do not change the
+exit code.
+
+Validation outcomes
+-------------------
+``pass`` means the file satisfies deterministic checks and its statistical
+checks are at or above the one-sided finite-sample lower acceptance threshold.
+
+``warn`` means the result is usable but deserves review. Examples are empirical
+coverage below the nominal 95% but still above that lower acceptance
+threshold, PilotDB point errors that miss the requested bound without falling
+below the configured within-bound rate, or Valinor rows that converged only
+after residual
+exactification. These do not change the exit code because they are either
+expected finite-sample variation or valid-but-expensive fallback behavior.
+
+``fail`` means the result should not be treated as validated: row-count or bbox
+mismatches, filename convention violations, non-converged Valinor rows,
+unknown/inconsistent sampling stop statuses, exact-result mismatches, or CI
+coverage below that lower acceptance threshold. Failures make the script exit
+with 1.
+
+Valinor approximate rows may carry ``Sampling Status``:
+``converged`` is the normal CI-width stop; ``exactified_converged`` means
+adaptive sampling stalled, so the engine exactified all residual sampling nodes
+in one final K-way pass and the post-pass CI check satisfied the target;
+and ``exhausted_unconverged`` means even exhausting the residual frame did not
+produce a valid converged result, which is a failure. Older files with
+``full_sample_converged`` are accepted as the legacy name for an expensive but
+valid fallback. Newer files may also include ``Sampling Stop Reason``,
+``Pre-Exactification Error Bound``, and ``Sampling Seed`` diagnostics; these
+columns explain why exactification was selected but do not change validation
+status by themselves.
 """
 
 from __future__ import annotations
@@ -71,10 +109,30 @@ EXACT_REL_TOL = 1e-6
 # Therefore the expected coverage is ~95% regardless of the requested
 # error-bound value.  We allow some finite-sample slack before flagging.
 CI_CONFIDENCE = 0.95
-MIN_COVERAGE = 0.90  # never accept lower than this, even for small samples
+# This is a one-sided normal-approximation tolerance, not a second coverage
+# target. Under well-calibrated 95% CIs, observed empirical coverage over n
+# queries is approximately Binomial(n, 0.95); we fail only when it falls more
+# than this many standard errors below nominal.
+COVERAGE_Z_VALUE = 3.0
+
+# Per-measure coverage cells with fewer observations than this are reported in
+# aggregate summaries but are not independently failed; tiny cells are too noisy
+# for a useful binomial coverage decision.
+MIN_CELL_COVERAGE_N = 30
+
+# Limit detailed per-measure output so failed files stay readable.
+MAX_CELL_DETAIL_LINES = 8
 
 # PilotDB within-bound rate threshold below which we flag the configuration
 PILOTDB_MIN_WITHIN_RATE = 0.90
+
+# Sampling statuses are orthogonal to CI coverage: residual exactification can
+# still be statistically valid, but it is worth surfacing because it changes
+# the performance story. Exhausted/unconverged rows are invalid results.
+PASS_SAMPLING_STATUSES = {'converged', 'legacy_converged'}
+WARN_SAMPLING_STATUSES = {'exactified_converged', 'full_sample_converged'}
+FAIL_SAMPLING_STATUSES = {'exhausted_unconverged', 'legacy_unconverged'}
+KNOWN_SAMPLING_STATUSES = PASS_SAMPLING_STATUSES | WARN_SAMPLING_STATUSES | FAIL_SAMPLING_STATUSES
 
 
 # =============================================================================
@@ -83,6 +141,7 @@ PILOTDB_MIN_WITHIN_RATE = 0.90
 
 _PARAM_RE = re.compile(r'(mcols|error|run)([\d.]+)')
 _QUERY_COUNT_RE = re.compile(r'_n(\d+)(?:_|$)')
+_OUT_K_RE = re.compile(r'_outK(-?\d+)(?:_|$)')
 
 
 def _parse_params(stem: str) -> Optional[Tuple[int, float, int]]:
@@ -111,6 +170,11 @@ def _parse_duckdb_params(stem: str) -> Optional[Tuple[int, int]]:
 
 def _expected_query_count(stem: str) -> Optional[int]:
     match = _QUERY_COUNT_RE.search(stem)
+    return int(match.group(1)) if match else None
+
+
+def _parse_out_k(stem: str) -> Optional[int]:
+    match = _OUT_K_RE.search(stem)
     return int(match.group(1)) if match else None
 
 
@@ -440,12 +504,21 @@ class AccuracyReport:
     """Per-file CI accuracy metrics, broken down by aggregate."""
     n_queries: int = 0
     nonconverged_rows: int = 0
+    unknown_sampling_status_rows: int = 0
+    inconsistent_sampling_status_rows: int = 0
+    sampling_status_counts: Dict[str, int] = field(default_factory=dict)
     n_per_agg: Dict[str, int] = field(default_factory=dict)
     n_inside: Dict[str, int] = field(default_factory=dict)
     rel_errors: Dict[str, List[float]] = field(default_factory=dict)
     half_widths_pct: Dict[str, List[float]] = field(default_factory=dict)
     reported_bounds: Dict[str, List[float]] = field(default_factory=dict)
     bound_violations: Dict[str, int] = field(default_factory=dict)
+    n_per_cell: Dict[Tuple[int, str], int] = field(default_factory=dict)
+    n_inside_cell: Dict[Tuple[int, str], int] = field(default_factory=dict)
+    rel_errors_cell: Dict[Tuple[int, str], List[float]] = field(default_factory=dict)
+    half_widths_pct_cell: Dict[Tuple[int, str], List[float]] = field(default_factory=dict)
+    reported_bounds_cell: Dict[Tuple[int, str], List[float]] = field(default_factory=dict)
+    bound_violations_cell: Dict[Tuple[int, str], int] = field(default_factory=dict)
     misses: List[Tuple[int, int, str, float, float, float]] = field(default_factory=list)
 
 
@@ -469,6 +542,13 @@ def _is_false(value: object) -> bool:
     return str(value).strip().lower() == 'false'
 
 
+def _sampling_status(value: object, converged: bool) -> str:
+    raw = str(value).strip().lower()
+    if raw in ('', 'nan', 'none'):
+        return 'legacy_converged' if converged else 'legacy_unconverged'
+    return raw
+
+
 def evaluate_ci_file(csv_path: Path, truth: Dict[int, TruthRow], error_bound: float) -> AccuracyReport:
     """Compute CI coverage + tightness for a Valinor approximate file."""
     df = _safe_read(csv_path)
@@ -487,6 +567,15 @@ def evaluate_ci_file(csv_path: Path, truth: Dict[int, TruthRow], error_bound: fl
         point_estimates = parse_valinor_point_estimates(str(r.get('Point Estimate', '')))
         reported_bounds = parse_valinor_error_bounds(str(r.get('Error Bound By Aggregate', '')))
         converged = not _is_false(r.get('Converged', 'true'))
+        sampling_status = _sampling_status(r.get('Sampling Status', ''), converged)
+        rep.sampling_status_counts[sampling_status] = rep.sampling_status_counts.get(sampling_status, 0) + 1
+        if sampling_status not in KNOWN_SAMPLING_STATUSES:
+            rep.unknown_sampling_status_rows += 1
+        elif (
+            (sampling_status in PASS_SAMPLING_STATUSES or sampling_status in WARN_SAMPLING_STATUSES) and not converged
+            or sampling_status in FAIL_SAMPLING_STATUSES and converged
+        ):
+            rep.inconsistent_sampling_status_rows += 1
         if not converged:
             rep.nonconverged_rows += 1
         truth_row = truth.get(qi)
@@ -501,19 +590,25 @@ def evaluate_ci_file(csv_path: Path, truth: Dict[int, TruthRow], error_bound: fl
                 tval = _truth_value(tstats, agg)
                 if tval is None:
                     continue
+                cell = (col, agg)
                 rep.n_per_agg[agg] = rep.n_per_agg.get(agg, 0) + 1
+                rep.n_per_cell[cell] = rep.n_per_cell.get(cell, 0) + 1
 
                 mid = point_estimates.get(col, {}).get(agg, 0.5 * (lb + ub))
-                rep.rel_errors.setdefault(agg, []).append(_rel_err(mid, tval))
+                rel_err = _rel_err(mid, tval)
+                rep.rel_errors.setdefault(agg, []).append(rel_err)
+                rep.rel_errors_cell.setdefault(cell, []).append(rel_err)
                 if abs(tval) > 0:
-                    rep.half_widths_pct.setdefault(agg, []).append(
-                        0.5 * (ub - lb) / abs(tval)
-                    )
+                    half_width = 0.5 * (ub - lb) / abs(tval)
+                    rep.half_widths_pct.setdefault(agg, []).append(half_width)
+                    rep.half_widths_pct_cell.setdefault(cell, []).append(half_width)
                 reported = reported_bounds.get(col, {}).get(agg)
                 if reported is not None and math.isfinite(reported):
                     rep.reported_bounds.setdefault(agg, []).append(reported)
+                    rep.reported_bounds_cell.setdefault(cell, []).append(reported)
                     if converged and reported > error_bound + 1e-9:
                         rep.bound_violations[agg] = rep.bound_violations.get(agg, 0) + 1
+                        rep.bound_violations_cell[cell] = rep.bound_violations_cell.get(cell, 0) + 1
 
                 # CI coverage with FP slack on point-estimate (zero-width) CIs
                 width = ub - lb
@@ -524,6 +619,7 @@ def evaluate_ci_file(csv_path: Path, truth: Dict[int, TruthRow], error_bound: fl
                         inside = True
                 if inside:
                     rep.n_inside[agg] = rep.n_inside.get(agg, 0) + 1
+                    rep.n_inside_cell[cell] = rep.n_inside_cell.get(cell, 0) + 1
                 else:
                     rep.misses.append((qi, col, agg, tval, lb, ub))
     return rep
@@ -708,6 +804,28 @@ def check_query_counts(mf: MethodFiles) -> Tuple[int, List[str]]:
     return checked, msgs
 
 
+def check_filename_conventions(mf: MethodFiles) -> Tuple[int, List[str]]:
+    checked = 0
+    msgs: List[str] = []
+    for path in [*mf.valinor_a, *mf.valinor_s]:
+        checked += 1
+        params = _parse_params(path.stem)
+        out_k = _parse_out_k(path.stem)
+        if '_outK' in path.stem and out_k is None:
+            msgs.append(f"  {path.name}: malformed _outK suffix")
+            continue
+        if params is None:
+            continue
+        _, error_bound, _ = params
+        if out_k is None:
+            continue
+        if error_bound <= 0:
+            msgs.append(f"  {path.name}: exact files must not include _outK")
+        elif out_k <= 0:
+            msgs.append(f"  {path.name}: _outK suffix is only valid for K > 0")
+    return checked, msgs
+
+
 # =============================================================================
 # Reporting helpers
 # =============================================================================
@@ -723,11 +841,35 @@ def _stats_summary(values: List[float]) -> Tuple[float, float]:
     return sum(finite) / len(finite), max(finite)
 
 
-def _coverage_floor(n: int) -> float:
+def _coverage_fail_threshold(n: int) -> float:
     if n <= 0:
-        return MIN_COVERAGE
+        return 0.0
     se = math.sqrt(CI_CONFIDENCE * (1.0 - CI_CONFIDENCE) / n)
-    return max(MIN_COVERAGE, CI_CONFIDENCE - 3.0 * se)
+    return max(0.0, CI_CONFIDENCE - COVERAGE_Z_VALUE * se)
+
+
+def _max_status(current: str, candidate: str) -> str:
+    order = {'pass': 0, 'warn': 1, 'fail': 2}
+    return candidate if order[candidate] > order[current] else current
+
+
+def _format_cell_line(
+    marker: str,
+    status: str,
+    col: int,
+    agg: str,
+    inside: int,
+    n: int,
+    rep: AccuracyReport,
+    target_cov: float,
+) -> str:
+    mean_re, max_re = _stats_summary(rep.rel_errors_cell.get((col, agg), []))
+    mean_bound, max_bound = _stats_summary(rep.reported_bounds_cell.get((col, agg), []))
+    return (
+        f"      [{marker}] col={col:<3} {agg:<5} cov={_fmt_pct(inside, n):>6} ({inside}/{n})  "
+        f"threshold={target_cov:.1%}  rel_err mean/max = {mean_re:.2%}/{max_re:.2%}  "
+        f"reported_bound mean/max = {mean_bound:.2%}/{max_bound:.2%}  [{status}]"
+    )
 
 
 def _print_ci_report(label: str, rep: AccuracyReport, error_bound: float, *, verbose: bool) -> str:
@@ -736,14 +878,41 @@ def _print_ci_report(label: str, rep: AccuracyReport, error_bound: float, *, ver
             print(f"    {label}: no comparable queries")
         return 'pass'
     # Coverage is governed by the CI confidence level (fixed, ~95%), NOT by
-    # the requested error_bound (which is the half-width budget). The observed
-    # coverage floor allows finite-sample variation but tightens as n grows.
+    # the requested error_bound (which is the half-width budget). The fail
+    # threshold below is a one-sided finite-sample tolerance around the nominal
+    # coverage and tightens as n grows.
     worst = 'pass'
     coverage_failed = False
     lines: List[str] = []
     if rep.nonconverged_rows:
         worst = 'fail'
         lines.append(f"      [x] {rep.nonconverged_rows} row(s) reported Converged=false")
+    if rep.unknown_sampling_status_rows:
+        worst = 'fail'
+        lines.append(f"      [x] {rep.unknown_sampling_status_rows} row(s) have unknown Sampling Status values")
+    if rep.inconsistent_sampling_status_rows:
+        worst = 'fail'
+        lines.append(f"      [x] {rep.inconsistent_sampling_status_rows} row(s) have inconsistent Converged/Sampling Status values")
+    exhausted_rows = rep.sampling_status_counts.get('exhausted_unconverged', 0)
+    if exhausted_rows:
+        worst = 'fail'
+        lines.append(f"      [x] {exhausted_rows} row(s) stopped with Sampling Status=exhausted_unconverged")
+    exactified_rows = rep.sampling_status_counts.get('exactified_converged', 0)
+    legacy_full_sample_rows = rep.sampling_status_counts.get('full_sample_converged', 0)
+    fallback_rows = exactified_rows + legacy_full_sample_rows
+    if fallback_rows:
+        worst = _max_status(worst, 'warn')
+        lines.append(
+            f"      [!] {fallback_rows} row(s) used residual exactification fallback "
+            "(valid if coverage/bounds pass, but review cost/calibration)"
+        )
+    explicit_status_counts = {
+        status: count for status, count in rep.sampling_status_counts.items()
+        if not status.startswith('legacy_') and count > 0
+    }
+    if verbose and explicit_status_counts:
+        summary = ', '.join(f"{status}={count}" for status, count in sorted(explicit_status_counts.items()))
+        lines.append(f"      Sampling Status: {summary}")
     for agg in AGG_NAMES:
         n = rep.n_per_agg.get(agg, 0)
         if n == 0:
@@ -753,7 +922,7 @@ def _print_ci_report(label: str, rep: AccuracyReport, error_bound: float, *, ver
         mean_re, max_re = _stats_summary(rep.rel_errors.get(agg, []))
         mean_hw, max_hw = _stats_summary(rep.half_widths_pct.get(agg, []))
         mean_bound, max_bound = _stats_summary(rep.reported_bounds.get(agg, []))
-        target_cov = _coverage_floor(n)
+        target_cov = _coverage_fail_threshold(n)
         cov_ok = cov >= target_cov
         bound_violations = rep.bound_violations.get(agg, 0)
         bound_ok = bound_violations == 0
@@ -766,6 +935,9 @@ def _print_ci_report(label: str, rep: AccuracyReport, error_bound: float, *, ver
         if flags:
             marker, status = 'x', f"FAIL ({','.join(flags)})"
             worst = 'fail'
+        elif cov < CI_CONFIDENCE:
+            marker, status = '!', f"WARN (cov<{CI_CONFIDENCE:.0%})"
+            worst = _max_status(worst, 'warn')
         else:
             marker, status = 'v', 'PASS'
         lines.append(
@@ -774,15 +946,58 @@ def _print_ci_report(label: str, rep: AccuracyReport, error_bound: float, *, ver
             f"half_width/true mean/max = {mean_hw:.2%}/{max_hw:.2%}  "
             f"reported_bound mean/max = {mean_bound:.2%}/{max_bound:.2%}  [{status}]"
         )
+
+    cell_failures: List[Tuple[float, str]] = []
+    cell_warnings: List[Tuple[float, str]] = []
+    failed_cells = set()
+    for (col, agg), n in sorted(rep.n_per_cell.items()):
+        if n < MIN_CELL_COVERAGE_N:
+            continue
+        inside = rep.n_inside_cell.get((col, agg), 0)
+        cov = inside / n
+        target_cov = _coverage_fail_threshold(n)
+        bound_violations = rep.bound_violations_cell.get((col, agg), 0)
+        if cov < target_cov or bound_violations:
+            coverage_failed = True
+            worst = 'fail'
+            failed_cells.add((col, agg))
+            flags = []
+            if cov < target_cov:
+                flags.append(f"cov<{target_cov:.0%}")
+            if bound_violations:
+                flags.append(f"reported_bound>{error_bound:.0%}")
+            cell_failures.append((cov, _format_cell_line(
+                'x', f"FAIL ({','.join(flags)})", col, agg, inside, n, rep, target_cov,
+            )))
+        elif cov < CI_CONFIDENCE:
+            worst = _max_status(worst, 'warn')
+            cell_warnings.append((cov, _format_cell_line(
+                '!', f"WARN (cov<{CI_CONFIDENCE:.0%})", col, agg, inside, n, rep, target_cov,
+            )))
+
+    if cell_failures or (verbose and cell_warnings):
+        lines.append(f"      Per-measure cells (n >= {MIN_CELL_COVERAGE_N}):")
+        detail_lines = [line for _, line in sorted(cell_failures, key=lambda item: item[0])]
+        remaining = max(0, MAX_CELL_DETAIL_LINES - len(detail_lines))
+        if remaining:
+            detail_lines.extend(
+                line for _, line in sorted(cell_warnings, key=lambda item: item[0])[:remaining]
+            )
+        lines.extend(detail_lines[:MAX_CELL_DETAIL_LINES])
+        hidden = len(cell_failures) + len(cell_warnings) - len(detail_lines[:MAX_CELL_DETAIL_LINES])
+        if hidden > 0:
+            lines.append(f"        ... and {hidden} more warning/failing per-measure cells")
+
     if verbose or worst == 'fail':
         print(f"    {label}  (target coverage ~= {CI_CONFIDENCE:.0%}, reported bound <= {error_bound:.0%})")
         for ln in lines:
             print(ln)
         if coverage_failed and rep.misses:
-            for qi, col, agg, tval, lb, ub in rep.misses[:3]:
+            focused_misses = [m for m in rep.misses if (m[1], m[2]) in failed_cells] or rep.misses
+            for qi, col, agg, tval, lb, ub in focused_misses[:3]:
                 print(f"        miss q={qi} col={col} {agg}: true={tval:.6g}  CI=[{lb:.6g}, {ub:.6g}]")
-            if len(rep.misses) > 3:
-                print(f"        ... and {len(rep.misses) - 3} more misses")
+            if len(focused_misses) > 3:
+                print(f"        ... and {len(focused_misses) - 3} more misses in failing cells")
     return worst
 
 
@@ -804,9 +1019,9 @@ def _print_pilotdb_report(label: str, rep: PilotDBReport, error_bound: float, *,
             marker, status = 'x', 'FAIL'
             worst = 'fail'
         elif within < n:
-            marker, status = '~', 'noise'
+            marker, status = '!', 'WARN'
             if worst == 'pass':
-                worst = 'noise'
+                worst = 'warn'
         else:
             marker, status = 'v', 'PASS'
         lines.append(
@@ -851,10 +1066,12 @@ def _print_exact_report(label: str, rep: ExactReport, *, verbose: bool) -> str:
 class ScenarioOutcome:
     query_count_checked: int = 0
     query_count_mismatches: int = 0
+    filename_conventions_checked: int = 0
+    filename_convention_mismatches: int = 0
     bbox_mismatches: int = 0
     bbox_checked: int = 0
     pass_count: int = 0
-    noise_count: int = 0
+    warn_count: int = 0
     fail_count: int = 0
     skipped: int = 0
 
@@ -881,6 +1098,19 @@ def validate_scenario(
             print(m)
         if len(count_msgs) > 10:
             print(f"      ... and {len(count_msgs) - 10} more")
+
+    print("  [Filename conventions]")
+    filename_checked, filename_msgs = check_filename_conventions(mf)
+    out.filename_conventions_checked = filename_checked
+    out.filename_convention_mismatches = len(filename_msgs)
+    if not filename_msgs:
+        print(f"    [v] {filename_checked} Valinor files follow current _outK naming")
+    else:
+        print(f"    [x] {len(filename_msgs)} filename convention mismatch(es) across {filename_checked} Valinor files")
+        for m in filename_msgs[:10]:
+            print(m)
+        if len(filename_msgs) > 10:
+            print(f"      ... and {len(filename_msgs) - 10} more")
 
     if 'bbox' in tasks:
         print("  [Bbox consistency]")
@@ -910,8 +1140,8 @@ def validate_scenario(
     def _bump(status: str) -> None:
         if status == 'pass':
             out.pass_count += 1
-        elif status == 'noise':
-            out.noise_count += 1
+        elif status == 'warn':
+            out.warn_count += 1
         else:
             out.fail_count += 1
 
@@ -993,7 +1223,7 @@ def main() -> int:
         epilog=(
             "Examples:\n"
             "  %(prog)s experiments/results/\n"
-            "  %(prog)s experiments/results/ --scenario synth10_100M_pan_sel1\n"
+            "  %(prog)s experiments/results/ --scenario synth10_300M_clustered_sel1\n"
             "  %(prog)s experiments/results/ --task accuracy\n"
             "  %(prog)s experiments/results/ --quiet\n"
         ),
@@ -1038,10 +1268,12 @@ def main() -> int:
         outcome = validate_scenario(name, mf, tasks=tasks, verbose=not args.quiet)
         totals.query_count_checked += outcome.query_count_checked
         totals.query_count_mismatches += outcome.query_count_mismatches
+        totals.filename_conventions_checked += outcome.filename_conventions_checked
+        totals.filename_convention_mismatches += outcome.filename_convention_mismatches
         totals.bbox_checked += outcome.bbox_checked
         totals.bbox_mismatches += outcome.bbox_mismatches
         totals.pass_count += outcome.pass_count
-        totals.noise_count += outcome.noise_count
+        totals.warn_count += outcome.warn_count
         totals.fail_count += outcome.fail_count
         totals.skipped += outcome.skipped
 
@@ -1051,6 +1283,11 @@ def main() -> int:
     else:
         print(f"  [x] File query counts: {totals.query_count_mismatches} mismatches "
               f"in {totals.query_count_checked} files")
+    if totals.filename_convention_mismatches == 0:
+        print(f"  [v] Filename conventions: {totals.filename_conventions_checked} Valinor files checked")
+    else:
+        print(f"  [x] Filename conventions: {totals.filename_convention_mismatches} mismatches "
+              f"in {totals.filename_conventions_checked} Valinor files")
     if 'bbox' in tasks:
         if totals.bbox_mismatches == 0:
             print(f"  [v] Bbox consistency: {totals.bbox_checked} queries, all consistent")
@@ -1058,15 +1295,17 @@ def main() -> int:
             print(f"  [x] Bbox consistency: {totals.bbox_mismatches} mismatches "
                   f"in {totals.bbox_checked} queries")
     if tasks & {'accuracy', 'exact'}:
-        total_files = totals.pass_count + totals.noise_count + totals.fail_count
+        total_files = totals.pass_count + totals.warn_count + totals.fail_count
         print(f"  Files validated: {total_files}")
         print(f"    [v] pass:  {totals.pass_count}")
-        print(f"    [~] noise: {totals.noise_count}  (within expected statistical variance)")
+        print(f"    [!] warn:  {totals.warn_count}  (borderline; review but not an exit-code failure)")
         print(f"    [x] fail:  {totals.fail_count}")
         if totals.skipped:
             print(f"    skipped: {totals.skipped} scenario(s) without exact truth")
 
-    has_failure = totals.fail_count > 0 or totals.bbox_mismatches > 0 or totals.query_count_mismatches > 0
+    has_failure = (totals.fail_count > 0 or totals.bbox_mismatches > 0
+                   or totals.query_count_mismatches > 0
+                   or totals.filename_convention_mismatches > 0)
     return 1 if has_failure else 0
 
 
